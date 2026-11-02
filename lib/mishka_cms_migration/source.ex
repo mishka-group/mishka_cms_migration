@@ -31,23 +31,25 @@ defmodule MishkaCmsMigration.Source do
 
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
   event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`
-  and an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself. A source registers once it is supervised: an extension that ships one lists the module
-  among the children of its own application's supervisor, as
-  `MishkaCmsMigration.Application.plugins/0` lists this extension's. Which sources are installed is
-  read from mishka_installer's own registry (`installed/2`), so a source an operator stops in the
-  installer is no longer offered and a run of it is refused.
+  and an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself. A source
+  registers once it is supervised: an extension that ships one lists the module among the children
+  of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this
+  extension's. Which sources are installed is read from mishka_installer's own registry
+  (`installed/2`), so a source an operator stops in the installer is no longer offered and a run of
+  it is refused.
 
   ## A run
 
-  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`); a run of a
-  source that is not installed is refused when it is created. A job
-  (`MishkaCmsMigration.Workers.Helpers.Pipeline`) asks `connect/2` once, with the run's `connection` map and its
-  secret opened (`MishkaCmsMigration.MigrationRun.open_secret/1`), then walks `kinds/0` in the order the source gives
-  them, and pages through each with `list/3` until it answers no cursor. The walk does not sort the
-  kinds: a source lists them in the order they must be imported, a kind before any kind that points
-  at it, so authors come before the posts that name them. Each listed row goes through
-  `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails
-  the run; an error from `normalize/3` fails only that item, and the report says why.
+  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`); a run of a source
+  that is not installed is refused when it is created. A job
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`) asks `connect/2` once, with the run's `connection`
+  map and its secret opened (`MishkaCmsMigration.MigrationRun.open_secret/1`), then walks `kinds/0`
+  in the order the source gives them, and pages through each with `list/3` until it answers no
+  cursor. The walk does not sort the kinds: a source lists them in the order they must be imported,
+  a kind before any kind that points at it, so authors come before the posts that name them. Each
+  listed row goes through `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from
+  `connect/2` or `list/3` fails the run; an error from `normalize/3` fails only that item, and the
+  report says why.
   """
 
   alias MishkaInstaller.Event.Event
@@ -57,7 +59,7 @@ defmodule MishkaCmsMigration.Source do
   @typedoc "What a source keeps between calls once connected: a client, a parsed file, a cursor."
   @type conn :: term()
 
-  @typedoc "Where `list/3` goes on from; `nil` asks for the first page, and answering `nil` ends a kind."
+  @typedoc "Where `list/3` goes on from: `nil` is the first page, and answering `nil` ends a kind."
   @type cursor :: term() | nil
 
   @typedoc "What `normalize/3` is told: the run's site, its source host and its options."
@@ -110,7 +112,7 @@ defmodule MishkaCmsMigration.Source do
 
     quote do
       use MishkaInstaller.Event.Hook,
-        event: "migration:sources",
+        event: unquote(@event),
         initial: %{priority: unquote(priority)}
 
       @behaviour MishkaCmsMigration.Source
@@ -131,13 +133,16 @@ defmodule MishkaCmsMigration.Source do
     end
   end
 
-  @doc "The event a source plugin registers on."
+  @doc """
+  The event a source plugin registers on, the one `use MishkaCmsMigration.Source` names: what an
+  extension's own tests register a source for.
+  """
   @spec event() :: String.t()
   def event, do: @event
 
   @doc """
-  Every installed source (`installed/2`), by priority, the first of each id: what a screen offers
-  to migrate from.
+  Every installed source (`installed/2`), by priority, the first of each id: what the coming Import
+  screen offers to migrate from, and what a developer reads to see which sources a node has.
   """
   @spec all() :: [module()]
   def all, do: installed(@event, __MODULE__)
@@ -209,8 +214,8 @@ defmodule MishkaCmsMigration.Source.Item do
       turned into atoms.
     * `:extra` — every field of the row the CMS has no home for (a WordPress post's custom fields,
       ACF fields, another plugin's meta), as key and value. It is kept on the item's
-      `MishkaCmsMigration.MigrationItem` (its `extra`), and a target whose resource has an `extra` of
-      its own may copy it there (`MishkaCmsMigration.Target`). Its keys are never turned into
+      `MishkaCmsMigration.MigrationItem` (its `extra`), and a target whose resource has an `extra`
+      of its own may copy it there (`MishkaCmsMigration.Target`). Its keys are never turned into
       atoms.
     * `:content` — the item's body as a list of pieces, in order. A piece the source converted
       itself carries `:html`; a block or shortcode it could not convert carries `:name`, `:attrs`
@@ -287,21 +292,18 @@ defmodule MishkaCmsMigration.Source.Item do
   def datetime(field, %NaiveDateTime{} = value),
     do: {:ok, field, DateTime.from_naive!(value, "Etc/UTC")}
 
-  def datetime(field, value) when is_binary(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, datetime, _offset} -> {:ok, field, datetime}
-      {:error, _reason} -> naive(field, value)
-    end
-  end
+  def datetime(field, value) when is_binary(value),
+    do: value |> DateTime.from_iso8601() |> zoned(field, value)
 
   def datetime(field, _value), do: {:error, field, "must be a date and time"}
 
-  defp naive(field, value) do
-    case NaiveDateTime.from_iso8601(value) do
-      {:ok, naive} -> {:ok, field, DateTime.from_naive!(naive, "Etc/UTC")}
-      {:error, _reason} -> {:error, field, "must be an ISO 8601 date and time"}
-    end
-  end
+  defp zoned({:ok, datetime, _offset}, field, _value), do: {:ok, field, datetime}
+
+  defp zoned({:error, _reason}, field, value),
+    do: value |> NaiveDateTime.from_iso8601() |> naive(field)
+
+  defp naive({:ok, naive}, field), do: {:ok, field, DateTime.from_naive!(naive, "Etc/UTC")}
+  defp naive({:error, _reason}, field), do: {:error, field, "must be an ISO 8601 date and time"}
 
   defp piece(piece), do: {piece.html, piece.name, piece.attrs, piece.raw}
 end

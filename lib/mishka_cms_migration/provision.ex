@@ -4,10 +4,11 @@
 
 defmodule MishkaCmsMigration.Provision do
   @moduledoc """
-  What setting the migration up on a site gives it: the permission names its runs are gated by
-  (`permissions/0`), so a site's admin can be granted them. The names are shared by every site, so
-  the first site's install creates them and every later one finds them; the system writes them,
-  whoever asked, through `MishkaCmsCore.Install.Bootstrap.ensure_permissions/1`, as
+  What setting the migration up on a site gives it: the permission names its runs are gated by,
+  `admin:dashboard:migration` and `admin:api:migration`, so a site's admin can be granted them. The
+  names are shared by every site, so the first site's install creates them and every later one finds
+  them; the system writes them, whoever asked, through
+  `MishkaCmsCore.Install.Bootstrap.ensure_permissions/1`, as
   `MishkaCmsCore.Runtime.ExtensionProvision` does for every extension. The extension ships no
   components, pages or snippets.
 
@@ -15,10 +16,10 @@ defmodule MishkaCmsMigration.Provision do
   (`MishkaCmsCore.Install.Extensions`): subscribing is what makes the extension installable, and
   `:extra` is what the installer's picker shows. It answers the payload whose `key` is
   `"mishka_cms_migration"` with `install/2`'s report, appended to `reports`, and hands every other
-  payload on untouched. Installing needs `admin:dashboard:runtime:site` (`required/0`); a site's
-  admin installs it only on their own site. With no actor it runs only while the CMS itself is
-  being installed. `MishkaCmsMigration.Provision.Settings` registers the settings the installer
-  records an install in.
+  payload on untouched. Installing needs `admin:dashboard:runtime:site`; a site's admin installs it
+  only on their own site. With no actor it runs only while the CMS itself is being installed.
+  `MishkaCmsMigration.Provision.Settings` registers the settings the installer records an install
+  in.
   """
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -57,14 +58,6 @@ defmodule MishkaCmsMigration.Provision do
       do: {:reply, %{payload | reports: reports ++ [install(site_id, Map.get(payload, :actor))]}}
 
   def call(payload), do: {:reply, payload}
-
-  @doc "The permission names the migration's runs are gated by, each with its description."
-  @spec permissions() :: [{String.t(), String.t()}]
-  def permissions, do: @permissions
-
-  @doc "What a person needs to install the migration on a site."
-  @spec required() :: [String.t()]
-  def required, do: @required
 
   @doc """
   Installs the migration on `site_id` as `actor` and answers the report the installer shows, in the

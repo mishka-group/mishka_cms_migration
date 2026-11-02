@@ -74,15 +74,24 @@ defmodule MishkaCmsMigration.Events do
   @typedoc "What a plugin decides for an item about to be written."
   @type decision :: {:ok, Item.t()} | {:skipped, String.t()}
 
-  @doc "The event a piece of content is offered on."
+  @doc """
+  The event a piece of content is offered on: what a converter plugin names in
+  `use MishkaInstaller.Event.Hook, event: ...`, and what a test registers one for.
+  """
   @spec convert_event() :: String.t()
   def convert_event, do: @convert
 
-  @doc "The event an item is offered on before it is written."
+  @doc """
+  The event an item is offered on before it is written: what a plugin that changes or skips items
+  names in `use MishkaInstaller.Event.Hook, event: ...`, and what a test registers one for.
+  """
   @spec before_import_event() :: String.t()
   def before_import_event, do: @before_import
 
-  @doc "The event an import's report is handed to."
+  @doc """
+  The event an import's report is handed to: what a plugin that acts on a finished import names in
+  `use MishkaInstaller.Event.Hook, event: ...`, and what a test registers one for.
+  """
   @spec finished_event() :: String.t()
   def finished_event, do: @finished
 
@@ -179,7 +188,7 @@ defmodule MishkaCmsMigration.Events.BeforeImportGuard do
   """
 
   use MishkaInstaller.Event.Hook,
-    event: "migration:item:before_import",
+    event: MishkaCmsMigration.Events.before_import_event(),
     initial: %{priority: 1}
 
   @impl true
@@ -196,7 +205,7 @@ defmodule MishkaCmsMigration.Events.ConvertGuard do
   """
 
   use MishkaInstaller.Event.Hook,
-    event: "migration:content:convert",
+    event: MishkaCmsMigration.Events.convert_event(),
     initial: %{priority: 1}
 
   @impl true
