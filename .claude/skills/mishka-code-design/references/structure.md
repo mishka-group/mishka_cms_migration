@@ -1,6 +1,6 @@
 # File and module layout
 
-Read the repo you are in first. Its existing tree is the authority, and this file only summarises it. All repos sit side by side under `/Users/shahryar/Documents/Programming/Elixir/`.
+Read the repo you are in first. Its existing tree is the authority, and this file only summarises it. The repos are listed in SKILL.md under "Where to read the code". Read a local checkout or `deps/<repo>` when you have one, and GitHub otherwise.
 
 ## Shared rules
 

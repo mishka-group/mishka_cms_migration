@@ -2,7 +2,7 @@
 
 ## mishka_installer
 
-Repo: `/Users/shahryar/Documents/Programming/Elixir/mishka_installer` (`lib/event/hook.ex`, `event.ex`, `module_state_compiler.ex`).
+Repo: [mishka_installer](https://github.com/mishka-group/mishka_installer), or a local checkout or `deps/mishka_installer` if you have one. Key files: `lib/event/hook.ex`, `lib/event/event.ex`, `lib/event/module_state_compiler.ex`.
 
 - **A plugin:**
   ```elixir
@@ -18,7 +18,7 @@ Repo: `/Users/shahryar/Documents/Programming/Elixir/mishka_installer` (`lib/even
 
 ## mishka_gervaz (admin)
 
-Repo: `/Users/shahryar/Documents/Programming/Elixir/mishka_gervaz`.
+Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local checkout or `deps/mishka_gervaz` if you have one.
 
 - Admin forms and tables are gervaz DSL resources: fields, types, filters, actions and error display. Never hand-write form markup or validation display for the admin.
 - Before writing a helper, check gervaz for a field type or template helper. Example: `MishkaGervaz.Form.Types.Field.Json.parse_params/2` for JSON fields.

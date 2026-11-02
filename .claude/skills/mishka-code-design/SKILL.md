@@ -9,7 +9,7 @@ Mishka code follows one shape across its repos. New code should look like it was
 
 ## Before you write anything
 
-1. **Find the closest existing example and copy its shape.** Look in the repo you're in, then in its siblings under `/Users/shahryar/Documents/Programming/Elixir/`. `mishka_cms_core` is the reference for the engine, and `mishka_blog` and `mishka_document` are the references for an extension. Grep for a module that does the same kind of job, such as a resource with tenancy, a change, a worker, a plugin or an admin screen, and follow it.
+1. **Find the closest existing example and copy its shape.** Look in the repo you're in, then in the other Mishka repos (see "Where to read the code" below). `mishka_cms_core` is the reference for the engine, and `mishka_blog` and `mishka_document` are the references for an extension. Grep for a module that does the same kind of job, such as a resource with tenancy, a change, a worker, a plugin or an admin screen, and follow it.
 2. **Reuse before you write.** Ask, in this order:
    - Does Ash, AshOban, AshPostgres or Spark already do this?
    - Does mishka_installer (plugins, events, hooks), mishka_gervaz (admin forms and tables, field types, error display), guarded_struct (input schema) or mishka_cms_core (helpers, settings, permissions) already do it?
@@ -17,6 +17,21 @@ Mishka code follows one shape across its repos. New code should look like it was
 
    Write new code only for what none of them does, and say in your report that you checked.
 3. **Read the docs for the tools you touch.** That means the relevant Ash guides in `deps/ash/documentation` (and AshOban's, Spark's), the OTP design principles, Elixir's anti-patterns pages, and LiveView's security model when you touch LiveView. The owner's rule is "without knowledge do not do anything". A guess that ignores what the library offers costs a rewrite later.
+
+## Where to read the code
+
+Read each repo in this order. If someone has a local checkout of it, usually a sibling folder (`../<repo>`) next to the one you're in, read that. If the current project depends on it, read `deps/<repo>`. Otherwise read it on GitHub.
+
+- [mishka_cms_core](https://github.com/mishka-group/mishka_cms_core): the engine, the reference for core patterns.
+- [mishka_blog](https://github.com/mishka-group/mishka_blog) and [mishka_document](https://github.com/mishka-group/mishka_document): the reference extensions.
+- [mishka_cms_builder](https://github.com/mishka-group/mishka_cms_builder): the editor.
+- [mishka_cms](https://github.com/mishka-group/mishka_cms): the host app.
+- [mishka_installer](https://github.com/mishka-group/mishka_installer): plugins, events, hooks.
+- [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz): admin forms and tables.
+- [guarded_struct](https://github.com/mishka-group/guarded_struct): input schema.
+- [mishka_chelekom](https://github.com/mishka-group/mishka_chelekom): UI components.
+- [igniter_css](https://github.com/ash-project/igniter_css) and [igniter_js](https://github.com/ash-project/igniter_js): the CSS and JS parsers.
+- mishka_cms_migration: the migration extension (private for now).
 
 ## How Mishka code is built
 
