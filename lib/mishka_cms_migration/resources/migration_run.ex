@@ -226,6 +226,14 @@ defmodule MishkaCmsMigration.MigrationRun do
       description "Ends a run that is not done: its job is cancelled and its secret cleared"
     end
 
+    update :record_progress do
+      accept [:progress]
+
+      validate {Status, from: [:dry_running, :importing]}
+
+      description "System-internal: how far the running job is, saved after each page it walks"
+    end
+
     update :fail do
       accept [:error]
 
@@ -240,7 +248,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   policies do
-    policy action([:finish_dry_run, :finish_import, :fail]) do
+    policy action([:finish_dry_run, :finish_import, :record_progress, :fail]) do
       forbid_if always()
     end
 
@@ -260,6 +268,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   pub_sub do
     module Application.compile_env!(:mishka_cms_core, :endpoint)
     prefix "migration_run"
+    transform &MishkaCmsMigration.MigrationRun.broadcast/1
 
     publish_all :create, [[nil, :site_id], "created"]
     publish_all :update, [[nil, :site_id], "updated"]
@@ -353,6 +362,18 @@ defmodule MishkaCmsMigration.MigrationRun do
                   ]
 
       description "What the last dry run or import did with each item (MishkaCmsMigration.Report)"
+    end
+
+    attribute :progress, :map do
+      allow_nil? true
+      public? true
+
+      constraints fields: [
+                    kind: [type: :string, allow_nil?: false],
+                    counts: [type: :map, allow_nil?: false, constraints: [fields: @counts]]
+                  ]
+
+      description "How far the running job is: the kind it walks and the counts so far"
     end
 
     attribute :error, :string do
@@ -449,4 +470,13 @@ defmodule MishkaCmsMigration.MigrationRun do
         changeset
     end
   end
+
+  @doc """
+  What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the
+  run's `connection` and `connection_secret` emptied and without its changeset, whose input held
+  the secret as typed. A subscriber that needs the connection reads the run.
+  """
+  @spec broadcast(Ash.Notifier.Notification.t()) :: Ash.Notifier.Notification.t()
+  def broadcast(%Ash.Notifier.Notification{data: run} = notification),
+    do: %{notification | data: %{run | connection: %{}, connection_secret: nil}, changeset: nil}
 end

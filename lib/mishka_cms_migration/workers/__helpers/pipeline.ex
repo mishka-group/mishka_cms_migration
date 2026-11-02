@@ -15,12 +15,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   `kinds/0` gives them, and pages through each with `list/3` until the source answers no cursor.
   Each row is normalized into an item (`MishkaCmsMigration.Source.Item`), decided
   (`MishkaCmsMigration.Workers.Helpers.Decision`) and, in an import, written
-  (`MishkaCmsMigration.Workers.Helpers.Writer`). After each page the run's progress is broadcast on
-  `MishkaCmsMigration.progress_topic/1`:
-
-      {:migration_progress,
-       %{run_id: "…", site_id: "…", mode: :import, kind: "post",
-         counts: %{created: 10, updated: 0, skipped: 2, failed: 0}}}
+  (`MishkaCmsMigration.Workers.Helpers.Writer`). After each page with rows the job saves how far it is on the
+  run (`MishkaCmsMigration.MigrationRun`'s `:record_progress`, `progress`: the kind and the counts
+  so far), and the run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`. A
+  run that no longer takes its progress — an admin cancelled it — stops the walk after that page.
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
@@ -216,8 +214,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     case state.source.list(state.conn, walk.kind, walk.cursor) do
       {:ok, rows, next} ->
         {report, ids} = page(state, walk, rows, report)
-        progress(state, walk.kind, report.counts)
-        walk_on(state, %{walk | ids: ids, pages: walk.pages + 1}, next, report)
+
+        with :ok <- progress(state, walk.kind, rows, report.counts) do
+          walk_on(state, %{walk | ids: ids, pages: walk.pages + 1}, next, report)
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -301,19 +301,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     end
   end
 
-  defp progress(state, kind, counts) do
-    Phoenix.PubSub.broadcast(
-      MishkaCmsCore.PubSub,
-      MishkaCmsMigration.progress_topic(state.run.id),
-      {:migration_progress,
-       %{
-         run_id: state.run.id,
-         site_id: state.run.site_id,
-         mode: state.mode,
-         kind: kind,
-         counts: counts
-       }}
-    )
+  defp progress(_state, _kind, [], _counts), do: :ok
+
+  defp progress(state, kind, _rows, counts) do
+    case MishkaCmsMigration.record_progress(state.run, %{kind: kind, counts: counts},
+           authorize?: false
+         ) do
+      {:ok, _run} -> :ok
+      {:error, _refused} -> {:error, :not_running}
+    end
   end
 
   defp source_context(state),

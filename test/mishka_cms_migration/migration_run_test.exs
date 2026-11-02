@@ -40,6 +40,19 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert MigrationRun.open_secret(run) == {:ok, "app password"}
     end
 
+    test "never broadcasts its secret or its connection", %{site: site, admin: admin} do
+      :ok = MishkaCmsMigration.TestEndpoint.subscribe("migration_run:#{site.id}:created")
+      run = create_run!(site, admin, rows(), %{secret: "app password"})
+      run_id = run.id
+
+      assert_receive %Phoenix.Socket.Broadcast{payload: %{data: %{id: ^run_id} = data} = payload}
+      assert {data.connection_secret, data.connection, payload.changeset} == {nil, %{}, nil}
+
+      sent = :erlang.term_to_binary(payload)
+      assert :binary.match(sent, "app password") == :nomatch
+      assert :binary.match(sent, run.connection_secret) == :nomatch
+    end
+
     test "keeps the admin's choices as made, reads the others as their defaults, refuses an unknown one",
          %{site: site, admin: admin} do
       run = create_run!(site, admin, rows(), %{options: %{pages: "publish"}})

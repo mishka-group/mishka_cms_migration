@@ -54,18 +54,23 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert items(site) == []
     end
 
-    test "broadcasts its progress page by page on the run's topic", %{site: site, admin: admin} do
+    test "saves its progress page by page, which the run's notifier broadcasts", %{
+      site: site,
+      admin: admin
+    } do
       run = create_run!(site, admin, %{"redirect" => @rows})
-      :ok = MishkaCmsMigration.subscribe_progress(run.id)
+      :ok = MishkaCmsMigration.TestEndpoint.subscribe("migration_run:#{site.id}:updated")
       run_id = run.id
 
       dry_run!(run, admin)
 
-      assert_receive {:migration_progress,
-                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{created: 2}}}
-
-      assert_receive {:migration_progress,
-                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{created: 3}}}
+      for created <- [2, 3] do
+        assert_receive %Phoenix.Socket.Broadcast{
+          payload: %{
+            data: %{id: ^run_id, progress: %{kind: "redirect", counts: %{created: ^created}}}
+          }
+        }
+      end
     end
 
     test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
