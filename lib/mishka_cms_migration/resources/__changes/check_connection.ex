@@ -10,7 +10,9 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
   (`c:MishkaCmsMigration.Source.extra/1`) becomes the run's `extra`.
 
   A run that names no `source_host` takes the host its source reads from the connection
-  (`c:MishkaCmsMigration.Source.host/1`), so an admin types the address once.
+  (`c:MishkaCmsMigration.Source.host/1`), so an admin types the address once. The action lists
+  `source_host` in `allow_nil_input`, so a connection with no host is refused once, on the
+  connection, rather than again as a missing host.
 
   A refusal is an error on the run's `connection`, in words for the reasons
   `MishkaCmsMigration.Source` names and as the reason itself for any other; a connection the
@@ -18,6 +20,7 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
   installed is left to `MishkaCmsMigration.Resources.Validations.SourceInstalled`.
 
       create :create do
+        allow_nil_input [:source_host]
         change MishkaCmsMigration.Resources.Changes.CheckConnection
         validate present(:source_host), only_when_valid?: true
         change &MishkaCmsMigration.MigrationRun.seal_secret/2

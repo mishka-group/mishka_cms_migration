@@ -135,6 +135,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
+  @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
   @busy dgettext_noop(
           "errors",
           "Another migration of this site is still waiting or running. Try again once it is done."
@@ -496,6 +497,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     create :create do
       primary? true
       accept [:source, :source_host, :connection, :options]
+      allow_nil_input [:source_host]
 
       argument :secret, :string do
         sensitive? true
@@ -505,7 +507,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       change CheckConnection
-      validate present(:source)
       validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
 
@@ -518,6 +519,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
     create :master_create do
       accept [:site_id, :source, :source_host, :connection, :options]
+      allow_nil_input [:source_host]
 
       argument :secret, :string do
         sensitive? true
@@ -526,9 +528,8 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: true}
+      validate present(:site_id), message: @pick_site
       change CheckConnection
-      validate present(:site_id)
-      validate present(:source)
       validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
 

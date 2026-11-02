@@ -157,6 +157,23 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert Enum.any?(errors, &(&1.field == :connection))
     end
 
+    test "sent empty by a master, names the site and the address in words, and no host", %{
+      site: _site
+    } do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+
+      assert {:error, %Ash.Error.Invalid{errors: errors}} =
+               MigrationRun
+               |> Ash.Changeset.for_create(:master_create, %{source: "fake"}, actor: master)
+               |> Ash.create()
+
+      fields = Enum.map(errors, &Map.get(&1, :field))
+
+      assert :connection in fields
+      refute :source_host in fields
+      assert Enum.find(errors, &(Map.get(&1, :field) == :site_id)).message =~ "Pick the site"
+    end
+
     test "for a master, on the site the master names", %{site: site} do
       master = create_user_with_permissions!(["admin:dashboard:migration"])
 
