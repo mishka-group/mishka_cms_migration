@@ -4,9 +4,16 @@
 
 defmodule MishkaCmsMigration do
   @moduledoc """
-  The migration extension of Mishka CMS: it moves a site from another CMS into a Mishka CMS site.
+  The migration extension's Ash domain. The extension moves a site from another CMS into a Mishka
+  CMS site: WordPress is the first source, and Joomla and others come later as plugins that reuse the
+  same mapping, dry run, import job and report.
 
-  WordPress is the first source; Joomla and others come later as plugins that reuse the same
-  mapping, dry run, import job and report.
+  The domain holds the resources of an import run once they exist; it has none yet.
   """
+  use Ash.Domain,
+    otp_app: :mishka_cms_migration,
+    validate_config_inclusion?: false,
+    extensions: [MishkaGervaz.Domain]
+
+  use MishkaGervaz.Messages, backend: MishkaCmsCore.Gettext
 end
