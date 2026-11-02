@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.Workers.DryRunWorker do
 
   Queued by `MishkaCmsMigration.MigrationRun`'s `:start_dry_run` with
   `%{"run_id" => "…", "site_id" => "…", "actor_id" => "…", "resource" => "…"}`. A site has one
-  migration job at a time, waiting or running (`MishkaCmsMigration.Pipeline.unique/0`).
+  migration job at a time, waiting or running (`MishkaCmsMigration.Pipeline.unique/0`), and an attempt has an hour
+  (`MishkaCmsMigration.Pipeline.timeout/1`).
   """
 
   use Oban.Worker,
@@ -20,4 +21,7 @@ defmodule MishkaCmsMigration.Workers.DryRunWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{} = job), do: MishkaCmsMigration.Pipeline.perform(job, :dry_run)
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = job), do: MishkaCmsMigration.Pipeline.timeout(job)
 end

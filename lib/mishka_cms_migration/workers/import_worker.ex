@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.Workers.ImportWorker do
 
   Queued by `MishkaCmsMigration.MigrationRun`'s `:start_import` with
   `%{"run_id" => "…", "site_id" => "…", "actor_id" => "…", "resource" => "…"}`. A site has one
-  migration job at a time, waiting or running (`MishkaCmsMigration.Pipeline.unique/0`). Another
+  migration job at a time, waiting or running (`MishkaCmsMigration.Pipeline.unique/0`), and an attempt has an hour
+  (`MishkaCmsMigration.Pipeline.timeout/1`). Another
   attempt walks the source again and skips what the first one wrote and recorded.
   """
 
@@ -21,4 +22,7 @@ defmodule MishkaCmsMigration.Workers.ImportWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{} = job), do: MishkaCmsMigration.Pipeline.perform(job, :import)
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = job), do: MishkaCmsMigration.Pipeline.timeout(job)
 end

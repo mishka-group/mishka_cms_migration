@@ -35,6 +35,15 @@ defmodule MishkaCmsMigration.Pipeline do
     do: [fields: [:queue, :args], keys: [:site_id], states: :incomplete, period: :infinity]
 
   @doc """
+  How long one attempt of either worker may run: an hour. Oban stops an attempt that runs longer and
+  tries the job again; an import's next attempt skips what the last one wrote and recorded, so a
+  large site goes on where it stopped. A job stopped on its last attempt leaves its run where it
+  was, for an admin to cancel (`MishkaCmsMigration.MigrationRun`'s `:cancel`).
+  """
+  @spec timeout(Oban.Job.t()) :: pos_integer()
+  def timeout(%Oban.Job{}), do: :timer.hours(1)
+
+  @doc """
   Runs `job` of a run in `mode` and answers as an `Oban.Worker` does.
   """
   @spec perform(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
