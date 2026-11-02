@@ -25,10 +25,11 @@ config :mishka_cms_migration, MishkaCmsMigration.Sources.WordPress,
 # This extension's resources reach into accounts and runtime — a run belongs to a site and is started
 # by a user — so the schema this extension tests against has to include those domains, not just its
 # own. Listing them here is what makes `mix ash.codegen` emit their tables into this extension's
-# migrations.
+# migrations. The Blog is listed because the suite imports a site's categories and tags into it.
 config :mishka_cms_migration,
   ash_domains: [
     MishkaCmsMigration,
+    MishkaBlog,
     MishkaCmsCore.Runtime,
     MishkaCmsCore.Accounts,
     MishkaCmsCore.Notify,
