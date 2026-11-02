@@ -66,6 +66,24 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                )
     end
 
+    test "refuses a source that is not installed, and an option it does not know", %{
+      site: site,
+      admin: admin
+    } do
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :source}]}} =
+               MishkaCmsMigration.create_run(%{source: "ghost", source_host: "old.example.com"},
+                 actor: admin,
+                 tenant: site.id
+               )
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :mode, path: [:options]}]}} =
+               MishkaCmsMigration.create_run(
+                 %{source: "fake", source_host: "old.example.com", options: %{mode: "x"}},
+                 actor: admin,
+                 tenant: site.id
+               )
+    end
+
     test "needs a site to be created on", %{admin: admin} do
       assert {:error, %Ash.Error.Invalid{}} =
                MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},

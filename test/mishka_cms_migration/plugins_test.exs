@@ -28,23 +28,23 @@ defmodule MishkaCmsMigration.PluginsTest do
     assert {:error, _unknown} = Source.fetch("fake")
   end
 
-  test "a run whose source is not installed fails with the reason" do
+  test "a run whose source plugin is gone when its job runs fails with the reason" do
     site = create_site!()
     admin = migration_admin!(site)
 
     run =
-      site
-      |> create_run!(admin, %{}, %{source: "ghost"})
-      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+      with_plugin(FakeSource, Source.event(), fn ->
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+      end)
 
     args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
 
-    assert {:cancel, _reason} =
+    assert {:cancel, :unknown_provider} =
              perform_job(MishkaCmsMigration.Workers.DryRunWorker, args, attempt: 3)
 
-    assert %{status: :failed, error: error} =
+    assert %{status: :failed, error: "unknown_provider"} =
              MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
-
-    assert byte_size(error) > 0
   end
 end

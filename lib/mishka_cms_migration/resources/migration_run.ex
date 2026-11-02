@@ -47,7 +47,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
   alias MishkaCmsMigration.Resources.Changes.{BuildStruct, EnqueueJob, SealSecret}
-  alias MishkaCmsMigration.Resources.Validations.Status
+  alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed]
@@ -97,6 +97,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       validate present([:source, :source_host])
+      validate SourceInstalled, before_action?: true
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
       change set_attribute(:user_id, actor(:id))
