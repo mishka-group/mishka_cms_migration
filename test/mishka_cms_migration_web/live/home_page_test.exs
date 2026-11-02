@@ -617,7 +617,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"skipped" => 57}
+      assert outcomes(view) == %{"created" => 20, "skipped" => 37}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
 
       assert kinds(view) == %{
@@ -638,12 +638,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "post" => 21
              }
 
-      assert detailed_counts(view, "run-details-outcome", "data-outcome") == %{"skipped" => 57}
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
+               %{"created" => 20, "skipped" => 37}
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
 
-    test "an expanded run shows why each kind was skipped, its latest items and what the WordPress site said of itself",
+    test "an expanded run shows what each kind would become and why, its latest items and what the WordPress site said of itself",
          %{conn: conn, site: site} do
       stub!()
       admin = migration_admin!(site)
@@ -660,7 +661,16 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
 
-      for {kind, found} <- [{"user", 5}, {"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+      for {kind, found} <- [{"category", 9}, {"tag", 11}] do
+        card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
+
+        assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
+                 %{"created" => found}
+
+        refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
+      end
+
+      for {kind, found} <- [{"user", 5}, {"page", 11}, {"post", 21}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -728,15 +738,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       expand!(view, run)
 
       bar = ~s|[data-role="run-details-progress-bar"]|
-      assert has_element?(view, ~s|#{bar}[aria-valuenow="0"][aria-valuemax="3"]|)
+      assert has_element?(view, ~s|#{bar}[aria-valuenow="0"][aria-valuemax="4"]|)
       refute has_element?(view, ~s|#{bar}[data-kind]|)
-      assert detailed(view, "run-details-progress-step", "data-state") == ~w(next next next)
+      assert detailed(view, "run-details-progress-step", "data-state") == ~w(next next next next)
 
       walked!(run, "note", 2)
       settled(view)
 
       assert has_element?(view, ~s|#{bar}[data-kind="note"][aria-valuenow="1"]|)
-      assert detailed(view, "run-details-progress-step", "data-state") == ~w(done current next)
+
+      assert detailed(view, "run-details-progress-step", "data-state") ==
+               ~w(done current next next)
 
       assert detailed(view, "run-details-progress-read", "data-count") == ["2"]
 

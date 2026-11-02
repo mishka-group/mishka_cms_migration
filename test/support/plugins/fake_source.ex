@@ -14,11 +14,13 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   It signs in only with the secret `"letmein"`, or with none when the connection says
   `"public" => true`, and never once the connection says `"revoked" => true` (what a test writes
   into a saved run's connection to have its source refuse a secret it took when the run was
-  created), lists two rows a page, lists `"redirect"`, `"note"` and `"page"`, in that
-  order, and says the connection's `"facts"` as its `extra/1`. A row is normalized as:
+  created), lists two rows a page, lists `"redirect"`, `"note"`, `"page"` and `"category"`, in
+  that order, and says the connection's `"facts"` as its `extra/1`. A row is normalized as:
 
     * `"id"` — the source id; `"title"`, `"modified"` — the item's title and modified time;
-    * `"from"`, `"to"`, `"path"`, `"gate"`, `"explode"` — the item's `attrs`;
+    * `"parent"` — the source id of the item of its kind it sits under;
+    * `"from"`, `"to"`, `"path"`, `"gate"`, `"explode"`, `"slug"`, `"description"` — the item's
+      `attrs`;
     * `"content"` — the item's content pieces, as they are;
     * every other field — the item's `extra`, the fields the CMS has no home for;
     * `"unreadable" => true` — refused by `normalize/3`; a row that is not a map makes it raise.
@@ -31,11 +33,11 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   use MishkaCmsMigration.Source, id: "fake", label: "Fake"
 
   @page_size 2
-  @attrs ["from", "to", "path", "gate", "explode"]
-  @known ["id", "title", "modified", "content", "unreadable" | @attrs]
+  @attrs ["from", "to", "path", "gate", "explode", "slug", "description"]
+  @known ["id", "title", "parent", "modified", "content", "unreadable" | @attrs]
 
   @impl MishkaCmsMigration.Source
-  def kinds, do: ["redirect", "note", "page"]
+  def kinds, do: ["redirect", "note", "page", "category"]
 
   @impl MishkaCmsMigration.Source
   def connect(%{"revoked" => true}, _secret), do: {:error, :unauthorized}
@@ -67,6 +69,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
      %{
        source_id: row["id"],
        title: row["title"],
+       parent: row["parent"],
        modified_at: row["modified"],
        attrs: Map.take(row, @attrs),
        extra: Map.drop(row, @known),

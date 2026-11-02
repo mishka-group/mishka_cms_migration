@@ -92,6 +92,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
     test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
       items = %{
+        "category" => [%{"id" => 3, "title" => "News", "slug" => "news"}],
         "page" => [%{"id" => 5, "title" => "About", "path" => "/about"}],
         "note" => [%{"id" => 9}],
         "redirect" => [%{"id" => 1, "from" => "/a", "to" => "/b"}]
@@ -391,6 +392,76 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert %{"1" => {:created, nil}} = outcomes(run)
       assert [%{from_path: "/loop", to: "/fixed"}] = redirects(site)
+    end
+  end
+
+  describe "an item under a parent" do
+    setup %{site: site} do
+      %{admin: migration_admin!(site, ["admin:dashboard:migration", "admin:dashboard:blog:post"])}
+    end
+
+    defp category(id, title, parent \\ nil),
+      do: %{"id" => id, "title" => title, "slug" => String.downcase(title), "parent" => parent}
+
+    defp collections(site) do
+      MishkaBlog.Collection
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Map.new(&{&1.name, &1})
+    end
+
+    defp parent_name(collections, name) do
+      parent_id = collections[name].parent_collection_id
+      Enum.find_value(collections, fn {parent, %{id: id}} -> id == parent_id && parent end)
+    end
+
+    test "is written under its parent when the source lists it first, on an earlier page", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [
+        category(3, "Guides", 2),
+        category(4, "Elixir", 3),
+        category(5, "Releases"),
+        category(2, "News")
+      ]
+
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert run.report.counts == %{created: 4, updated: 0, skipped: 0, failed: 0}
+      assert Enum.map(run.report.entries, & &1.source_id) == ["5", "2", "3", "4"]
+
+      collections = collections(site)
+      assert parent_name(collections, "Guides") == "News"
+      assert parent_name(collections, "Elixir") == "Guides"
+      assert is_nil(collections["News"].parent_collection_id)
+      assert is_nil(collections["Releases"].parent_collection_id)
+    end
+
+    test "is skipped while its parent cannot be written, and written once a run writes it", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [category(3, "Guides", 2), %{category(2, "News") | "title" => nil}]
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert %{"2" => {:failed, _reason}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert collections(site) == %{}
+
+      again =
+        migrate!(site, admin, %{"category" => [category(3, "Guides", 2), category(2, "News")]})
+
+      assert %{"2" => {:created, nil}, "3" => {:created, nil}} = outcomes(again)
+      assert parent_name(collections(site), "Guides") == "News"
+    end
+
+    test "whose parent the source never lists, or that is its own parent, is settled after the kind",
+         %{site: site, admin: admin} do
+      rows = [category(3, "Guides", 99), category(4, "Loop", 4), category(2, "News")]
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert %{"2" => {:created, nil}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert %{"4" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert Map.keys(collections(site)) == ["News"]
     end
   end
 

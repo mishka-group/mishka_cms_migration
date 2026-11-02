@@ -18,6 +18,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
+  @written %{"category" => :created, "tag" => :created}
   @recordings %{
     "user" => "users",
     "category" => "categories",
@@ -336,7 +337,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, page and post it found, each skipped with no target yet" do
+    test "reports every user, term, page and post it found: terms to create in the Blog, the rest with no target yet" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -350,13 +351,21 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert Enum.map(run.report.kinds, & &1.kind) == WordPress.kinds()
 
       for %{kind: kind} = counts <- run.report.kinds do
-        found = length(recorded(@recordings[kind]))
+        planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
-                 %{created: 0, updated: 0, skipped: found, failed: 0}
+                 Map.put(
+                   %{created: 0, updated: 0, skipped: 0, failed: 0},
+                   planned,
+                   length(recorded(@recordings[kind]))
+                 )
       end
 
-      assert Enum.all?(run.report.entries, &(&1.reason == "no_target"))
+      assert Enum.all?(
+               run.report.entries,
+               &({&1.outcome, &1.reason} in [{:created, nil}, {:skipped, "no_target"}])
+             )
+
       assert Enum.any?(run.report.entries, &(&1.title == "نصب وردپرس روی سرور"))
 
       assert MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false) ==

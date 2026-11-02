@@ -32,7 +32,10 @@ defmodule MishkaCmsMigration.Application do
 
   @sources [MishkaCmsMigration.Sources.WordPress]
 
-  @targets []
+  @blog_targets [
+    MishkaCmsMigration.Targets.BlogCollection,
+    MishkaCmsMigration.Targets.BlogTag
+  ]
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
@@ -52,10 +55,14 @@ defmodule MishkaCmsMigration.Application do
 
   @doc """
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
-  through an existing CMS action. None yet.
+  through an existing CMS action: categories and tags into Mishka Blog
+  (`MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`).
+
+  Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,
+  so on a node without it they are left out and their kinds are skipped as `"no_target"`.
   """
   @spec targets() :: [module()]
-  def targets, do: @targets
+  def targets, do: Enum.filter(@blog_targets, &Code.ensure_loaded?/1)
 
   @doc """
   Every mishka_installer plugin this extension ships, all of which `start/2` supervises. A plugin
