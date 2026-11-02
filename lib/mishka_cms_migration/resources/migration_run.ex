@@ -100,20 +100,23 @@ defmodule MishkaCmsMigration.MigrationRun do
   The Migration page lists a site's runs, every site's for a master, as a Gervaz table laid out
   like the Pages table: the source with its icon (`source_icon/1`) and the run's short id, the
   address it is moved from with the source site's name under it, where the run is as a coloured pill
-  (`status_label/1`, `status_class/1`), what the last dry run or import did, for a master the site,
-  and when it started. Each column is as narrow as its cell can be drawn without cutting it off, an
-  address truncating with the whole of it as its tooltip, so the table fits beside the admin's
-  sidebar on a laptop screen without scrolling sideways. It filters by status, source, for a master
-  the site, and the days a run started in, and keeps them in the address. The table follows the
-  run's PubSub notifications, so a run moving on shows without a reload.
+  (`status_label/1`, `status_class/1`), what the last dry run or import did as a pill for each
+  outcome it counted (`result_outcomes/1`, `outcome_class/1`, with `result_summary/1` as their
+  tooltip), for a master the site, and when it started. Each column is as narrow as its cell can be
+  drawn without cutting it off, an address truncating with the whole of it as its tooltip, so the
+  table fits beside the admin's sidebar on a laptop screen without scrolling sideways. It filters
+  by status, source, for a master the site, and the days a run started in, and keeps them in the
+  address. The table follows the run's PubSub notifications, so a run moving on shows without a
+  reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
   one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
   admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
-  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`). A row expands
-  to what its last dry run or import found, kind by kind: the kind in words (`kind_label/1`), how
-  many items the source listed, what was done with them (`result_summary/1`) and why the skipped
-  ones were skipped (`reason_label/1`).
+  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by
+  the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
+  as its tooltip and accessible name. A row expands to what its last dry run or import found, kind
+  by kind: the kind in words (`kind_label/1`), how many items the source listed, what was done with
+  them (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default: the
   site's address and user (`connection`), the secret, and for a master the site the content moves
@@ -366,25 +369,41 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
-            width "minmax(120px,1.6fr)"
+            width "minmax(130px,1.6fr)"
           end
 
           render fn record ->
             assigns = %{
               summary: MishkaCmsMigration.MigrationRun.result_summary(record.report),
+              outcomes: MishkaCmsMigration.MigrationRun.result_outcomes(record.report),
               reported?: is_map(record.report)
             }
 
             ~H"""
-            <span
+            <div
               data-role="run-result"
-              class={[
-                "text-[12.5px] font-medium",
-                if(@reported?, do: "text-[#3a382f]", else: "text-[#a8a5a0]")
-              ]}
+              title={@reported? && @summary}
+              class="flex flex-wrap items-center gap-[4px]"
             >
-              {@summary}
-            </span>
+              <span
+                :for={{outcome, count} <- @outcomes}
+                data-role="run-outcome"
+                data-outcome={outcome}
+                data-count={count}
+                class={[
+                  "inline-flex w-fit items-center rounded-[20px] px-[9px] py-[3px] text-[10px] font-bold whitespace-nowrap",
+                  MishkaCmsMigration.MigrationRun.outcome_class(outcome)
+                ]}
+              >
+                {MishkaCmsMigration.MigrationRun.outcome_count(outcome, count)}
+              </span>
+              <span
+                :if={@outcomes == []}
+                class="text-[12.5px] font-medium text-[#a8a5a0]"
+              >
+                {if @reported?, do: dgettext("mishka_gervaz", "Nothing to move"), else: @summary}
+              </span>
+            </div>
             """
           end
         end
@@ -498,7 +517,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Run again") end
-            icon "hero-play"
+            icon "hero-arrow-path"
           end
         end
 
@@ -538,10 +557,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       empty_state message: dgettext_noop("mishka_gervaz", "No runs found"),
                   icon: "hero-arrows-right-left"
-
-      presentation do
-        ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
-      end
     end
 
     form do
@@ -1114,11 +1129,38 @@ defmodule MishkaCmsMigration.MigrationRun do
   @spec result_summary(map() | nil) :: String.t()
   def result_summary(%{counts: counts}) do
     Enum.map_join(MishkaCmsMigration.Report.outcomes(), " · ", fn outcome ->
-      "#{MishkaCmsCore.Localized.number(Map.get(counts, outcome, 0))} #{outcome_label(outcome)}"
+      outcome_count(outcome, Map.get(counts, outcome, 0))
     end)
   end
 
   def result_summary(_no_report), do: "—"
+
+  @doc """
+  The outcomes a run's `report` counts more than none of, in `MishkaCmsMigration.Report.outcomes/0`
+  order, each with its count: `[created: 3, skipped: 2]`. Empty before the first dry run, and for a
+  report whose source listed nothing.
+  """
+  @spec result_outcomes(map() | nil) :: [{atom(), pos_integer()}]
+  def result_outcomes(%{counts: counts}) do
+    for outcome <- MishkaCmsMigration.Report.outcomes(),
+        count = Map.get(counts, outcome, 0),
+        count > 0,
+        do: {outcome, count}
+  end
+
+  def result_outcomes(_no_report), do: []
+
+  @doc "One outcome's count in words, as its pill in the Result column reads: `\"3 created\"`."
+  @spec outcome_count(atom(), non_neg_integer()) :: String.t()
+  def outcome_count(outcome, count),
+    do: "#{MishkaCmsCore.Localized.number(count)} #{outcome_label(outcome)}"
+
+  @doc "The pill colours of an outcome's count: green created, blue updated, grey skipped, red failed."
+  @spec outcome_class(atom()) :: String.t()
+  def outcome_class(:created), do: "bg-[#e6f6ee] text-[#177a53]"
+  def outcome_class(:updated), do: "bg-[#eaf1fb] text-[#3a6cb5]"
+  def outcome_class(:skipped), do: "bg-[#f2f1ec] text-[#8a877f]"
+  def outcome_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
 
   defp outcome_label(:created), do: dgettext("mishka_gervaz", "created")
   defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")

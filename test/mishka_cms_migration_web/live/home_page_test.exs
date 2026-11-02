@@ -108,6 +108,19 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     settled(view)
   end
 
+  defp outcomes(view) do
+    pills =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|[data-role="run-result"] [data-role="run-outcome"]|)
+
+    pills
+    |> LazyHTML.attribute("data-outcome")
+    |> Enum.zip(pills |> LazyHTML.attribute("data-count") |> Enum.map(&String.to_integer/1))
+    |> Map.new()
+  end
+
   defp status(run),
     do: MishkaCmsMigration.get_run!(run.id, tenant: run.site_id, authorize?: false).status
 
@@ -231,7 +244,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert has_element?(view, ~s|[data-role="run-source"]|, "Fake")
       assert has_element?(view, "#migration-runs-table", "old.example.com")
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
-      assert has_element?(view, ~s|[data-role="run-result"]|, "1 created")
+      assert outcomes(view) == %{"created" => 1}
+      assert has_element?(view, ~s|[data-role="run-result"][title*="1 created"]|)
     end
 
     test "shows no other site's runs", %{conn: conn, site: site} do
@@ -387,6 +401,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
       assert has_element?(view, ~s|[data-role="run-report-note"]|, "No dry run yet.")
+      assert outcomes(view) == %{}
 
       assert row_action!(view, "dry_run", run) =~ "Dry run started."
       assert [_job] = assert_triggered(run, :run_dry_run)
@@ -402,7 +417,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert has_element?(view, ~s|[data-role="run-result"]|, "57 skipped")
+      assert outcomes(view) == %{"skipped" => 57}
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
 
       for {kind, label, found} <- [
@@ -461,8 +476,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       view = open!(conn, admin)
 
-      assert has_element?(view, action("dry_run", pending), "Dry run")
-      assert has_element?(view, action("dry_run", ready), "Run again")
+      assert has_element?(view, ~s|#{action("dry_run", pending)}[title="Dry run"]|)
+      assert has_element?(view, ~s|#{action("dry_run", ready)}[title="Run again"]|)
 
       for run <- [running, done, cancelled],
           do: refute(has_element?(view, action("dry_run", run)))
