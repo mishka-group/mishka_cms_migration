@@ -62,6 +62,18 @@ defmodule MishkaCmsMigration.EventsTest do
       assert actor_id == admin.id
     end
 
+    test "says :update for an item a second run writes over its earlier row", %{
+      site: site,
+      admin: admin
+    } do
+      migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
+      assert_receive {:before_import, %{action: :create}, _meta}
+
+      migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/newer")]})
+      assert_receive {:before_import, %{action: :update, item: %Item{source_id: "1"}}, _meta}
+      assert redirect(site, "/old").to == "/newer"
+    end
+
     test "lets a plugin skip, take or change an item", %{site: site, admin: admin} do
       rows = [
         redirect_row(1, "/skipped", "/a", %{"gate" => "skip"}),

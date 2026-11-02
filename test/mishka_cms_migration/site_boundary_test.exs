@@ -65,6 +65,36 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
              )
   end
 
+  test "an import writes only to its own site", %{site_b: site_b} do
+    assert Ash.read!(MishkaCmsCore.Runtime.Redirect, tenant: site_b.id, authorize?: false) == []
+  end
+
+  test "a run's steps and its read are refused to another site's admin and to a user without the area",
+       %{site_a: site_a, admin_a: admin_a, admin_b: admin_b} do
+    writer =
+      create_user_with_permissions!(["admin:dashboard:runtime:redirect"], site_id: site_a.id)
+
+    pending = create_run!(site_a, admin_a, %{"redirect" => [redirect_row(2, "/b", "/c")]})
+    reported = site_a |> create_run!(admin_a, %{}) |> dry_run!(admin_a)
+
+    for actor <- [admin_b, writer] do
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.get_run(pending.id, actor: actor, tenant: site_a.id)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.start_dry_run(pending, actor: actor, tenant: site_a.id)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.start_import(reported, actor: actor, tenant: site_a.id)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.cancel_run(pending, actor: actor, tenant: site_a.id)
+    end
+
+    assert MishkaCmsMigration.get_run!(pending.id, actor: admin_a, tenant: site_a.id).status ==
+             :pending
+  end
+
   test "a user without the migration area is refused, on their own site too", %{site_a: site_a} do
     writer =
       create_user_with_permissions!(["admin:dashboard:runtime:redirect"], site_id: site_a.id)

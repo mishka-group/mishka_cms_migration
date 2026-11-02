@@ -232,6 +232,33 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert Enum.count(run.report.entries, &(&1.reason == "duplicate_in_source")) == 2
     end
 
+    test "records a kind no target writes as skipped, and reports a row with no id without recording it",
+         %{site: site, admin: admin} do
+      items = %{
+        "redirect" => [%{"from" => "/no-id", "to" => "/x"}],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      run = migrate!(site, admin, items)
+
+      assert run.report.counts == %{create: 0, update: 0, skip: 1, fail: 1}
+      assert %{nil => {:fail, reason}, "9" => {:skip, "no_target"}} = outcomes(run)
+      assert reason =~ "source_id"
+
+      assert [
+               %{
+                 source_kind: "note",
+                 source_id: "9",
+                 outcome: :skipped,
+                 reason: "no_target",
+                 target_id: nil
+               }
+             ] =
+               items(site)
+
+      assert redirects(site) == []
+    end
+
     test "writes as the admin, so a row their permissions do not cover fails", %{site: site} do
       admin = migration_admin!(site, ["admin:dashboard:migration"])
       run = migrate!(site, admin, %{"redirect" => @rows})
