@@ -48,7 +48,8 @@ defmodule MishkaCmsMigration.ProvisionTest do
     assert stored("admin:dashboard:migration") == 1
 
     assert {:ok, _run} =
-             MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
+             MishkaCmsMigration.create_run(
+               %{source: "fake", source_host: "old.example.com", secret: "letmein"},
                actor: admin,
                tenant: site.id
              )
