@@ -21,7 +21,9 @@ defmodule MishkaCmsMigration.Events do
       }
 
   A plugin that knows the piece answers with `html` set to the markup it becomes. A piece nobody
-  converts is kept as text: `raw`, escaped.
+  converts is kept as text: `raw`, escaped. While one of the event's plugins is not loaded, so the
+  event cannot run, the item is skipped with `"plugins_cannot_run"` rather than written without the
+  conversion that plugin would have made.
 
   ## `migration:item:before_import`
 
@@ -75,9 +77,11 @@ defmodule MishkaCmsMigration.Events do
   def finished_event, do: @finished
 
   @doc """
-  The markup a plugin converts `piece` of `item` to, or `nil` when none does.
+  The markup a plugin converts `piece` of `item` to: `{:ok, html}`, `:unconverted` when none does,
+  or `:cannot_run` while one of the event's plugins is not loaded.
   """
-  @spec convert(map(), Item.t(), map(), map() | nil) :: String.t() | nil
+  @spec convert(map(), Item.t(), map(), map() | nil) ::
+          {:ok, String.t()} | :unconverted | :cannot_run
   def convert(piece, item, run, actor) do
     payload =
       Map.merge(base(run), %{
@@ -89,9 +93,10 @@ defmodule MishkaCmsMigration.Events do
         html: nil
       })
 
-    case Hook.call(@convert, payload, meta: meta(run, actor)) do
-      %{html: html} when is_binary(html) -> html
-      _unconverted -> nil
+    case Hook.call(@convert, payload, meta: meta(run, actor), cannot_run: :cannot_run) do
+      :cannot_run -> :cannot_run
+      %{html: html} when is_binary(html) -> {:ok, html}
+      _unconverted -> :unconverted
     end
   end
 

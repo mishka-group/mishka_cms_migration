@@ -52,9 +52,8 @@ defmodule MishkaCmsMigration.Writer do
   end
 
   defp written(state, page, item, action, record) do
-    item = convert(state, item)
-
-    with {:import, item} <- Events.before_import(item, action, state.run, state.actor) do
+    with {:ok, item} <- convert(state, item),
+         {:import, item} <- Events.before_import(item, action, state.run, state.actor) do
       Target.write(page.target, item, record, target_context(state))
     end
   rescue
@@ -103,15 +102,33 @@ defmodule MishkaCmsMigration.Writer do
 
   defp note(_state, _kind, _source_id, _outcome, _reason), do: nil
 
-  defp convert(state, %Item{content: [_ | _] = content} = item),
-    do: %{item | content: Enum.map(content, &converted(state, item, &1))}
+  defp convert(state, %Item{content: content} = item) when is_list(content) do
+    case convert_pieces(state, item, content, []) do
+      {:ok, pieces} -> {:ok, %{item | content: pieces}}
+      :cannot_run -> {:skip, "plugins_cannot_run"}
+    end
+  end
 
-  defp convert(_state, item), do: item
+  defp convert(_state, item), do: {:ok, item}
 
-  defp converted(_state, _item, %{html: html} = piece) when is_binary(html), do: piece
+  defp convert_pieces(_state, _item, [], done), do: {:ok, Enum.reverse(done)}
 
-  defp converted(state, item, piece),
-    do: %{piece | html: Events.convert(piece, item, state.run, state.actor) || escaped(piece.raw)}
+  defp convert_pieces(state, item, [piece | rest], done) do
+    case converted(state, item, piece) do
+      {:ok, piece} -> convert_pieces(state, item, rest, [piece | done])
+      :cannot_run -> :cannot_run
+    end
+  end
+
+  defp converted(_state, _item, %{html: html} = piece) when is_binary(html), do: {:ok, piece}
+
+  defp converted(state, item, piece) do
+    case Events.convert(piece, item, state.run, state.actor) do
+      {:ok, html} -> {:ok, %{piece | html: html}}
+      :unconverted -> {:ok, %{piece | html: escaped(piece.raw)}}
+      :cannot_run -> :cannot_run
+    end
+  end
 
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()

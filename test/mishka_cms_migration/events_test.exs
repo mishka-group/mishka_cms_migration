@@ -131,6 +131,25 @@ defmodule MishkaCmsMigration.EventsTest do
       refute description =~ "<b>"
       assert description =~ "[gallery]"
     end
+
+    test "skips an item with a piece to convert while one of its plugins cannot run", %{
+      site: site,
+      admin: admin
+    } do
+      MishkaCmsCore.Test.EventCannotRun.stub!(Events.convert_event())
+
+      rows = [
+        redirect_row(1, "/to-convert", "/a", %{"content" => [%{"name" => "shout", "raw" => "hi"}]}),
+        redirect_row(2, "/converted", "/b", %{"content" => [%{"html" => "<p>ready</p>"}]})
+      ]
+
+      run = migrate!(site, admin, %{"redirect" => rows})
+
+      assert run.report.counts == %{create: 1, update: 0, skip: 1, fail: 0}
+      assert is_nil(redirect(site, "/to-convert"))
+      assert redirect(site, "/converted").description == "<p>ready</p>"
+      assert %{outcome: :skipped, reason: "plugins_cannot_run", target_id: nil} = item(site, "1")
+    end
   end
 
   describe "migration:import:finished" do

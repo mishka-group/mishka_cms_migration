@@ -25,7 +25,8 @@ defmodule MishkaCmsMigration.Report do
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * a plugin's own reason, from `migration:item:before_import`, or `"plugins_cannot_run"` while
-      one of that event's plugins is not loaded.
+      one of the plugins of that event, or of `migration:content:convert` for an item with a piece
+      to convert, is not loaded.
     * for a failure, what the source or the CMS action answered.
 
   `kinds` lists each kind in the order it was walked. `entries` are in the order the items were met.
