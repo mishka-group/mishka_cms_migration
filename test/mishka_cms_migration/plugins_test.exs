@@ -55,7 +55,7 @@ defmodule MishkaCmsMigration.PluginsTest do
 
     assert {:error, :not_installed} = Target.fetch("redirect")
     run = migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
-    assert [%{outcome: :skip, reason: "no_target"}] = run.report.entries
+    assert [%{outcome: :skipped, reason: "no_target"}] = run.report.entries
   end
 
   test "a run whose source plugin is gone when its job runs fails with the reason" do

@@ -17,9 +17,9 @@ defmodule MishkaCmsMigration.ReportTest do
   test "counts every item and keeps only the last entries, in the order they were met" do
     total = Report.max_entries() * 2 + 500
 
-    report = Report.new() |> add_many("post", 1..total, :create) |> Report.done()
+    report = Report.new() |> add_many("post", 1..total, :created) |> Report.done()
 
-    assert report.counts == %{create: total, update: 0, skip: 0, fail: 0}
+    assert report.counts == %{created: total, updated: 0, skipped: 0, failed: 0}
     assert length(report.entries) == Report.max_entries()
     assert hd(report.entries).source_id == "#{total - Report.max_entries() + 1}"
     assert List.last(report.entries).source_id == "#{total}"
@@ -29,11 +29,11 @@ defmodule MishkaCmsMigration.ReportTest do
   test "lists each kind that had an item, in the order the kinds were met" do
     report =
       Report.new()
-      |> add_many("user", 1..2, :create)
-      |> add_many("post", 1..1, :skip)
-      |> add_many("user", 3..3, :fail)
+      |> add_many("user", 1..2, :created)
+      |> add_many("post", 1..1, :skipped)
+      |> add_many("user", 3..3, :failed)
       |> Report.done()
 
-    assert [%{kind: "user", create: 2, fail: 1}, %{kind: "post", skip: 1}] = report.kinds
+    assert [%{kind: "user", created: 2, failed: 1}, %{kind: "post", skipped: 1}] = report.kinds
   end
 end

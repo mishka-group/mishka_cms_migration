@@ -31,10 +31,11 @@ defmodule MishkaCmsMigration.Events do
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
-        action: :create, item: %MishkaCmsMigration.Item{}, decision: :import, reason: nil
+        outcome: :created, item: %MishkaCmsMigration.Item{}, decision: :import, reason: nil
       }
 
-  `action` is `:create` or `:update`. A plugin may answer with a changed `item` (its `kind` and
+  `outcome` is what the import will record once the item is written: `:created` for a new row,
+  `:updated` for one an earlier run wrote. A plugin may answer with a changed `item` (its `kind` and
   `source_id` stay as they were), with `decision: :skip` and a `reason` to leave the item out, or
   with `decision: :take` when it wrote the item itself. A skipped or taken item is recorded as
   skipped, with the plugin's reason. An answer of any other shape imports the item as it was.
@@ -48,7 +49,7 @@ defmodule MishkaCmsMigration.Events do
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
-        report: %{counts: %{create: 10, update: 2, skip: 1, fail: 0}, kinds: [...], entries: [...]}
+        report: %{counts: %{created: 10, updated: 2, skipped: 1, failed: 0}, kinds: [...], entries: [...]}
       }
 
   What a plugin answers is not used.
@@ -62,7 +63,7 @@ defmodule MishkaCmsMigration.Events do
   @finished "migration:import:finished"
 
   @typedoc "What a plugin decides for an item about to be written."
-  @type decision :: {:import, Item.t()} | {:skip, String.t()}
+  @type decision :: {:import, Item.t()} | {:skipped, String.t()}
 
   @doc "The event a piece of content is offered on."
   @spec convert_event() :: String.t()
@@ -101,12 +102,13 @@ defmodule MishkaCmsMigration.Events do
   end
 
   @doc """
-  What the plugins decide for `item` about to be written by `action`: `{:import, item}`, with the
-  item as a plugin left it, or `{:skip, reason}`.
+  What the plugins decide for `item` about to be written as `outcome`: `{:import, item}`, with the
+  item as a plugin left it, or `{:skipped, reason}`.
   """
-  @spec before_import(Item.t(), :create | :update, map(), map() | nil) :: decision()
-  def before_import(%Item{} = item, action, run, actor) do
-    payload = Map.merge(base(run), %{action: action, item: item, decision: :import, reason: nil})
+  @spec before_import(Item.t(), :created | :updated, map(), map() | nil) :: decision()
+  def before_import(%Item{} = item, outcome, run, actor) do
+    payload =
+      Map.merge(base(run), %{outcome: outcome, item: item, decision: :import, reason: nil})
 
     @before_import
     |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run)
@@ -138,12 +140,12 @@ defmodule MishkaCmsMigration.Events do
     do: {:import, %{changed | kind: item.kind, source_id: item.source_id}}
 
   defp decided(%{decision: :skip} = answer, _item),
-    do: {:skip, reason(answer, "skipped by a plugin")}
+    do: {:skipped, reason(answer, "skipped by a plugin")}
 
   defp decided(%{decision: :take} = answer, _item),
-    do: {:skip, reason(answer, "taken by a plugin")}
+    do: {:skipped, reason(answer, "taken by a plugin")}
 
-  defp decided(:cannot_run, _item), do: {:skip, "plugins_cannot_run"}
+  defp decided(:cannot_run, _item), do: {:skipped, "plugins_cannot_run"}
   defp decided(_answer, item), do: {:import, item}
 
   defp reason(%{reason: reason}, _default) when is_binary(reason) and reason != "", do: reason

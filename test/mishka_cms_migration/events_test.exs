@@ -52,7 +52,7 @@ defmodule MishkaCmsMigration.EventsTest do
                run_id: ^run_id,
                source: "fake",
                source_host: "old.example.com",
-               action: :create,
+               outcome: :created,
                decision: :import,
                reason: nil,
                item: %Item{kind: "redirect", source_id: "1"}
@@ -62,15 +62,15 @@ defmodule MishkaCmsMigration.EventsTest do
       assert actor_id == admin.id
     end
 
-    test "says :update for an item a second run writes over its earlier row", %{
+    test "says :updated for an item a second run writes over its earlier row", %{
       site: site,
       admin: admin
     } do
       migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
-      assert_receive {:before_import, %{action: :create}, _meta}
+      assert_receive {:before_import, %{outcome: :created}, _meta}
 
       migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/newer")]})
-      assert_receive {:before_import, %{action: :update, item: %Item{source_id: "1"}}, _meta}
+      assert_receive {:before_import, %{outcome: :updated, item: %Item{source_id: "1"}}, _meta}
       assert redirect(site, "/old").to == "/newer"
     end
 
@@ -83,7 +83,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{create: 1, update: 0, skip: 2, fail: 0}
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0}
       assert is_nil(redirect(site, "/skipped")) and is_nil(redirect(site, "/taken"))
       assert redirect(site, "/changed").to == "/renamed"
       assert %{outcome: :skipped, reason: "held back", target_id: nil} = item(site, "1")
@@ -104,7 +104,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
 
-      assert run.report.counts == %{create: 0, update: 0, skip: 1, fail: 0}
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0}
       assert is_nil(redirect(site, "/old"))
       assert %{outcome: :skipped, target_id: nil} = item(site, "1")
     end
@@ -157,7 +157,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{create: 1, update: 0, skip: 1, fail: 0}
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0}
       assert is_nil(redirect(site, "/to-convert"))
       assert redirect(site, "/converted").description == "<p>ready</p>"
       assert %{outcome: :skipped, reason: "plugins_cannot_run", target_id: nil} = item(site, "1")
@@ -178,7 +178,7 @@ defmodule MishkaCmsMigration.EventsTest do
                source: "fake",
                source_host: "old.example.com",
                report: %{
-                 counts: %{create: 1},
+                 counts: %{created: 1},
                  kinds: [%{kind: "redirect"}],
                  entries: [%{source_id: "1"}]
                }

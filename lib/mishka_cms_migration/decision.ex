@@ -32,7 +32,7 @@ defmodule MishkaCmsMigration.Decision do
         }
 
   @typedoc "What to do with an item: write a new row, update `record`, or leave it, and why."
-  @type plan :: {:create, nil} | {:update, struct()} | {:skip, String.t()}
+  @type plan :: {:created, nil} | {:updated, struct()} | {:skipped, String.t()}
 
   @doc "What `items` of `kind`, one page of `run`'s source, are decided against."
   @spec page(map(), String.t(), [Item.t()]) :: page()
@@ -44,21 +44,21 @@ defmodule MishkaCmsMigration.Decision do
 
   @doc "What to do with `item` of `page`."
   @spec plan(page(), Item.t()) :: plan()
-  def plan(%{target: nil}, _item), do: {:skip, "no_target"}
+  def plan(%{target: nil}, _item), do: {:skipped, "no_target"}
 
   def plan(page, item) do
     case Map.get(page.known, item.source_id) do
       %{target_id: id} = known when id != nil -> decide(item, known, Map.get(page.current, id))
-      _never_written -> {:create, nil}
+      _never_written -> {:created, nil}
     end
   end
 
   defp decide(item, known, record) do
     cond do
-      known.content_hash == Item.hash(item) -> {:skip, "unchanged"}
-      is_nil(record) -> {:skip, "target_missing"}
-      edited?(record, known) -> {:skip, "edited_in_cms"}
-      true -> {:update, record}
+      known.content_hash == Item.hash(item) -> {:skipped, "unchanged"}
+      is_nil(record) -> {:skipped, "target_missing"}
+      edited?(record, known) -> {:skipped, "edited_in_cms"}
+      true -> {:updated, record}
     end
   end
 

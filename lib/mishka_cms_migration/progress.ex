@@ -9,7 +9,7 @@ defmodule MishkaCmsMigration.Progress do
 
       {:migration_progress,
        %{run_id: "…", site_id: "…", mode: :import, kind: "post",
-         counts: %{create: 10, update: 0, skip: 2, fail: 0}}}
+         counts: %{created: 10, updated: 0, skipped: 2, failed: 0}}}
 
   `counts` are the run's so far, every kind together. A screen that shows a run subscribes once it
   has checked the reader may see it.

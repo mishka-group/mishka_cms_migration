@@ -19,17 +19,15 @@ defmodule MishkaCmsMigration.Writer do
 
   alias MishkaCmsMigration.{Events, Item, Report, Target}
 
-  @recorded %{create: :created, update: :updated}
-  @reported %{skipped: :skip, failed: :fail}
-
   @doc """
-  Writes `item` of `page` by `action` (over `record` for an update) and records what happened.
+  Writes `item` of `page` as a new row (`:created`) or over `record` (`:updated`), and records what
+  happened.
   """
-  @spec write(map(), map(), Item.t(), :create | :update, struct() | nil) :: Report.entry()
-  def write(state, page, item, action, record) do
-    case written(state, page, item, action, record) do
-      {:ok, row} -> recorded(state, page, item, row, action)
-      {:skip, reason} -> leave(state, page.kind, item, :skipped, reason)
+  @spec write(map(), map(), Item.t(), :created | :updated, struct() | nil) :: Report.entry()
+  def write(state, page, item, outcome, record) do
+    case written(state, page, item, outcome, record) do
+      {:ok, row} -> recorded(state, page, item, row, outcome)
+      {:skipped, reason} -> leave(state, page.kind, item, :skipped, reason)
       {:error, error} -> leave(state, page.kind, item, :failed, Report.reason(error))
     end
   end
@@ -38,7 +36,7 @@ defmodule MishkaCmsMigration.Writer do
   @spec leave(map(), String.t(), Item.t(), :skipped | :failed, String.t()) :: Report.entry()
   def leave(state, kind, item, outcome, reason) do
     note(state, kind, item.source_id, outcome, reason)
-    Report.entry(kind, item.source_id, item.title, Map.fetch!(@reported, outcome), reason)
+    Report.entry(kind, item.source_id, item.title, outcome, reason)
   end
 
   @doc """
@@ -48,12 +46,12 @@ defmodule MishkaCmsMigration.Writer do
   @spec fail(map(), String.t(), String.t() | nil, String.t()) :: Report.entry()
   def fail(state, kind, source_id, reason) do
     note(state, kind, source_id, :failed, reason)
-    Report.entry(kind, source_id, nil, :fail, reason)
+    Report.entry(kind, source_id, nil, :failed, reason)
   end
 
-  defp written(state, page, item, action, record) do
+  defp written(state, page, item, outcome, record) do
     with {:ok, item} <- convert(state, item),
-         {:import, item} <- Events.before_import(item, action, state.run, state.actor) do
+         {:import, item} <- Events.before_import(item, outcome, state.run, state.actor) do
       Target.write(page.target, item, record, target_context(state))
     end
   rescue
@@ -62,7 +60,7 @@ defmodule MishkaCmsMigration.Writer do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp recorded(state, page, item, row, action) do
+  defp recorded(state, page, item, row, outcome) do
     MishkaCmsMigration.record_item!(
       %{
         source_host: state.run.source_host,
@@ -74,14 +72,14 @@ defmodule MishkaCmsMigration.Writer do
         target_resource: inspect(page.target.resource()),
         target_id: row.id,
         target_updated_at: Map.get(row, :updated_at),
-        outcome: Map.fetch!(@recorded, action),
+        outcome: outcome,
         reason: nil
       },
       tenant: state.run.site_id,
       authorize?: false
     )
 
-    Report.entry(page.kind, item.source_id, item.title, action, nil)
+    Report.entry(page.kind, item.source_id, item.title, outcome, nil)
   end
 
   defp note(%{mode: :import} = state, kind, source_id, outcome, reason)
@@ -105,7 +103,7 @@ defmodule MishkaCmsMigration.Writer do
   defp convert(state, %Item{content: content} = item) when is_list(content) do
     case convert_pieces(state, item, content, []) do
       {:ok, pieces} -> {:ok, %{item | content: pieces}}
-      :cannot_run -> {:skip, "plugins_cannot_run"}
+      :cannot_run -> {:skipped, "plugins_cannot_run"}
     end
   end
 

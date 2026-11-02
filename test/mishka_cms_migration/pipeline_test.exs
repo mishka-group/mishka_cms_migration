@@ -47,8 +47,8 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
 
       assert run.status == :dry_run
-      assert run.report.counts == %{create: 3, update: 0, skip: 0, fail: 0}
-      assert [%{kind: "redirect", create: 3}] = run.report.kinds
+      assert run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0}
+      assert [%{kind: "redirect", created: 3}] = run.report.kinds
       assert Enum.map(run.report.entries, & &1.source_id) == ["1", "2", "3"]
       assert redirects(site) == []
       assert items(site) == []
@@ -62,10 +62,10 @@ defmodule MishkaCmsMigration.PipelineTest do
       dry_run!(run, admin)
 
       assert_receive {:migration_progress,
-                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{create: 2}}}
+                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{created: 2}}}
 
       assert_receive {:migration_progress,
-                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{create: 3}}}
+                      %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{created: 3}}}
     end
 
     test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
@@ -91,8 +91,8 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = site |> create_run!(admin, items) |> dry_run!(admin)
 
-      assert run.report.counts == %{create: 0, update: 0, skip: 1, fail: 1}
-      assert %{nil => {:fail, "unreadable"}, "9" => {:skip, "no_target"}} = outcomes(run)
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 1}
+      assert %{nil => {:failed, "unreadable"}, "9" => {:skipped, "no_target"}} = outcomes(run)
     end
   end
 
@@ -104,7 +104,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = migrate!(site, admin, %{"redirect" => @rows})
 
       assert run.status == :done
-      assert run.report.counts == %{create: 3, update: 0, skip: 0, fail: 0}
+      assert run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0}
       assert run.created_count == 3
       assert is_nil(run.connection_secret)
       assert %DateTime{} = run.finished_at
@@ -134,8 +134,8 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       second = migrate!(site, admin, %{"redirect" => changed})
 
-      assert second.report.counts == %{create: 0, update: 1, skip: 2, fail: 0}
-      assert %{"2" => {:update, nil}, "1" => {:skip, "unchanged"}} = outcomes(second)
+      assert second.report.counts == %{created: 0, updated: 1, skipped: 2, failed: 0}
+      assert %{"2" => {:updated, nil}, "1" => {:skipped, "unchanged"}} = outcomes(second)
       assert Map.new(redirects(site), &{&1.from_path, &1.id}) == written
       assert Enum.find(redirects(site), &(&1.from_path == "/old-two")).to == "/two-moved"
       assert length(items(site)) == 3
@@ -151,7 +151,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = site |> create_run!(admin, %{"redirect" => changed}) |> dry_run!(admin)
 
-      assert run.report.counts == %{create: 0, update: 1, skip: 2, fail: 0}
+      assert run.report.counts == %{created: 0, updated: 1, skipped: 2, failed: 0}
       assert Enum.find(redirects(site), &(&1.from_path == "/old-one")).to == "/one"
     end
 
@@ -171,7 +171,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = migrate!(site, admin, %{"redirect" => changed})
 
-      assert %{"1" => {:skip, "edited_in_cms"}} = outcomes(run)
+      assert %{"1" => {:skipped, "edited_in_cms"}} = outcomes(run)
       assert Enum.find(redirects(site), &(&1.id == edited.id)).to == "/kept-by-admin"
     end
 
@@ -186,7 +186,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       changed = List.replace_at(@rows, 0, %{"id" => 1, "from" => "/old-one", "to" => "/again"})
       run = migrate!(site, admin, %{"redirect" => changed})
 
-      assert %{"1" => {:skip, "target_missing"}} = outcomes(run)
+      assert %{"1" => {:skipped, "target_missing"}} = outcomes(run)
       refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
     end
 
@@ -198,8 +198,8 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = migrate!(site, admin, %{"redirect" => rows})
 
       assert run.status == :done
-      assert run.report.counts == %{create: 2, update: 0, skip: 0, fail: 1}
-      assert %{"1" => {:fail, reason}} = outcomes(run)
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 0, failed: 1}
+      assert %{"1" => {:failed, reason}} = outcomes(run)
       assert byte_size(reason) > 0
 
       assert %{outcome: :failed, target_id: nil, reason: ^reason} =
@@ -221,7 +221,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{create: 2, update: 0, skip: 2, fail: 0}
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 2, failed: 0}
       assert Enum.map(redirects(site), & &1.from_path) == ["/dup-a", "/two"]
 
       assert [{"1", %{outcome: :created, target_id: target_id}}, {"2", _two}] =
@@ -241,8 +241,8 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = migrate!(site, admin, items)
 
-      assert run.report.counts == %{create: 0, update: 0, skip: 1, fail: 1}
-      assert %{nil => {:fail, reason}, "9" => {:skip, "no_target"}} = outcomes(run)
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 1}
+      assert %{nil => {:failed, reason}, "9" => {:skipped, "no_target"}} = outcomes(run)
       assert reason =~ "source_id"
 
       assert [
@@ -263,7 +263,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       admin = migration_admin!(site, ["admin:dashboard:migration"])
       run = migrate!(site, admin, %{"redirect" => @rows})
 
-      assert run.report.counts == %{create: 0, update: 0, skip: 0, fail: 3}
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 0, failed: 3}
       assert redirects(site) == []
       assert Enum.all?(items(site), &(&1.outcome == :failed))
     end
@@ -277,7 +277,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       run =
         migrate!(site, admin, %{"redirect" => [%{"id" => 1, "from" => "/loop", "to" => "/fixed"}]})
 
-      assert %{"1" => {:create, nil}} = outcomes(run)
+      assert %{"1" => {:created, nil}} = outcomes(run)
       assert [%{from_path: "/loop", to: "/fixed"}] = redirects(site)
     end
   end
@@ -327,7 +327,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert is_nil(run.connection_secret)
 
-      assert %{status: :done, report: %{counts: %{create: 3}}} =
+      assert %{status: :done, report: %{counts: %{created: 3}}} =
                run |> dry_run!(admin) |> import!(admin)
     end
 
@@ -360,10 +360,10 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = migrate!(site, admin, %{"redirect" => ["not a row" | @rows]})
 
       assert run.status == :done
-      assert run.report.counts == %{create: 3, update: 0, skip: 0, fail: 1}
+      assert run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 1}
 
-      assert [%{source_id: nil, outcome: :fail, reason: reason}] =
-               Enum.filter(run.report.entries, &(&1.outcome == :fail))
+      assert [%{source_id: nil, outcome: :failed, reason: reason}] =
+               Enum.filter(run.report.entries, &(&1.outcome == :failed))
 
       assert byte_size(reason) > 0
       assert length(redirects(site)) == 3
@@ -376,7 +376,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       rows = [Map.put(hd(@rows), "explode", "attrs") | tl(@rows)]
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{create: 2, update: 0, skip: 0, fail: 1}
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 0, failed: 1}
       assert %{outcome: :failed, target_id: nil} = Enum.find(items(site), &(&1.source_id == "1"))
       refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
     end

@@ -8,10 +8,10 @@ defmodule MishkaCmsMigration.Report do
   (`MishkaCmsMigration.MigrationRun`'s `report`) and handed to `migration:import:finished`.
 
       %{
-        counts: %{create: 2, update: 1, skip: 1, fail: 0},
-        kinds: [%{kind: "post", create: 2, update: 1, skip: 1, fail: 0}],
+        counts: %{created: 2, updated: 1, skipped: 1, failed: 0},
+        kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0}],
         entries: [
-          %{kind: "post", source_id: "12", title: "Hello", outcome: :skip, reason: "unchanged"},
+          %{kind: "post", source_id: "12", title: "Hello", outcome: :skipped, reason: "unchanged"},
           ...
         ]
       }
@@ -36,11 +36,11 @@ defmodule MishkaCmsMigration.Report do
   length of `entries`, and every item is still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
-  @outcomes [:create, :update, :skip, :fail]
+  @outcomes [:created, :updated, :skipped, :failed]
   @max_entries 1_000
 
   @typedoc "What happened, or would happen, to an item."
-  @type outcome :: :create | :update | :skip | :fail
+  @type outcome :: :created | :updated | :skipped | :failed
 
   @typedoc "One item's line."
   @type entry :: %{

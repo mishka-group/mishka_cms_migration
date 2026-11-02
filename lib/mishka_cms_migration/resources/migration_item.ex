@@ -29,7 +29,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
 
-  @outcomes [:created, :updated, :skipped, :failed]
+  @outcomes MishkaCmsMigration.Report.outcomes()
   @source [:source_host, :source_kind, :source_id]
   @written [
     :run_id,

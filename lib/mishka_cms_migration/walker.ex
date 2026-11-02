@@ -135,19 +135,19 @@ defmodule MishkaCmsMigration.Walker do
     do: Writer.fail(state, page.kind, source_id, Report.reason(reason))
 
   defp handle(_state, page, {:duplicate, item}),
-    do: Report.entry(page.kind, item.source_id, item.title, :skip, "duplicate_in_source")
+    do: Report.entry(page.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
 
   defp handle(%{mode: :dry_run}, page, {:ok, item}) do
     case Decision.plan(page, item) do
-      {:skip, reason} -> Report.entry(page.kind, item.source_id, item.title, :skip, reason)
-      {action, _record} -> Report.entry(page.kind, item.source_id, item.title, action, nil)
+      {:skipped, reason} -> Report.entry(page.kind, item.source_id, item.title, :skipped, reason)
+      {outcome, _record} -> Report.entry(page.kind, item.source_id, item.title, outcome, nil)
     end
   end
 
   defp handle(%{mode: :import} = state, page, {:ok, item}) do
     case Decision.plan(page, item) do
-      {:skip, reason} -> Writer.leave(state, page.kind, item, :skipped, reason)
-      {action, record} -> Writer.write(state, page, item, action, record)
+      {:skipped, reason} -> Writer.leave(state, page.kind, item, :skipped, reason)
+      {outcome, record} -> Writer.write(state, page, item, outcome, record)
     end
   end
 
