@@ -20,6 +20,7 @@
   inputs: [
     "{mix,.formatter}.exs",
     "{config,lib,test}/**/*.{heex,ex,exs}",
+    "dev/**/*.exs",
     "priv/*/seeds.exs"
   ]
 ]

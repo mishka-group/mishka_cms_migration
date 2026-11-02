@@ -36,7 +36,7 @@ defmodule MishkaCmsMigration.MixProject do
   end
 
   def cli do
-    [preferred_envs: [ci: :test]]
+    [preferred_envs: [ci: :test, playground: :test]]
   end
 
   # Run "mix help compile.app" to learn about applications.
@@ -118,6 +118,7 @@ defmodule MishkaCmsMigration.MixProject do
     [
       test: ["ash.setup --quiet", "test"],
       setup: "ash.setup",
+      playground: ["ash.setup --quiet", "run dev/playground.exs"],
       ci: [
         # First: after `compile` Mix has pruned its code path and the Hex archive's task is gone.
         "hex.audit",
