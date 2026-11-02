@@ -43,6 +43,7 @@ defmodule MishkaCmsMigration do
       define :get_run, action: :read, get_by: :id
       define :start_dry_run, action: :start_dry_run
       define :start_import, action: :start_import
+      define :cancel_run, action: :cancel
       define :finish_dry_run, action: :finish_dry_run, args: [:report]
       define :finish_import, action: :finish_import, args: [:report]
       define :fail_run, action: :fail, args: [:error]

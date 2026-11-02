@@ -16,6 +16,8 @@ defmodule MishkaCmsMigration.MigrationRun do
                                         │            └─┘ start_dry_run again      │
                                         └──────────────────────▶ :failed ◀────────┘
 
+      cancel: :pending, :dry_running, :dry_run or :importing ─▶ :cancelled
+
   An admin creates a run (`:create`), asks for a dry run (`:start_dry_run`) and, once it has
   reported, for the import (`:start_import`). Each request queues a job on the `migration` queue
   (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`) carrying
@@ -24,15 +26,22 @@ defmodule MishkaCmsMigration.MigrationRun do
   through `:finish_dry_run` or `:finish_import`, or the reason it could not go on through `:fail`.
   Those three are the system's own: no actor may run them.
 
-  A run that is done or failed keeps no secret: `connection_secret` is cleared. Running again
-  means a new run; the items earlier runs wrote (`MishkaCmsMigration.MigrationItem`) are what makes
-  it update rather than duplicate. `created_count`, `updated_count`, `skipped_count` and
-  `failed_count` count the items this run was the last to touch.
+  An admin ends a run that is not done with `:cancel`: its job, waiting or running, is cancelled
+  (`MishkaCmsMigration.Resources.Changes.CancelJobs`), so the site can start another, and a job
+  that was already past that point finds the run no longer waiting for it and stops. It is also
+  how a run is ended whose job stopped without saying so, such as one Oban stopped on its last
+  attempt.
+
+  The secret is kept, sealed, from the run's creation until it ends — done, failed or cancelled —
+  and is cleared then. Running again means a new run; the items earlier runs wrote
+  (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
+  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run was
+  the last to touch.
 
   ## Who reaches it
 
-  A run is a site's own. Reading, creating and starting one takes `admin:dashboard:migration` (or
-  `admin:api:migration` over the API). A master (a user whose `site_id` is nil) reaches every
+  A run is a site's own. Reading, creating, starting and cancelling one takes
+  `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose `site_id` is nil) reaches every
   site's runs; a site user only its own site's, whatever tenant it names.
   """
 
@@ -46,11 +55,11 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{BuildStruct, EnqueueJob, SealSecret}
+  alias MishkaCmsMigration.Resources.Changes.{BuildStruct, CancelJobs, EnqueueJob, SealSecret}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
-  @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed]
+  @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed, :cancelled]
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
 
@@ -151,6 +160,20 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:connection_secret, nil)
 
       description "System-internal: saves the import's report"
+    end
+
+    update :cancel do
+      accept []
+
+      validate {TenantContext, require_master: false}
+      validate {Status, from: [:pending, :dry_running, :dry_run, :importing]}
+
+      change set_attribute(:status, :cancelled)
+      change set_attribute(:finished_at, &DateTime.utc_now/0)
+      change set_attribute(:connection_secret, nil)
+      change CancelJobs
+
+      description "Ends a run that is not done: its job is cancelled and its secret cleared"
     end
 
     update :fail do

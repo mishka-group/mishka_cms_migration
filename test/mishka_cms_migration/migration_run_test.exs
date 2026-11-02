@@ -162,6 +162,36 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                |> MishkaCmsMigration.start_dry_run(actor: other_admin, tenant: other_site.id)
     end
 
+    test "cancelling a run that is not done cancels its job and frees the site for another", %{
+      site: site,
+      admin: admin
+    } do
+      run =
+        site
+        |> create_run!(admin, rows())
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      run = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
+
+      assert {run.status, run.connection_secret} == {:cancelled, nil}
+      refute_enqueued worker: DryRunWorker, args: %{run_id: run.id}
+
+      assert {:ok, %{status: :dry_running}} =
+               site
+               |> create_run!(admin, rows())
+               |> MishkaCmsMigration.start_dry_run(actor: admin, tenant: site.id)
+
+      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      assert {:cancel, :not_running} = perform_job(DryRunWorker, args)
+    end
+
+    test "a run that is done cannot be cancelled", %{site: site, admin: admin} do
+      run = site |> create_run!(admin, rows()) |> dry_run!(admin) |> import!(admin)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               MishkaCmsMigration.cancel_run(run, actor: admin, tenant: site.id)
+    end
+
     test "the steps a job takes are refused to every actor, a master's included", %{
       site: site,
       admin: admin
