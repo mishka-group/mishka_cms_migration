@@ -126,7 +126,7 @@ defmodule MishkaCmsMigration.EventsTest do
   end
 
   describe "migration:content:convert" do
-    test "converts a piece the source could not, and an unconverted one is kept as escaped text",
+    test "converts a piece the source could not, and an unconverted one is kept as escaped text and named",
          %{
            site: site,
            admin: admin
@@ -137,12 +137,14 @@ defmodule MishkaCmsMigration.EventsTest do
         %{"name" => "gallery", "raw" => "<b>[gallery]</b>"}
       ]
 
-      run =
-        migrate!(site, admin, %{
-          "redirect" => [redirect_row(1, "/old", "/new", %{"content" => content})]
-        })
-
+      items = %{"redirect" => [redirect_row(1, "/old", "/new", %{"content" => content})]}
+      dry = site |> create_run!(admin, items) |> dry_run!(admin)
+      run = import!(dry, admin)
       run_id = run.id
+
+      assert [%{outcome: :created, reason: "unconverted: shout, gallery"}] = dry.report.entries
+      assert [%{outcome: :created, reason: "unconverted: gallery"}] = run.report.entries
+      assert item(site, "1").reason == "unconverted: gallery"
 
       assert_receive {:convert,
                       %{name: "shout", attrs: %{"level" => "2"}, raw: "see here", html: nil} =

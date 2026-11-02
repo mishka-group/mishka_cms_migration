@@ -1440,8 +1440,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label(kind), do: String.capitalize(kind)
 
   @doc """
-  Why an item was skipped or failed (a `MishkaCmsMigration.Report` entry's `reason`), as the admin
-  reads it. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  Why an item was skipped or failed, or what its write left unconverted (a
+  `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it. A plugin's own reason, and
+  what a source or the CMS answered, read as they are.
   """
   @spec reason_label(String.t()) :: String.t()
   def reason_label("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
@@ -1460,6 +1461,10 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
 
   def reason_label("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
+
+  def reason_label("unconverted: " <> names),
+    do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
+
   def reason_label(reason), do: reason
 
   @doc """

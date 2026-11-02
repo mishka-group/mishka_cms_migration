@@ -52,7 +52,7 @@ defmodule MishkaCmsMigration.MixProject do
     [
       {:decimal, "~> 3.2"},
       {:sourceror, "~> 1.13", only: [:dev, :test]},
-      {:lazy_html, "~> 0.1", only: :test},
+      {:lazy_html, "~> 0.1"},
       {:ash_postgres, "~> 2.15"},
       {:ash_phoenix, "~> 2.3"},
       {:ash, "~> 3.37"},

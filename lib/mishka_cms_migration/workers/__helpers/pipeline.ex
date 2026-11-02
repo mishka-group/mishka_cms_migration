@@ -280,6 +280,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       site_id: state.run.site_id,
       run_id: state.run.id,
       source_host: state.run.source_host,
-      options: state.options
+      options: state.options,
+      conn: state.conn
     }
 end

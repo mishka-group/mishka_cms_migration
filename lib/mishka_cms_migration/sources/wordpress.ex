@@ -54,10 +54,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   `وردپرس`), so the item's `slug` is decoded; one that does not decode to text is kept as it is.
 
     * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
-      `content` is one piece holding `content.raw` as `:html` (blocks are converted later). `attrs`
-      keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`, `template`, `excerpt`
-      (its raw text), and `parent` and `menu_order` for a page, `categories`, `tags`, `sticky` and
-      `format` for a post.
+      `content` is `content.raw` converted (`MishkaCmsMigration.Sources.WordPress.Content`): its
+      blocks, classic paragraphs and core shortcodes as HTML, and a piece for each block or
+      shortcode left to `migration:content:convert`. The reusable blocks and gallery images it names
+      are read from `/wp/v2/blocks` and `/wp/v2/media` with the connection the walk hands
+      `normalize/3` (its context's `conn`); without one, or when WordPress does not answer, they are
+      pieces too. `attrs` keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`,
+      `template`, `excerpt` (its raw text), and `parent` and `menu_order` for a page, `categories`,
+      `tags`, `sticky` and `format` for a post.
     * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
       and `parent` for a category. A term has no `modified_at`.
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
@@ -89,6 +93,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   use MishkaCmsMigration.Source, id: "wordpress", label: "WordPress"
   use Gettext, backend: MishkaCmsCore.Gettext
+
+  alias MishkaCmsMigration.Sources.WordPress.Content
 
   @kinds ["user", "category", "tag", "page", "post"]
 
@@ -180,7 +186,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def normalize(
         %{"id" => id, "title" => %{"raw" => title}, "content" => %{"raw" => html}} = row,
         kind,
-        _context
+        context
       )
       when kind in @entries do
     {:ok,
@@ -191,7 +197,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
        modified_at: Map.get(row, "modified_gmt"),
        attrs: row |> entry_attrs() |> decoded_slug(),
        extra: Map.drop(row, @entry_read),
-       content: [%{html: html}]
+       content: Content.call(html, fetch(context))
      }}
   end
 
@@ -211,6 +217,23 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp fetch(%{conn: %{req: req}}), do: &fetched(req, &1, &2)
+  defp fetch(_context), do: fn _route, _ids -> %{} end
+
+  defp fetched(req, route, ids) do
+    req
+    |> Req.get(
+      url: route,
+      params: [context: "edit", include: Enum.join(ids, ","), per_page: @per_page]
+    )
+    |> by_id()
+  end
+
+  defp by_id({:ok, %Req.Response{status: 200, body: rows}}) when is_list(rows),
+    do: Map.new(rows, &{&1["id"], &1})
+
+  defp by_id(_unanswered), do: %{}
 
   defp parent(%{"parent" => parent}) when is_integer(parent) and parent > 0, do: parent
   defp parent(_row), do: nil

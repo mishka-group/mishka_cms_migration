@@ -8,13 +8,15 @@ defmodule MishkaCmsMigration.Test.WordPress do
   (`test/fixtures/wordpress/rest`, recorded by `dev/wordpress/record.sh`), through `Req.Test`.
 
   `stub!/1` answers each request by its path, without the site's own folder, and its `page`: by
-  default the REST index (`"/wp-json/"`), the signed-in user (`"/wp-json/wp/v2/users/me"`) and the
-  first page of users, categories, tags, pages and posts (`site/0`), from their recordings, with
-  the status and headers WordPress sent (`X-WP-TotalPages` among them). A path answers a request
-  with no `page` or with page 1; `{path, page}` answers that page. A test overrides either with
-  another recording's name, with `:no_site` (an HTML 404, what a site with no REST API answers) or
-  with `:unreachable` (the connection is refused). Any other request is a `:no_site` answer. The
-  other query parameters, `per_page` among them, do not choose the answer.
+  default the REST index (`"/wp-json/"`), the signed-in user (`"/wp-json/wp/v2/users/me"`), the
+  first page of users, categories, tags, pages and posts, and the reusable blocks and media the
+  posts' content names (`site/0`), from their recordings, with the status and headers WordPress sent
+  (`X-WP-TotalPages` among them). A path answers a request with no `page` or with page 1;
+  `{path, page}` answers that page. A test overrides either with another recording's name, with
+  `:no_site` (an HTML 404, what a site with no REST API answers) or with `:unreachable` (the
+  connection is refused). Any other request is a `:no_site` answer. The other query parameters,
+  `per_page` and `include` among them, do not choose the answer: the blocks and the media are
+  answered whole, whichever ids a request names.
 
       stub!(%{"/wp-json/wp/v2/users/me" => "unauthorized-users-me-wrong-password"})
       stub!(%{{"/wp-json/wp/v2/posts", 2} => "posts-page-2"})
@@ -35,7 +37,9 @@ defmodule MishkaCmsMigration.Test.WordPress do
     "/wp-json/wp/v2/categories" => "categories",
     "/wp-json/wp/v2/tags" => "tags",
     "/wp-json/wp/v2/pages" => "pages",
-    "/wp-json/wp/v2/posts" => "posts"
+    "/wp-json/wp/v2/posts" => "posts",
+    "/wp-json/wp/v2/blocks" => "blocks",
+    "/wp-json/wp/v2/media" => "media"
   }
 
   @transport ["content-length", "transfer-encoding", "connection"]

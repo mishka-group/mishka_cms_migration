@@ -67,9 +67,10 @@ defmodule MishkaCmsMigration.Source do
   in the order the source gives them, and pages through each with `list/3` until it answers no
   cursor. The walk does not sort the kinds: a source lists them in the order they must be imported,
   a kind before any kind that points at it, so authors come before the posts that name them. Each
-  listed row goes through `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from
-  `connect/2` or `list/3` fails the run; an error from `normalize/3` fails only that item, and the
-  report says why.
+  listed row goes through `normalize/3`, which is handed the connection `connect/2` answered to read
+  more of the source when a row needs it (`t:context/0`), and then
+  `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails the run; an
+  error from `normalize/3` fails only that item, and the report says why.
 
   ## Its connection form
 
@@ -129,12 +130,17 @@ defmodule MishkaCmsMigration.Source do
     ]
   ]
 
-  @typedoc "What `normalize/3` is told: the run's site, its source host and its options."
+  @typedoc """
+  What `normalize/3` is told: the run's site, its source host and its options, and the connection
+  `connect/2` answered, for a row that names more of the source to read, such as the reusable
+  blocks and gallery images a WordPress post names.
+  """
   @type context :: %{
           site_id: String.t(),
           run_id: String.t(),
           source_host: String.t(),
-          options: map()
+          options: map(),
+          conn: conn()
         }
 
   @doc "The source's id, stored on a run."

@@ -216,7 +216,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       allow_nil? true
       public? true
       constraints max_length: 2000
-      description "Why the item was skipped or failed"
+      description "Why the item was skipped or failed, or what its write left unconverted"
     end
 
     create_timestamp :inserted_at, public?: true

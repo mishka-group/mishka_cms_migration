@@ -5,8 +5,11 @@
 defmodule MishkaCmsMigration.Sources.WordPressTest do
   @moduledoc """
   The WordPress source against what the seeded WordPress answered: signing in and each way a
-  connection is refused, what each kind lists and becomes as an item, how it pages, and a dry run
-  of a whole site.
+  connection is refused, what each kind lists and becomes as an item, how it pages, what a post's
+  content becomes, and a dry run of a whole site.
+
+  A post's content is read for what it means, with LazyHTML: which elements hold which text and
+  which addresses, not its markup as a string.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -32,16 +35,26 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     conn
   end
 
-  defp items!(kind) do
-    stub!()
-    assert {:ok, rows, nil} = WordPress.list(connected!(), kind, nil)
+  defp items!(kind, answers \\ %{}) do
+    stub!(answers)
+    conn = connected!()
+    assert {:ok, rows, nil} = WordPress.list(conn, kind, nil)
 
     Map.new(rows, fn row ->
-      assert {:ok, attrs} = WordPress.normalize(row, kind, @context)
+      assert {:ok, attrs} = WordPress.normalize(row, kind, Map.put(@context, :conn, conn))
       assert {:ok, item} = attrs |> Map.put(:kind, kind) |> Item.build()
       {item.source_id, item}
     end)
   end
+
+  defp html(item), do: item |> Item.html() |> LazyHTML.from_fragment()
+
+  defp texts(html, selector),
+    do: html |> LazyHTML.query(selector) |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+  defp sources(html, selector), do: html |> LazyHTML.query(selector) |> LazyHTML.attribute("src")
+
+  defp pieces(item), do: for(%{name: name} = piece <- item.content, name != nil, do: piece)
 
   defp recorded_ids(recording), do: recording |> recorded() |> Enum.map(&to_string(&1["id"]))
 
@@ -296,10 +309,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert pages["25"].attrs["parent"] == 24
       assert pages["29"].attrs["menu_order"] == 5
       assert pages["3"].attrs["status"] == "draft"
-      assert [%{html: "<!-- wp:paragraph -->" <> _}] = pages["24"].content
+      assert [_ | _] = texts(html(pages["24"]), "p")
     end
 
-    test "a post carries its author, terms, raw content and modified time" do
+    test "a post carries its author, terms, converted content and modified time" do
       posts = items!("post")
       [row] = Enum.filter(recorded("posts"), &(&1["id"] == 38))
       post = posts["38"]
@@ -311,7 +324,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert post.attrs["status"] == "future"
       assert post.attrs["date_gmt"] == row["date_gmt"]
       assert post.modified_at == ~U[2026-11-02 06:22:16Z]
-      assert Item.html(post) == row["content"]["raw"]
+      assert texts(html(post), "p code") == ["future"]
+      refute Item.html(post) =~ "wp:paragraph"
       assert Enum.any?(Map.values(posts), &(&1.title == "نصب وردپرس روی سرور"))
     end
 
@@ -333,6 +347,141 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert WordPress.normalize(row, "comment", @context) ==
                {:error, {:unknown_kind, "comment"}}
+    end
+  end
+
+  describe "a post's content" do
+    test "keeps its core blocks as their HTML, without WordPress's classes and block comments" do
+      post = items!("post")["33"]
+      html = html(post)
+
+      assert texts(html, "p strong") == ["bold"]
+      assert texts(html, "h2") == ["A level two heading"]
+      assert texts(html, "h3") |> Enum.member?("A level three heading")
+      assert texts(html, "ul > li > ul > li") == ["Nested one", "Nested two"]
+      assert texts(html, "ol > li") == ["Step one", "Step two"]
+      assert texts(html, "blockquote cite") |> Enum.member?("A migration proverb")
+      assert texts(html, "table th") == ["Block", "Becomes"]
+      assert [code] = texts(html, "pre > code")
+      assert code =~ ~s(def world, do: "Hello <World> & friends")
+      assert html |> LazyHTML.query("hr") |> Enum.count() == 1
+
+      assert [figure | _] = Enum.to_list(LazyHTML.query(html, "figure:has(> a > img)"))
+
+      assert sources(figure, "img") == [
+               "http://localhost:8089/wp-content/uploads/2026/11/photo.webp"
+             ]
+
+      assert texts(figure, "figcaption") == ["An image linked to its file, with a caption"]
+
+      assert sources(html, "figure > figure > img") |> Enum.map(&Path.basename/1) ==
+               ["gallery-1.jpg", "gallery-2.jpg", "gallery-3.jpg"]
+
+      assert html |> LazyHTML.query("[class]") |> LazyHTML.attribute("class") ==
+               [
+                 "grid gap-6 md:grid-cols-2",
+                 "grid gap-6 md:grid-cols-2",
+                 "grid gap-6",
+                 "custom-widget",
+                 "grid gap-6"
+               ]
+
+      refute Item.html(post) =~ "<!--"
+      assert pieces(post) == []
+    end
+
+    test "lays its columns side by side and inlines the reusable block it names" do
+      html = html(items!("post")["33"])
+
+      assert texts(html, ".md\\:grid-cols-2 > div > p") == [
+               "Text beside an image: the media-text block holds one media item and inner blocks.",
+               "Left column.",
+               "Right column."
+             ]
+
+      assert texts(html, ".grid h3") == ["Get the migration newsletter"]
+
+      assert html
+             |> LazyHTML.query(".grid a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("http://localhost:8089/contact/")
+
+      assert html
+             |> LazyHTML.query("figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+    end
+
+    test "makes paragraphs of a classic post and HTML of its core shortcodes" do
+      post = items!("post")["34"]
+      html = html(post)
+
+      assert [first, second | _] = texts(html, "p")
+      assert first =~ "written in the classic editor"
+      assert second =~ "A second paragraph with bold text"
+      assert texts(html, "p > strong") == ["bold"]
+      assert texts(html, "h2") == ["A heading after the more tag"]
+      assert texts(html, "ul > li") == ["One", "Two"]
+
+      assert [caption] = Enum.to_list(LazyHTML.query(html, "figure:has(> figcaption)"))
+      assert sources(caption, "img") |> Enum.map(&Path.basename/1) == ["hero-300x169.jpg"]
+      assert texts(caption, "figcaption") == ["The hero image, with a caption"]
+
+      assert html
+             |> LazyHTML.query("figure > figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.map(&Path.basename/1) ==
+               ["gallery-1.jpg", "gallery-2.jpg", "gallery-3.jpg"]
+
+      assert sources(html, "video") == [
+               "http://localhost:8089/wp-content/uploads/2026/11/sample.mp4"
+             ]
+
+      assert html
+             |> LazyHTML.query("figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+
+      assert html |> LazyHTML.query("p:has(> img) > br") |> Enum.count() == 2
+      assert texts(html, "pre") == ["preformatted\n   text keeps its spaces"]
+      refute Item.html(post) =~ "[caption"
+      refute Item.html(post) =~ "[gallery"
+    end
+
+    test "leaves a shortcode, a plugin's block and a block WordPress draws itself to convert" do
+      classic = items!("post")["34"]
+      blocks = items!("post")["53"]
+
+      assert [
+               %{name: "unknown_plugin_shortcode", attrs: %{"id" => "7", "title" => "Unknown"}} =
+                 unknown,
+               %{name: "pullbox", attrs: %{"align" => "right"}} = pullbox
+             ] = pieces(classic)
+
+      assert unknown.raw == ~s([unknown_plugin_shortcode id="7" title="Unknown"])
+      assert pullbox.raw =~ ~s([pullbox align="right"]Content inside an enclosing shortcode)
+      assert pullbox.raw =~ "[/pullbox]"
+
+      assert [
+               %{name: "acme/callout", attrs: %{"tone" => "info", "title" => "Heads up"}} =
+                 callout,
+               %{name: "core/latest-posts", attrs: %{"postsToShow" => 2}}
+             ] = pieces(blocks)
+
+      assert callout.raw =~ "<strong>Heads up</strong>"
+      assert texts(html(blocks), "p") |> Enum.member?("Page two starts here.")
+    end
+
+    test "leaves a reusable block and a gallery for a plugin when WordPress does not answer them" do
+      posts =
+        items!("post", %{"/wp-json/wp/v2/blocks" => :no_site, "/wp-json/wp/v2/media" => :no_site})
+
+      assert [%{name: "core/block", attrs: %{"ref" => 54}, raw: raw}] = pieces(posts["33"])
+      assert raw =~ "wp:block"
+      assert texts(html(posts["33"]), "h3") == ["A level three heading"]
+
+      assert %{name: "gallery", attrs: %{"ids" => "6,7,8", "columns" => "3", "link" => "file"}} =
+               Enum.find(pieces(posts["34"]), &(&1.name == "gallery"))
     end
   end
 

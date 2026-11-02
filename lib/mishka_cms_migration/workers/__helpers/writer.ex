@@ -17,6 +17,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   recorded, the item's entry says it failed, with why. A dry run records nothing and writes nothing:
   it reports the plan.
 
+  An item written with a piece of content no plugin converted, kept as escaped text, has its entry
+  and its record say so, naming the pieces: `"unconverted: acme/callout, gallery"`. A dry run asks
+  no plugin, so it names every piece the source left to convert.
+
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
   record's id as its context's `parent_id`. When the parent has none — it failed, was never written,
@@ -34,7 +38,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   Settles `item` by `plan` and answers its entry in the report:
 
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
-      in a dry run;
+      in a dry run, with the pieces of its content left unconverted as its reason;
     * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason in an import; an item
       whose row could not be read has only its kind and, when the row named one, its source id;
     * `:duplicate` — the source listed its id before: reported, never recorded.
@@ -47,7 +51,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     do: entry(state, item, outcome, reason)
 
   def call(%{mode: :dry_run}, %Item{} = item, {outcome, _target, _record}),
-    do: Report.entry(item.kind, item.source_id, item.title, outcome, nil)
+    do:
+      Report.entry(item.kind, item.source_id, item.title, outcome, item |> to_convert() |> note())
 
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
     state
@@ -55,8 +60,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> settled(state, item, outcome)
   end
 
-  defp settled({:ok, _record}, _state, item, outcome),
-    do: Report.entry(item.kind, item.source_id, item.title, outcome, nil)
+  defp settled({:ok, _record, note}, _state, item, outcome),
+    do: Report.entry(item.kind, item.source_id, item.title, outcome, note)
 
   defp settled({:skipped, reason}, state, item, _outcome),
     do: entry(state, item, :skipped, reason)
@@ -75,11 +80,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp written(state, source_item, target, outcome, record) do
     with {:ok, context} <- parented(state, source_item),
-         {:ok, item} <- convert(state, source_item),
-         {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor) do
-      Ash.transact([target.resource(), MigrationItem], fn ->
-        store(state, source_item, item, {outcome, target, record}, context)
-      end)
+         {:ok, item, kept} <- convert(state, source_item),
+         {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
+         note = note(kept),
+         {:ok, written} <-
+           Ash.transact([target.resource(), MigrationItem], fn ->
+             store(state, {source_item, item}, {outcome, target, record}, context, note)
+           end) do
+      {:ok, written, note}
     end
   rescue
     error -> {:error, error}
@@ -87,9 +95,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp store(state, source_item, item, {outcome, target, record}, context) do
+  defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, target, written, outcome) do
+         {:ok, _item} <- recorded(state, source_item, {target, written}, outcome, note) do
       {:ok, written}
     end
   end
@@ -122,7 +130,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp recorded(state, item, target, record, outcome) do
+  defp recorded(state, item, {target, record}, outcome, note) do
     MishkaCmsMigration.record_item(
       %{
         source_host: state.run.source_host,
@@ -135,7 +143,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         target_id: record.id,
         target_updated_at: record.updated_at,
         outcome: outcome,
-        reason: nil,
+        reason: note,
         extra: item.extra
       },
       scope: state.scope
@@ -162,28 +170,43 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp noted(_state, _item, _outcome, _reason), do: :ok
 
   defp convert(state, %Item{content: [_ | _] = content} = item),
-    do: state |> convert_pieces(item, content, []) |> converted(item)
+    do: state |> convert_pieces(item, content, {[], []}) |> converted(item)
 
-  defp convert(_state, item), do: {:ok, item}
+  defp convert(_state, item), do: {:ok, item, []}
 
-  defp converted({:ok, pieces}, item), do: {:ok, %{item | content: pieces}}
+  defp converted({:ok, pieces, kept}, item), do: {:ok, %{item | content: pieces}, kept}
   defp converted(:cannot_run, _item), do: {:skipped, "plugins_cannot_run"}
   defp converted(:failed, _item), do: {:skipped, "plugins_failed"}
 
-  defp convert_pieces(_state, _item, [], done), do: {:ok, Enum.reverse(done)}
+  defp convert_pieces(_state, _item, [], {done, kept}),
+    do: {:ok, Enum.reverse(done), Enum.reverse(kept)}
 
-  defp convert_pieces(state, item, [%{html: html} = piece | rest], done) when is_binary(html),
-    do: convert_pieces(state, item, rest, [piece | done])
+  defp convert_pieces(state, item, [%{html: html} = piece | rest], {done, kept})
+       when is_binary(html),
+       do: convert_pieces(state, item, rest, {[piece | done], kept})
 
-  defp convert_pieces(state, item, [piece | rest], done) do
-    with {:ok, piece} <- piece |> Events.convert(item, state.run, state.actor) |> with_html(piece) do
-      convert_pieces(state, item, rest, [piece | done])
+  defp convert_pieces(state, item, [piece | rest], pieces) do
+    with {:ok, pieces} <-
+           piece |> Events.convert(item, state.run, state.actor) |> with_html(piece, pieces) do
+      convert_pieces(state, item, rest, pieces)
     end
   end
 
-  defp with_html({:ok, html}, piece), do: {:ok, %{piece | html: html}}
-  defp with_html(:unconverted, piece), do: {:ok, %{piece | html: escaped(piece.raw)}}
-  defp with_html(failed, _piece), do: failed
+  defp with_html({:ok, html}, piece, {done, kept}),
+    do: {:ok, {[%{piece | html: html} | done], kept}}
+
+  defp with_html(:unconverted, piece, {done, kept}),
+    do: {:ok, {[%{piece | html: escaped(piece.raw)} | done], [piece.name | kept]}}
+
+  defp with_html(failed, _piece, _pieces), do: failed
+
+  defp to_convert(%Item{content: content}),
+    do: for(%{html: nil, name: name} <- content || [], do: name)
+
+  defp note(names), do: names |> Enum.reject(&is_nil/1) |> Enum.uniq() |> unconverted()
+
+  defp unconverted([]), do: nil
+  defp unconverted(names), do: Report.reason("unconverted: " <> Enum.join(names, ", "))
 
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
