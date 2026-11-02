@@ -651,6 +651,19 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       refute post.content =~ "wp:"
     end
 
+    test "an import keeps a post's table whole, with its header, rows and cells", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin)
+      html = content(posts(site)["Every core block in one post"])
+
+      assert texts(html, "table > thead > tr > th") == ["Block", "Becomes"]
+
+      assert texts(html, "table > tbody > tr > td") ==
+               ["core/paragraph", "text", "core/table", "table"]
+    end
+
     test "an import makes a classic post's paragraphs, and HTML of its [caption] and [gallery]",
          %{
            site: site,
