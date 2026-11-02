@@ -97,10 +97,13 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   ## In the admin
 
-  The Migration page lists a site's runs, every site's for a master, as a Gervaz table: the source,
-  the address it is moved from, where the run is (`status_label/1`), what the last dry run or import
-  did and when it started. The table follows the run's PubSub notifications, so a run moving on
-  shows without a reload.
+  The Migration page lists a site's runs, every site's for a master, as a Gervaz table laid out
+  like the Pages table: the source with its icon (`source_icon/1`) and the run's short id, the
+  address it is moved from with the source site's name under it, where the run is as a coloured pill
+  (`status_label/1`, `status_class/1`), what the last dry run or import did, for a master the site,
+  and when it started. It filters by status, source, for a master the site, and the days a run
+  started in, and keeps them in the address. The table follows the run's PubSub notifications, so a
+  run moving on shows without a reload.
 
   A source's card opens the run's Gervaz form with the card's source as the form's default: the
   site's address and user (`connection`), the secret, and for a master the site the content moves
@@ -123,6 +126,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   use Gettext, backend: MishkaCmsCore.Gettext
 
   import Phoenix.Component, only: [sigil_H: 2]
+  import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
@@ -238,29 +242,73 @@ defmodule MishkaCmsMigration.MigrationRun do
       columns do
         default_sort inserted_at: :desc
 
-        column :source do
+        column :source_info do
+          static true
+          requires [:id, :source]
           label fn -> dgettext("mishka_gervaz", "Source") end
 
           ui do
-            width "minmax(120px,0.8fr)"
+            width "minmax(170px,1.2fr)"
           end
 
-          render fn source ->
-            assigns = %{label: MishkaCmsMigration.Source.label(source)}
+          render fn record ->
+            short_id = String.slice(record.id, 0, 8) <> "…" <> String.slice(record.id, -4, 4)
+
+            assigns = %{
+              id: record.id,
+              short_id: short_id,
+              label: MishkaCmsMigration.Source.label(record.source),
+              icon: MishkaCmsMigration.MigrationRun.source_icon(record.source)
+            }
 
             ~H"""
-            <span data-role="run-source" class="text-[13.5px] font-semibold text-[#17161a]">
-              {@label}
-            </span>
+            <div class="flex min-w-0 items-center gap-[11px]">
+              <span class="grid size-[34px] flex-none place-items-center rounded-[10px] bg-[#f1edfb] text-[#7a5bd0]">
+                <MishkaCmsCore.CoreComponents.icon name={@icon} class="size-[18px]" />
+              </span>
+              <div class="min-w-0">
+                <div
+                  data-role="run-source"
+                  class="truncate text-[13.5px] font-semibold text-[#17161a]"
+                >
+                  {@label}
+                </div>
+                <div class="mt-[2px] flex items-center gap-[5px]">
+                  <span class="font-['Space_Grotesk'] text-[11px] font-medium text-[#a8a5a0]">{@short_id}</span>
+                  <.copy_button
+                    id={"run-id-copy-#{@id}"}
+                    value={@id}
+                    label={dgettext("mishka_gervaz", "Copy run ID")}
+                  />
+                </div>
+              </div>
+            </div>
             """
           end
         end
 
-        column :source_host do
+        column :from do
+          static true
+          requires [:source_host, :extra]
           label fn -> dgettext("mishka_gervaz", "From") end
 
           ui do
-            width "minmax(180px,1.4fr)"
+            width "minmax(150px,1.1fr)"
+          end
+
+          render fn record ->
+            assigns = %{host: record.source_host, name: record.extra["name"]}
+
+            ~H"""
+            <div class="min-w-0">
+              <div class="truncate font-['Space_Grotesk'] text-[12.5px] font-semibold text-[#3a382f]">
+                {@host}
+              </div>
+              <div :if={@name} class="mt-[2px] truncate text-[11px] font-medium text-[#a8a5a0]">
+                {@name}
+              </div>
+            </div>
+            """
           end
         end
 
@@ -276,7 +324,8 @@ defmodule MishkaCmsMigration.MigrationRun do
             assigns = %{
               status: status,
               label: MishkaCmsMigration.MigrationRun.status_label(status),
-              class: MishkaCmsMigration.MigrationRun.status_class(status)
+              class: MishkaCmsMigration.MigrationRun.status_class(status),
+              running?: status in [:dry_running, :importing]
             }
 
             ~H"""
@@ -284,11 +333,11 @@ defmodule MishkaCmsMigration.MigrationRun do
               data-role="run-status"
               data-status={@status}
               class={[
-                "inline-flex items-center rounded-[6px] px-[7px] py-[2px] text-[11px] font-semibold",
+                "inline-flex w-fit items-center gap-[6px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
                 @class
               ]}
             >
-              {@label}
+              <span class={["size-[5px] rounded-full bg-current", @running? && "motion-safe:animate-pulse"]}></span>{@label}
             </span>
             """
           end
@@ -300,43 +349,113 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
-            width "minmax(200px,1.4fr)"
+            width "minmax(280px,1.8fr)"
           end
 
           render fn record ->
-            assigns = %{summary: MishkaCmsMigration.MigrationRun.result_summary(record.report)}
+            assigns = %{
+              summary: MishkaCmsMigration.MigrationRun.result_summary(record.report),
+              reported?: is_map(record.report)
+            }
 
             ~H"""
-            <span data-role="run-result" class="text-[12.5px] text-[#3a382f]">{@summary}</span>
+            <span
+              data-role="run-result"
+              class={[
+                "text-[12.5px] font-medium",
+                if(@reported?, do: "text-[#3a382f]", else: "text-[#a8a5a0]")
+              ]}
+            >
+              {@summary}
+            </span>
+            """
+          end
+        end
+
+        column :site_info do
+          static true
+          requires [:site_id, :site]
+          label fn -> dgettext("mishka_gervaz", "Site") end
+          visible fn state -> state.master_user? end
+
+          ui do
+            width "minmax(140px,1fr)"
+          end
+
+          render fn record ->
+            assigns = %{name: record.site && record.site.name}
+
+            ~H"""
+            <MishkaCmsCore.CoreComponents.site_cell global?={false} name={@name} />
             """
           end
         end
 
         column :started do
           static true
-          requires [:site_id, :site, :inserted_at]
+          requires [:inserted_at]
           label fn -> dgettext("mishka_gervaz", "Started") end
           sortable true
           sort_field [:inserted_at]
 
           ui do
-            width "minmax(140px,1fr)"
+            width "minmax(110px,0.8fr)"
           end
 
-          render fn record, state ->
+          render fn record ->
             assigns = %{
-              started: MishkaCmsCore.Localized.date(record.inserted_at, :yMMMd),
-              site_name: state.master_user? && record.site && record.site.name
+              date: MishkaCmsCore.Localized.date(record.inserted_at, :yMMMd),
+              time: MishkaCmsCore.Localized.time(record.inserted_at, :Hm)
             }
 
             ~H"""
             <div class="min-w-0">
-              <div :if={@site_name} class="truncate text-[12.5px] font-medium text-[#3a382f]">
-                {@site_name}
-              </div>
-              <div class="text-[12px] text-[#8a877f]">{@started}</div>
+              <div class="text-[12.5px] font-semibold text-[#3a382f]">{@date}</div>
+              <div class="mt-[2px] text-[11px] font-medium text-[#a8a5a0]">{@time}</div>
             </div>
             """
+          end
+        end
+      end
+
+      filters do
+        filter :site_id, :relation do
+          mode :search_multi
+          display_field :name
+          search_field :name
+          min_chars 1
+          page_size 15
+          restricted true
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Site") end
+            placeholder fn -> dgettext("mishka_gervaz", "Search sites...") end
+          end
+        end
+
+        filter :status, :select do
+          options fn -> MishkaCmsMigration.MigrationRun.status_options() end
+
+          ui do
+            prompt dgettext_noop("mishka_gervaz", "Any status")
+            label fn -> dgettext("mishka_gervaz", "Status") end
+          end
+        end
+
+        filter :source, :select do
+          options fn -> MishkaCmsMigration.MigrationRun.source_options() end
+
+          ui do
+            prompt dgettext_noop("mishka_gervaz", "Any source")
+            label fn -> dgettext("mishka_gervaz", "Source") end
+          end
+        end
+
+        filter :started, :date_range do
+          source :inserted_at
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Started") end
           end
         end
       end
@@ -351,11 +470,12 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       url_sync do
         mode :bidirectional
-        params [:sort, :page]
+        params [:filters, :sort, :page]
         prefix "runs"
+        max_filter_length 500
       end
 
-      empty_state message: dgettext_noop("mishka_gervaz", "No migration has run yet"),
+      empty_state message: dgettext_noop("mishka_gervaz", "No runs found"),
                   icon: "hero-arrows-right-left"
 
       presentation do
@@ -896,15 +1016,35 @@ defmodule MishkaCmsMigration.MigrationRun do
   def status_label(:failed), do: dgettext("mishka_gervaz", "Failed")
   def status_label(:cancelled), do: dgettext("mishka_gervaz", "Cancelled")
 
-  @doc "The badge colours of a run with `status`."
+  @doc "The pill colours of a run with `status`; its dot takes the text colour."
   @spec status_class(atom()) :: String.t()
+  def status_class(:pending), do: "bg-[#eaf1fb] text-[#3a6cb5]"
+
   def status_class(status) when status in [:dry_running, :importing],
     do: "bg-[#eef0ff] text-[#4f4bcc]"
 
   def status_class(:dry_run), do: "bg-[#fff6e0] text-[#8a5a00]"
   def status_class(:done), do: "bg-[#e6f6ee] text-[#177a53]"
   def status_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
-  def status_class(_waiting_or_cancelled), do: "bg-[#f1f0ec] text-[#6f6c64]"
+  def status_class(_cancelled), do: "bg-[#f2f1ec] text-[#8a877f]"
+
+  @doc "Every status as a `{label, status}` pair, in the order a run goes through them."
+  @spec status_options() :: [{String.t(), atom()}]
+  def status_options, do: Enum.map(@statuses, &{status_label(&1), &1})
+
+  @doc "The installed sources as `{label, id}` pairs."
+  @spec source_options() :: [{String.t(), String.t()}]
+  def source_options,
+    do:
+      Enum.map(
+        MishkaCmsMigration.Source.all(),
+        &{MishkaCmsMigration.Source.label(&1.id()), &1.id()}
+      )
+
+  @doc "The heroicon that stands for the source whose id is `id` in the admin's lists."
+  @spec source_icon(String.t()) :: String.t()
+  def source_icon("wordpress"), do: "hero-globe-alt"
+  def source_icon(_other), do: "hero-server-stack"
 
   @doc """
   What a run's `report` counts, in one line: `"3 created · 1 updated · 2 skipped · 0 failed"`, or

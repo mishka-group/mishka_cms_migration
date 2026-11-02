@@ -73,6 +73,11 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     |> render_submit()
   end
 
+  defp filter!(view, params) do
+    view |> form("#migration-runs-table_migration_runs-filter", params) |> render_change()
+    render_async(view)
+  end
+
   defp settled(view) do
     _state = :sys.get_state(view.pid)
     _state = :sys.get_state(view.pid)
@@ -124,6 +129,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert MigrationRun.open_secret(run) == {:ok, "app password"}
       assert settled(view) =~ "Connected to Mishka Test Blog."
       assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress")
+      assert has_element?(view, "#migration-runs-table", "Mishka Test Blog")
       assert has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
     end
 
@@ -180,7 +186,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     test "is empty before the first run", %{conn: conn, site: site} do
       view = open!(conn, migration_admin!(site))
 
-      assert has_element?(view, "#migration-runs-table", "No migration has run yet")
+      assert has_element?(view, "#migration-runs-table", "No runs found")
     end
 
     test "lists the site's runs with their source, address, status and result", %{
@@ -209,7 +215,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, migration_admin!(site))
 
       refute has_element?(view, "#migration-runs-table", "elsewhere.example.com")
-      assert has_element?(view, "#migration-runs-table", "No migration has run yet")
+      assert has_element?(view, "#migration-runs-table", "No runs found")
     end
 
     test "shows a new run, and its status as it moves on, without a reload", %{
@@ -226,6 +232,105 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       dry_run!(run, admin)
       settled(view)
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
+    end
+  end
+
+  describe "the runs table filters" do
+    setup %{site: site} do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      admin = migration_admin!(site)
+      create_run!(site, admin, %{}, %{source_host: "waiting.example.com"})
+
+      site
+      |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      |> dry_run!(admin)
+
+      {:ok, admin: admin}
+    end
+
+    test "offer every status and each installed source", %{conn: conn, admin: admin} do
+      view = open!(conn, admin)
+
+      for status <- MigrationRun.status_options() do
+        assert has_element?(
+                 view,
+                 ~s|#migration-runs-table-filter-status option[value="#{elem(status, 1)}"]|
+               )
+      end
+
+      for source <- MishkaCmsMigration.Source.all() do
+        assert has_element?(
+                 view,
+                 ~s|#migration-runs-table-filter-source option[value="#{source.id()}"]|
+               )
+      end
+    end
+
+    test "narrow the rows to the chosen status, and back again", %{conn: conn, admin: admin} do
+      view = open!(conn, admin)
+      assert has_element?(view, ~s|[data-role="run-status"]|, "Connected")
+      assert has_element?(view, ~s|[data-role="run-status"]|, "Dry run ready")
+
+      filter!(view, %{"status" => "dry_run"})
+
+      assert has_element?(view, "#migration-runs-table", "old.example.com")
+      refute has_element?(view, "#migration-runs-table", "waiting.example.com")
+      refute has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
+
+      filter!(view, %{"status" => ""})
+
+      assert has_element?(view, "#migration-runs-table", "waiting.example.com")
+      assert has_element?(view, "#migration-runs-table", "old.example.com")
+    end
+
+    test "narrow the rows to the chosen source", %{conn: conn, admin: admin} do
+      view = open!(conn, admin)
+
+      filter!(view, %{"source" => "wordpress"})
+      assert has_element?(view, "#migration-runs-table", "No runs found")
+      refute has_element?(view, ~s|[data-role="run-source"]|)
+
+      filter!(view, %{"source" => "fake"})
+      assert has_element?(view, ~s|[data-role="run-source"]|, "Fake")
+    end
+
+    test "narrow the rows to the days the run started in", %{conn: conn, admin: admin} do
+      view = open!(conn, admin)
+      today = Date.utc_today()
+      day = fn offset -> today |> Date.add(offset) |> Date.to_iso8601() end
+
+      filter!(view, %{"started_from" => day.(1), "started_to" => day.(2)})
+      assert has_element?(view, "#migration-runs-table", "No runs found")
+
+      filter!(view, %{"started_from" => day.(-1), "started_to" => day.(1)})
+      assert has_element?(view, "#migration-runs-table", "old.example.com")
+    end
+
+    test "keep the status in the address, so a reload shows the same rows", %{
+      conn: conn,
+      admin: admin
+    } do
+      {:ok, view, _html} =
+        conn |> signed_in(admin) |> live("#{@page}?runs_filter_status=dry_run")
+
+      render_async(view)
+
+      assert has_element?(view, "#migration-runs-table", "old.example.com")
+      refute has_element?(view, "#migration-runs-table", "waiting.example.com")
+    end
+
+    test "offer the site, and show it in a column, to a master alone", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, create_user_with_permissions!(["admin:dashboard:migration"]))
+      assert has_element?(view, "#migration-runs-table-filter-site_id")
+      assert has_element?(view, ~s|#migration-runs-table [phx-value-column="site_info"]|)
+      assert has_element?(view, "#migration-runs-table", site.name)
+
+      view = open!(build_conn() |> on_host("localhost"), migration_admin!(site))
+      refute has_element?(view, "#migration-runs-table-filter-site_id")
+      refute has_element?(view, ~s|#migration-runs-table [phx-value-column="site_info"]|)
     end
   end
 
