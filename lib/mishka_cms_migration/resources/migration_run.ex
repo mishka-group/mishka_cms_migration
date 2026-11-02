@@ -51,11 +51,23 @@ defmodule MishkaCmsMigration.MigrationRun do
   how a run is ended whose job stopped without saying so, such as one Oban stopped on its last
   attempt.
 
-  The secret is kept, sealed, from the run's creation until it ends — done, failed or cancelled —
-  and is cleared then. Running again means a new run; the items earlier runs wrote
+  Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
   `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run was
   the last to touch.
+
+  ## The source's secret
+
+  The secret a source signs in with (such as a WordPress application password) is the `:create`
+  action's `secret` argument. Only its sealed form is kept, in `connection_secret`, sealed the way
+  `MishkaCmsCore.Settings` seals a `:secret` setting: `Phoenix.Token.encrypt/4` with the endpoint's
+  `secret_key_base`, under a salt of this extension's own. The argument is dropped once sealed. The
+  sealed secret is kept from the run's creation until it ends — done, failed or cancelled — and is
+  cleared then; a job opens it with `open_secret/1` each time it connects to the source.
+
+  A run with no secret hands the source `nil`. A secret that is stored but cannot be opened —
+  `secret_key_base` was rotated since it was sealed — is `{:error, :unreadable_secret}`, which fails
+  the run: the admin starts a new run with the secret typed again.
 
   ## Who reaches it
 
@@ -74,11 +86,13 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob, SealSecret}
+  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed, :cancelled]
+  @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
+  @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
 
@@ -145,7 +159,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
       change set_attribute(:user_id, actor(:id))
-      change {SealSecret, argument: :secret, attribute: :connection_secret}
+      change &MishkaCmsMigration.MigrationRun.seal_secret/2
 
       description "Creates a run on the tenant's site, started by the actor"
     end
@@ -283,7 +297,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       allow_nil? true
       sensitive? true
 
-      description "The source's secret, sealed (MishkaCmsMigration.Secret); cleared once the run ends"
+      description "The source's secret, sealed (open_secret/1); cleared once the run ends"
     end
 
     attribute :options, :map do
@@ -399,6 +413,38 @@ defmodule MishkaCmsMigration.MigrationRun do
     count :failed_count, :items do
       public? true
       filter expr(outcome == :failed)
+    end
+  end
+
+  @doc """
+  The source's secret `run` keeps, opened: `{:ok, secret}`, `{:ok, nil}` when it keeps none, or
+  `{:error, :unreadable_secret}` when it was sealed under another `secret_key_base`.
+  """
+  @spec open_secret(map()) :: {:ok, String.t() | nil} | {:error, :unreadable_secret}
+  def open_secret(%{connection_secret: sealed}) when is_binary(sealed) and sealed != "" do
+    case Phoenix.Token.decrypt(@endpoint, @secret_salt, sealed, max_age: :infinity) do
+      {:ok, secret} when is_binary(secret) -> {:ok, secret}
+      _unreadable -> {:error, :unreadable_secret}
+    end
+  end
+
+  def open_secret(_run), do: {:ok, nil}
+
+  @doc false
+  def seal_secret(changeset, _context) do
+    secret = Ash.Changeset.get_argument(changeset, :secret)
+    changeset = Ash.Changeset.delete_argument(changeset, :secret)
+
+    case secret do
+      secret when is_binary(secret) and secret != "" ->
+        Ash.Changeset.force_change_attribute(
+          changeset,
+          :connection_secret,
+          Phoenix.Token.encrypt(@endpoint, @secret_salt, secret)
+        )
+
+      _none ->
+        changeset
     end
   end
 end

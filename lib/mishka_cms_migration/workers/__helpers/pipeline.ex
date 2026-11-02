@@ -1,0 +1,284 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
+  @moduledoc """
+  What a `migration` job does with its run (`MishkaCmsMigration.Workers.DryRunWorker`,
+  `MishkaCmsMigration.Workers.ImportWorker`): find the run waiting for it and who asked, walk the
+  run's source, and save what came of it on the run.
+
+  ## The walk
+
+  The job connects once with the run's connection and its opened secret
+  (`MishkaCmsMigration.MigrationRun.open_secret/1`), walks the kinds in the order the source's
+  `kinds/0` gives them, and pages through each with `list/3` until the source answers no cursor.
+  Each row is normalized into an item (`MishkaCmsMigration.Source.Item`), decided
+  (`MishkaCmsMigration.Workers.Helpers.Decision`) and, in an import, written
+  (`MishkaCmsMigration.Workers.Helpers.Writer`). After each page the run's progress is broadcast on
+  `MishkaCmsMigration.progress_topic/1`:
+
+      {:migration_progress,
+       %{run_id: "…", site_id: "…", mode: :import, kind: "post",
+         counts: %{created: 10, updated: 0, skipped: 2, failed: 0}}}
+
+  A source id met again in the same kind, on the same page or a later one, is skipped as
+  `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
+  remembered. A row the source cannot normalize fails alone, and the report says why, also when
+  `normalize/3` raises or exits: a plugin's mistake costs the row, not the run.
+
+  ## Dry run and import
+
+  A dry run decides and reports; it writes nothing and fires no event. An import writes each item
+  as the admin who pressed Import, and once every kind is walked its report is saved on the run and
+  handed to `migration:import:finished` (`MishkaCmsMigration.Events`).
+
+  ## When the walk fails
+
+  An error from `connect/2` or `list/3`, a raise outside a single row, a secret that can no longer
+  be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
+  a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
+  kind — fails the job. Oban tries it again, and the last attempt fails the run with the reason
+  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A job whose run is
+  gone, or is not waiting for it (it was cancelled meanwhile), is cancelled, and so is one whose
+  run refuses its report.
+  """
+
+  alias MishkaCmsCore.Accounts.Checks.AccessPermissions
+  alias MishkaCmsMigration.{Events, MigrationRun, Report, Source}
+  alias MishkaCmsMigration.MigrationRun.Options
+  alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Workers.Helpers.{Decision, Writer}
+
+  @running %{dry_run: :dry_running, import: :importing}
+  @max_pages 10_000
+
+  @typedoc "Whether a job only reports, or writes."
+  @type mode :: :dry_run | :import
+
+  @doc """
+  The `unique` option both workers share: one job of a site on the `migration` queue, whichever
+  run and worker it is, until that job is done.
+  """
+  @spec unique() :: keyword()
+  def unique,
+    do: [fields: [:queue, :args], keys: [:site_id], states: :incomplete, period: :infinity]
+
+  @doc """
+  How long one attempt of either worker may run: an hour. Oban stops an attempt that runs longer and
+  tries the job again; an import's next attempt skips what the last one wrote and recorded, so a
+  large site goes on where it stopped. A job stopped on its last attempt leaves its run where it
+  was, for an admin to cancel (`MishkaCmsMigration.MigrationRun`'s `:cancel`).
+  """
+  @spec timeout(Oban.Job.t()) :: pos_integer()
+  def timeout(%Oban.Job{}), do: :timer.hours(1)
+
+  @doc "Runs `job` of a run in `mode` and answers as an `Oban.Worker` does."
+  @spec perform(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
+  def perform(%Oban.Job{args: args} = job, mode) do
+    case running(args, mode) do
+      {:ok, run} -> settle(run, mode, job)
+      {:error, reason} -> {:cancel, reason}
+    end
+  end
+
+  defp running(%{"run_id" => run_id, "site_id" => site_id}, mode) do
+    status = Map.fetch!(@running, mode)
+
+    case MishkaCmsMigration.get_run(run_id, tenant: site_id, authorize?: false) do
+      {:ok, %{status: ^status} = run} -> {:ok, run}
+      {:ok, _run} -> {:error, :not_running}
+      {:error, _error} -> {:error, :run_not_found}
+    end
+  end
+
+  defp settle(run, mode, job) do
+    case walked(run, mode, job.args) do
+      {:ok, report, actor} -> finish(run, mode, Report.done(report), actor)
+      {:error, reason} -> retry_or_fail(run, reason, job.attempt >= job.max_attempts)
+    end
+  end
+
+  defp walked(run, mode, args) do
+    with {:ok, actor} <- actor(args),
+         {:ok, report} <- walk(run, mode, actor) do
+      {:ok, report, actor}
+    end
+  rescue
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
+
+  defp actor(%{"actor_id" => id}) when is_binary(id) do
+    case Ash.get(MishkaCmsCore.Accounts.User, id, authorize?: false) do
+      {:ok, user} -> {:ok, AccessPermissions.with_permissions(user)}
+      {:error, _error} -> {:error, :actor_not_found}
+    end
+  end
+
+  defp actor(_args), do: {:error, :actor_not_found}
+
+  defp finish(run, :dry_run, report, _actor) do
+    case MishkaCmsMigration.finish_dry_run(run, report, authorize?: false) do
+      {:ok, _run} -> :ok
+      {:error, error} -> {:cancel, error}
+    end
+  end
+
+  defp finish(run, :import, report, actor) do
+    case MishkaCmsMigration.finish_import(run, report, authorize?: false) do
+      {:ok, run} -> Events.finished(report, run, actor)
+      {:error, error} -> {:cancel, error}
+    end
+  end
+
+  defp retry_or_fail(run, reason, true) do
+    MishkaCmsMigration.fail_run(run, Report.reason(reason), authorize?: false)
+    {:cancel, reason}
+  end
+
+  defp retry_or_fail(_run, reason, false), do: {:error, reason}
+
+  defp walk(run, mode, actor) do
+    with {:ok, options} <- Options.builder(run.options),
+         {:ok, source} <- Source.fetch(run.source),
+         {:ok, secret} <- MigrationRun.open_secret(run),
+         {:ok, conn} <- source.connect(run.connection, secret) do
+      walk_kinds(%{
+        run: run,
+        mode: mode,
+        actor: actor,
+        source: source,
+        conn: conn,
+        options: options
+      })
+    end
+  end
+
+  defp walk_kinds(state) do
+    Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
+      walk = %{kind: kind, cursor: nil, cursors: %{}, ids: %{}, pages: 0}
+
+      case walk_kind(state, walk, report) do
+        {:ok, report} -> {:cont, {:ok, report}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp walk_kind(_state, %{pages: @max_pages, kind: kind}, _report),
+    do: {:error, {:too_many_pages, kind}}
+
+  defp walk_kind(state, walk, report) do
+    case state.source.list(state.conn, walk.kind, walk.cursor) do
+      {:ok, rows, next} ->
+        {report, ids} = page(state, walk, rows, report)
+        progress(state, walk.kind, report.counts)
+        walk_on(state, %{walk | ids: ids, pages: walk.pages + 1}, next, report)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp walk_on(_state, _walk, nil, report), do: {:ok, report}
+
+  defp walk_on(state, walk, next, report) do
+    case Map.has_key?(walk.cursors, next) do
+      true ->
+        {:error, {:cursor_repeated, walk.kind}}
+
+      false ->
+        walk_kind(
+          state,
+          %{walk | cursor: next, cursors: Map.put(walk.cursors, next, true)},
+          report
+        )
+    end
+  end
+
+  defp page(state, walk, rows, report) do
+    {built, ids} =
+      rows
+      |> Enum.map(&build(state, walk.kind, &1))
+      |> Enum.map_reduce(walk.ids, &once/2)
+
+    page = Decision.page(state.run, walk.kind, for({:ok, item} <- built, do: item))
+
+    {Enum.reduce(built, report, &Report.add(&2, handle(state, page, &1))), ids}
+  end
+
+  defp once({:ok, item} = row, ids) do
+    case Map.has_key?(ids, item.source_id) do
+      true -> {{:duplicate, item}, ids}
+      false -> {row, Map.put(ids, item.source_id, true)}
+    end
+  end
+
+  defp once(row, ids), do: {row, ids}
+
+  defp build(state, kind, row) do
+    case state.source.normalize(row, kind, source_context(state)) do
+      {:ok, attrs} -> attrs |> Map.put(:kind, kind) |> Item.build() |> built(attrs)
+      {:error, reason} -> {:error, nil, reason}
+    end
+  rescue
+    error -> {:error, nil, error}
+  catch
+    :exit, reason -> {:error, nil, {:exit, reason}}
+  end
+
+  defp built({:ok, item}, _attrs), do: {:ok, item}
+  defp built({:error, errors}, attrs), do: {:error, source_id(attrs), errors}
+
+  defp source_id(attrs) do
+    case Map.get(attrs, :source_id, Map.get(attrs, "source_id")) do
+      id when is_binary(id) or is_integer(id) -> to_string(id)
+      _none -> nil
+    end
+  end
+
+  defp handle(state, page, {:error, source_id, reason}),
+    do: Writer.fail(state, page.kind, source_id, Report.reason(reason))
+
+  defp handle(_state, page, {:duplicate, item}),
+    do: Report.entry(page.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
+
+  defp handle(%{mode: :dry_run}, page, {:ok, item}) do
+    case Decision.plan(page, item) do
+      {:skipped, reason} -> Report.entry(page.kind, item.source_id, item.title, :skipped, reason)
+      {outcome, _record} -> Report.entry(page.kind, item.source_id, item.title, outcome, nil)
+    end
+  end
+
+  defp handle(%{mode: :import} = state, page, {:ok, item}) do
+    case Decision.plan(page, item) do
+      {:skipped, reason} -> Writer.leave(state, page.kind, item, :skipped, reason)
+      {outcome, record} -> Writer.write(state, page, item, outcome, record)
+    end
+  end
+
+  defp progress(state, kind, counts) do
+    Phoenix.PubSub.broadcast(
+      MishkaCmsCore.PubSub,
+      MishkaCmsMigration.progress_topic(state.run.id),
+      {:migration_progress,
+       %{
+         run_id: state.run.id,
+         site_id: state.run.site_id,
+         mode: state.mode,
+         kind: kind,
+         counts: counts
+       }}
+    )
+  end
+
+  defp source_context(state),
+    do: %{
+      site_id: state.run.site_id,
+      run_id: state.run.id,
+      source_host: state.run.source_host,
+      options: state.options
+    }
+end

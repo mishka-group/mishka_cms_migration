@@ -43,7 +43,7 @@ defmodule MishkaCmsMigration.TargetTest do
 
   test "a module that is not a resource, or an action the resource does not have, is refused" do
     assert_raise ArgumentError, ~r/not an Ash resource/, fn ->
-      compile_target(MishkaCmsMigration.Item)
+      compile_target(MishkaCmsMigration.Source.Item)
     end
 
     assert_raise ArgumentError, ~r/:publish/, fn ->

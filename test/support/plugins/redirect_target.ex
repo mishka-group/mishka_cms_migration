@@ -19,7 +19,7 @@ defmodule MishkaCmsMigration.Test.Plugins.RedirectTarget do
     create: :create,
     update: :update
 
-  alias MishkaCmsMigration.Item
+  alias MishkaCmsMigration.Source.Item
 
   @impl MishkaCmsMigration.Target
   def attrs(%{attrs: %{"explode" => "attrs"}}, _context), do: raise(ArgumentError, "no redirect")

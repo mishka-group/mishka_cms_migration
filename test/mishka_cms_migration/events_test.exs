@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.EventsTest do
   use MishkaCmsMigration.DataCase, async: false
 
   alias MishkaCmsCore.Runtime.Redirect
-  alias MishkaCmsMigration.{Events, Item, MigrationItem}
+  alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Test.Plugins.{ContentConverter, FinishedProbe, ItemGate}
 
   setup do

@@ -24,6 +24,22 @@
 
 The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
 
+## 🗂️ Layout
+
+```
+lib/
+├── mishka_cms_migration.ex           the Ash domain: code interfaces and a run's progress topic
+└── mishka_cms_migration/
+    ├── application.ex                the plugins the extension supervises
+    ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
+    ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
+    ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished
+    ├── report.ex                     what a dry run or an import did with each item
+    ├── provision.ex                  installing the extension on a site: its permission names
+    ├── resources/                    MigrationRun and MigrationItem, with their __changes and __validations
+    └── workers/                      the dry-run and import jobs, and their __helpers: the job, the decision, the write
+```
+
 ## 🧩 Part of Mishka CMS
 
 Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS](https://mishka.tools/cms), built like [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) and [Mishka Document: Versioned Docs Engine](https://mishka.tools/cms/extensions/documentation): Ash resources, Mishka Installer plugins, mishka_gervaz admin screens and Oban jobs.

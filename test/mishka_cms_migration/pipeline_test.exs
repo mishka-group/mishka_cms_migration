@@ -11,7 +11,7 @@ defmodule MishkaCmsMigration.PipelineTest do
   use MishkaCmsMigration.DataCase, async: false
 
   alias MishkaCmsCore.Runtime.Redirect
-  alias MishkaCmsMigration.{MigrationItem, Progress}
+  alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Test.Plugins.FakeSource
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
@@ -56,7 +56,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
     test "broadcasts its progress page by page on the run's topic", %{site: site, admin: admin} do
       run = create_run!(site, admin, %{"redirect" => @rows})
-      :ok = Progress.subscribe(run.id)
+      :ok = MishkaCmsMigration.subscribe_progress(run.id)
       run_id = run.id
 
       dry_run!(run, admin)

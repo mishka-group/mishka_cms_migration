@@ -13,7 +13,7 @@ defmodule MishkaCmsMigration.Events do
   The two events that decide what is written fail closed. mishka_installer answers a chain in which
   a plugin raised with the payload as it was sent, so each payload goes out with `asked: false`,
   and this extension's own first plugin on the event, at priority 1
-  (`MishkaCmsMigration.Plugins.BeforeImportGuard`, `MishkaCmsMigration.Plugins.ConvertGuard`),
+  (`MishkaCmsMigration.Events.BeforeImportGuard`, `MishkaCmsMigration.Events.ConvertGuard`),
   sets it to `true`. An answer still saying `asked: false` — a plugin raised, or answered something
   that is not the payload, or the guard is stopped — skips the item as `"plugins_failed"`. While
   one of an event's plugins is not loaded, so the event cannot run, the item is skipped as
@@ -23,7 +23,7 @@ defmodule MishkaCmsMigration.Events do
   ## `migration:content:convert`
 
   Fired for each piece of an item's content the source could not convert itself
-  (`MishkaCmsMigration.Item`), before the item is written:
+  (`MishkaCmsMigration.Source.Item`), before the item is written:
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
@@ -41,7 +41,7 @@ defmodule MishkaCmsMigration.Events do
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
-        outcome: :created, item: %MishkaCmsMigration.Item{}, decision: :import, reason: nil,
+        outcome: :created, item: %MishkaCmsMigration.Source.Item{}, decision: :import, reason: nil,
         asked: true
       }
 
@@ -64,7 +64,7 @@ defmodule MishkaCmsMigration.Events do
   What a plugin answers is not used.
   """
 
-  alias MishkaCmsMigration.Item
+  alias MishkaCmsMigration.Source.Item
   alias MishkaInstaller.Event.Hook
 
   @convert "migration:content:convert"
@@ -171,4 +171,37 @@ defmodule MishkaCmsMigration.Events do
 
   defp reason(%{reason: reason}, _default) when is_binary(reason) and reason != "", do: reason
   defp reason(_answer, default), do: default
+end
+
+defmodule MishkaCmsMigration.Events.BeforeImportGuard do
+  @moduledoc """
+  The first plugin on `migration:item:before_import`, at priority 1: it marks the payload
+  `asked: true`, so an answer that comes back unmarked tells the import that a plugin of the event
+  raised and the item is skipped rather than written (`MishkaCmsMigration.Events`).
+  """
+
+  use MishkaInstaller.Event.Hook,
+    event: "migration:item:before_import",
+    initial: %{priority: 1}
+
+  @impl true
+  def call(%{asked: false} = payload), do: {:reply, %{payload | asked: true}}
+  def call(payload), do: {:reply, payload}
+end
+
+defmodule MishkaCmsMigration.Events.ConvertGuard do
+  @moduledoc """
+  The first plugin on `migration:content:convert`, at priority 1: it marks the payload
+  `asked: true`, so an answer that comes back unmarked tells the import that a plugin of the event
+  raised and the item is skipped rather than written with that piece unconverted
+  (`MishkaCmsMigration.Events`).
+  """
+
+  use MishkaInstaller.Event.Hook,
+    event: "migration:content:convert",
+    initial: %{priority: 1}
+
+  @impl true
+  def call(%{asked: false} = payload), do: {:reply, %{payload | asked: true}}
+  def call(payload), do: {:reply, payload}
 end

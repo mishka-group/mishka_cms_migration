@@ -19,7 +19,7 @@ defmodule MishkaCmsMigrationTest do
       assert is_pid(Process.whereis(plugin))
     end
 
-    assert MishkaCmsMigration.Plugins.Installer in MishkaCmsMigration.Application.plugins()
+    assert MishkaCmsMigration.Provision in MishkaCmsMigration.Application.plugins()
   end
 
   test "the domain is registered and holds the runs and their items" do

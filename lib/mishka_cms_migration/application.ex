@@ -8,18 +8,18 @@ defmodule MishkaCmsMigration.Application do
   extension ships (`plugins/0`). A plugin registers on the event it listens on once it is supervised
   here.
 
-  The plugins come in four groups: `sources/0` and `targets/0` — each source is a plugin on
-  `"migration:sources"` (`MishkaCmsMigration.Source`) and each target on `"migration:targets"`
-  (`MishkaCmsMigration.Target`) — and the two that make the extension installable on a site:
-  `MishkaCmsMigration.Plugins.Installer`, which creates the migration's permission names
-  (`MishkaCmsMigration.Provision`), and `MishkaCmsMigration.Plugins.InstallSettings`, which
-  registers the settings the installer records an install in. Two more open the chains of the
-  events that decide what is written (`MishkaCmsMigration.Plugins.BeforeImportGuard`,
-  `MishkaCmsMigration.Plugins.ConvertGuard`), so an import tells a plugin that raised from one that
-  answered (`MishkaCmsMigration.Events`).
+  The plugins are the sources (`sources/0`, each a plugin on `"migration:sources"`, see
+  `MishkaCmsMigration.Source`) and the targets (`targets/0`, each on `"migration:targets"`, see
+  `MishkaCmsMigration.Target`) it ships; the two that make it installable on a site,
+  `MishkaCmsMigration.Provision` and `MishkaCmsMigration.Provision.Settings`; and the two that open
+  the chains of the events deciding what is written, `MishkaCmsMigration.Events.BeforeImportGuard`
+  and `MishkaCmsMigration.Events.ConvertGuard`.
 
-  The migration jobs run on the host's Oban, on a `migration` queue the host declares
-  (`queues: [migration: 1]`).
+  The migration jobs run on the host's Oban, on a `migration` queue the host declares. Each site has
+  one migration job at a time, waiting or running (`MishkaCmsMigration.Workers.Helpers.Pipeline.unique/0`);
+  the queue's limit is how many sites migrate at once across the whole installation. With
+  `queues: [migration: 1]` one site migrates while the others' jobs wait their turn; a host with
+  many sites may raise it, at the cost of that many imports writing at the same time.
   """
 
   use Application
@@ -29,13 +29,13 @@ defmodule MishkaCmsMigration.Application do
   @targets []
 
   @provision_plugins [
-    MishkaCmsMigration.Plugins.Installer,
-    MishkaCmsMigration.Plugins.InstallSettings
+    MishkaCmsMigration.Provision,
+    MishkaCmsMigration.Provision.Settings
   ]
 
   @guard_plugins [
-    MishkaCmsMigration.Plugins.BeforeImportGuard,
-    MishkaCmsMigration.Plugins.ConvertGuard
+    MishkaCmsMigration.Events.BeforeImportGuard,
+    MishkaCmsMigration.Events.ConvertGuard
   ]
 
   @doc """

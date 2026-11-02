@@ -22,7 +22,7 @@ defmodule MishkaCmsMigration.Target do
           %{
             title: item.title,
             slug: item.attrs["slug"],
-            content: MishkaCmsMigration.Item.html(item)
+            content: MishkaCmsMigration.Source.Item.html(item)
           }
         end
       end
@@ -35,7 +35,7 @@ defmodule MishkaCmsMigration.Target do
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
   this extension's; no list here names it. Which target writes a kind is read from mishka_installer's
-  registry (`MishkaCmsMigration.Registry`): a target an operator stops in the installer writes
+  registry (`MishkaCmsMigration.Source.installed/2`): a target an operator stops in the installer writes
   nothing, and its kind is skipped as `"no_target"`.
 
   ## What the resource needs
@@ -58,7 +58,8 @@ defmodule MishkaCmsMigration.Target do
   require Ash.Query
 
   alias Ash.Resource.Info
-  alias MishkaCmsMigration.{Item, Registry}
+  alias MishkaCmsMigration.Source
+  alias MishkaCmsMigration.Source.Item
 
   @event "migration:targets"
 
@@ -133,7 +134,7 @@ defmodule MishkaCmsMigration.Target do
 
   @doc "The installed target that writes `kind`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
-  def fetch(kind), do: Registry.fetch(@event, __MODULE__, kind)
+  def fetch(kind), do: Source.installed(@event, __MODULE__, kind)
 
   @doc """
   The rows of `ids` the target's resource still holds on `site_id`, by id. Read through the

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-defmodule MishkaCmsMigration.Writer do
+defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   @moduledoc """
   How an import writes one item and remembers it. The item's content is converted
   (`migration:content:convert`), the item is offered to the plugins (`migration:item:before_import`),
@@ -19,7 +19,8 @@ defmodule MishkaCmsMigration.Writer do
   Each function answers the item's line of the report (`MishkaCmsMigration.Report.entry/5`).
   """
 
-  alias MishkaCmsMigration.{Events, Item, MigrationItem, Report, Target}
+  alias MishkaCmsMigration.{Events, MigrationItem, Report, Target}
+  alias MishkaCmsMigration.Source.Item
 
   @doc """
   Writes `item` of `page` as a new row (`:created`) or over `record` (`:updated`), and records what

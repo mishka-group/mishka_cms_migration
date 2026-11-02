@@ -13,7 +13,8 @@ defmodule MishkaCmsMigration do
       updates instead of duplicating and keeps what an admin changed in the CMS.
 
   A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
-  existing CMS action by a `MishkaCmsMigration.Target`, the jobs are `MishkaCmsMigration.Pipeline`'s,
+  existing CMS action by a `MishkaCmsMigration.Target`, the jobs are the workers'
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`),
   and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
   creates the permission names its runs are gated by (`MishkaCmsMigration.Provision`).
 
@@ -36,6 +37,25 @@ defmodule MishkaCmsMigration do
     extensions: [MishkaGervaz.Domain]
 
   use MishkaGervaz.Messages, backend: MishkaCmsCore.Gettext
+
+  @doc """
+  The PubSub topic, on `MishkaCmsCore.PubSub`, a run's progress is broadcast on after each page its
+  job walks (`MishkaCmsMigration.Workers.Helpers.Pipeline`):
+
+      {:migration_progress,
+       %{run_id: "…", site_id: "…", mode: :import, kind: "post",
+         counts: %{created: 10, updated: 0, skipped: 2, failed: 0}}}
+  """
+  @spec progress_topic(String.t()) :: String.t()
+  def progress_topic(run_id), do: "migration:run:#{run_id}"
+
+  @doc """
+  Subscribes the caller to a run's progress (`progress_topic/1`), once it has checked the reader
+  may see the run. The suite does, and the Import tab (issue #3) will.
+  """
+  @spec subscribe_progress(String.t()) :: :ok | {:error, term()}
+  def subscribe_progress(run_id),
+    do: Phoenix.PubSub.subscribe(MishkaCmsCore.PubSub, progress_topic(run_id))
 
   resources do
     resource MishkaCmsMigration.MigrationRun do

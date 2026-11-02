@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-defmodule MishkaCmsMigration.Decision do
+defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @moduledoc """
   What a dry run or an import does with each item of a page, against what earlier runs recorded for
   the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the item's kind and
   its source id:
 
     * none, or one never written — **create**;
-    * its `MishkaCmsMigration.Item.hash/1` is the one recorded — **skip**, `"unchanged"`;
+    * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — **skip**, `"unchanged"`;
     * the row it was written to is gone — **skip**, `"target_missing"`;
     * the row's `updated_at` is not the one recorded when it was written: an admin changed it in
       the CMS — **skip**, `"edited_in_cms"`;
@@ -21,7 +21,8 @@ defmodule MishkaCmsMigration.Decision do
   rows they were written to.
   """
 
-  alias MishkaCmsMigration.{Item, Target}
+  alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Target
 
   @typedoc "What one page of a kind is decided against."
   @type page :: %{

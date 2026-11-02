@@ -12,7 +12,6 @@ defmodule MishkaCmsMigration.MigrationRunTest do
   alias MishkaCmsMigration.{
     MigrationRun,
     Report,
-    Secret,
     Workers.DryRunWorker,
     Workers.ImportWorker
   }
@@ -38,7 +37,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert {run.status, run.site_id, run.user_id} == {:pending, site.id, admin.id}
       refute run.connection_secret == "app password"
       refute inspect(run) =~ "app password"
-      assert Secret.open(run.connection_secret) == {:ok, "app password"}
+      assert MigrationRun.open_secret(run) == {:ok, "app password"}
     end
 
     test "keeps the admin's choices as made, reads the others as their defaults, refuses an unknown one",

@@ -9,7 +9,7 @@ defmodule MishkaCmsMigration.ItemTest do
   """
   use ExUnit.Case, async: true
 
-  alias MishkaCmsMigration.Item
+  alias MishkaCmsMigration.Source.Item
 
   defp build!(attrs) do
     {:ok, item} = Item.build(Map.merge(%{kind: "post", source_id: "1"}, attrs))
