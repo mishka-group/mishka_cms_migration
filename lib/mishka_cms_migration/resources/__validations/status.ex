@@ -26,29 +26,13 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
   @message dgettext_noop("errors", "The run cannot do that while it is %{status}.")
 
   @impl true
-  def init(opts) do
-    case Keyword.get(opts, :from) do
-      [_ | _] = from -> {:ok, [from: from]}
-      other -> {:error, "expected :from to be a list of statuses, got: #{inspect(other)}"}
-    end
-  end
+  def init(opts), do: opts |> Keyword.get(:from) |> from()
 
   @impl true
   def supports(_opts), do: [Ash.Changeset]
 
   @impl true
-  def validate(changeset, opts, _context) do
-    status = changeset.data.status
-
-    case status in opts[:from] do
-      true ->
-        :ok
-
-      false ->
-        {:error,
-         InvalidAttribute.exception(field: :status, message: @message, vars: [status: status])}
-    end
-  end
+  def validate(changeset, opts, _context), do: allowed(changeset.data.status, opts[:from])
 
   @impl true
   def atomic(_changeset, opts, _context) do
@@ -61,4 +45,17 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
        })
      )}
   end
+
+  defp from([_ | _] = from), do: {:ok, [from: from]}
+
+  defp from(other),
+    do: {:error, "expected :from to be a list of statuses, got: #{inspect(other)}"}
+
+  defp allowed(status, [status | _from]), do: :ok
+  defp allowed(status, [_other | from]), do: allowed(status, from)
+
+  defp allowed(status, []),
+    do:
+      {:error,
+       InvalidAttribute.exception(field: :status, message: @message, vars: [status: status])}
 end

@@ -52,9 +52,8 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   def list(conn, kind, cursor) do
     rows = get_in(conn, ["items", kind]) || []
     offset = cursor || 0
-    next = offset + @page_size
 
-    {:ok, Enum.slice(rows, offset, @page_size), if(next < length(rows), do: next)}
+    {:ok, Enum.slice(rows, offset, @page_size), next(offset + @page_size, length(rows))}
   end
 
   @impl MishkaCmsMigration.Source
@@ -71,4 +70,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
        content: row["content"] || []
      }}
   end
+
+  defp next(next, total) when next < total, do: next
+  defp next(_next, _total), do: nil
 end

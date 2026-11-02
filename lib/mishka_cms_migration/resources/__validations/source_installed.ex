@@ -28,14 +28,13 @@ defmodule MishkaCmsMigration.Resources.Validations.SourceInstalled do
   @impl true
   def validate(changeset, _opts, _context) do
     source = Ash.Changeset.get_attribute(changeset, :source)
-
-    case Source.fetch(source) do
-      {:ok, _source} ->
-        :ok
-
-      {:error, _reason} ->
-        {:error,
-         InvalidAttribute.exception(field: :source, message: @message, vars: [source: source])}
-    end
+    source |> Source.fetch() |> installed(source)
   end
+
+  defp installed({:ok, _module}, _source), do: :ok
+
+  defp installed({:error, _reason}, source),
+    do:
+      {:error,
+       InvalidAttribute.exception(field: :source, message: @message, vars: [source: source])}
 end

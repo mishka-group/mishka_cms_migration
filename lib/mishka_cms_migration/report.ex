@@ -138,12 +138,14 @@ defmodule MishkaCmsMigration.Report do
 
   defp short(text), do: String.slice(text, 0, 1000)
 
-  defp count_kind(kinds, kind, outcome) do
-    case Enum.find_index(kinds, &(&1.kind == kind)) do
-      nil -> kinds ++ [zero() |> Map.put(:kind, kind) |> Map.update!(outcome, &(&1 + 1))]
-      index -> List.update_at(kinds, index, &Map.update!(&1, outcome, fn count -> count + 1 end))
-    end
-  end
+  defp count_kind(kinds, kind, outcome),
+    do: kinds |> Enum.find_index(&(&1.kind == kind)) |> counted(kinds, kind, outcome)
+
+  defp counted(nil, kinds, kind, outcome),
+    do: kinds ++ [zero() |> Map.put(:kind, kind) |> Map.update!(outcome, &(&1 + 1))]
+
+  defp counted(index, kinds, _kind, outcome),
+    do: List.update_at(kinds, index, &Map.update!(&1, outcome, fn count -> count + 1 end))
 
   defp keep(entries, kept) when kept > 2 * @max_entries,
     do: {Enum.take(entries, @max_entries), @max_entries}

@@ -72,12 +72,10 @@ defmodule MishkaCmsMigration.Provision do
   created by this install), or `%{error: message}` when `actor` may not.
   """
   @spec install(String.t(), map() | nil) :: ExtensionProvision.report() | %{error: String.t()}
-  def install(site_id, actor) do
-    case refusal(site_id, actor) do
-      nil -> created() |> report()
-      message -> %{error: message}
-    end
-  end
+  def install(site_id, actor), do: site_id |> refusal(actor) |> installed()
+
+  defp installed(nil), do: report(created())
+  defp installed(message), do: %{error: message}
 
   defp refusal(_site_id, nil), do: wizard_refusal(Install.installed?())
 
@@ -87,11 +85,13 @@ defmodule MishkaCmsMigration.Provision do
   defp refusal(_site_id, actor) do
     actor = AccessPermissions.with_permissions(actor)
 
-    case Enum.reject(@required, &AccessPermissions.match?(actor, %{}, permissions: [&1])) do
-      [] -> nil
-      names -> missing_message(names)
-    end
+    @required
+    |> Enum.reject(&AccessPermissions.match?(actor, %{}, permissions: [&1]))
+    |> missing()
   end
+
+  defp missing([]), do: nil
+  defp missing(names), do: missing_message(names)
 
   defp wizard_refusal(true), do: missing_message(@required)
   defp wizard_refusal(false), do: nil

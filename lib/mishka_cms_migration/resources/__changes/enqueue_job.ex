@@ -29,12 +29,7 @@ defmodule MishkaCmsMigration.Resources.Changes.EnqueueJob do
         )
 
   @impl true
-  def init(opts) do
-    case opts[:worker] do
-      worker when is_atom(worker) and worker != nil -> {:ok, opts}
-      other -> {:error, "expected :worker to be an Oban worker, got: #{inspect(other)}"}
-    end
-  end
+  def init(opts), do: worker(opts[:worker], opts)
 
   @impl true
   def change(changeset, opts, context) do
@@ -55,12 +50,19 @@ defmodule MishkaCmsMigration.Resources.Changes.EnqueueJob do
     }
     |> worker.new()
     |> Oban.insert()
-    |> case do
-      {:ok, %Oban.Job{conflict?: true}} -> {:error, InvalidChanges.exception(message: @busy)}
-      {:ok, %Oban.Job{}} -> {:ok, run}
-      {:error, reason} -> {:error, reason}
-    end
+    |> enqueued(run)
   end
+
+  defp worker(worker, opts) when is_atom(worker) and worker != nil, do: {:ok, opts}
+
+  defp worker(other, _opts),
+    do: {:error, "expected :worker to be an Oban worker, got: #{inspect(other)}"}
+
+  defp enqueued({:ok, %Oban.Job{conflict?: true}}, _run),
+    do: {:error, InvalidChanges.exception(message: @busy)}
+
+  defp enqueued({:ok, %Oban.Job{}}, run), do: {:ok, run}
+  defp enqueued({:error, reason}, _run), do: {:error, reason}
 
   defp actor_id(%{id: id}) when is_binary(id), do: id
   defp actor_id(_nobody), do: nil

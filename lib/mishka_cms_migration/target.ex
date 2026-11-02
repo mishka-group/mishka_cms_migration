@@ -132,16 +132,8 @@ defmodule MishkaCmsMigration.Target do
   end
 
   @doc false
-  def __after_compile__(env, _bytecode) do
-    case problems(env.module.resource(), env.module.actions()) do
-      [] ->
-        :ok
-
-      problems ->
-        raise ArgumentError,
-              "#{inspect(env.module)} cannot be a migration target: " <> Enum.join(problems, "; ")
-    end
-  end
+  def __after_compile__(env, _bytecode),
+    do: env.module.resource() |> problems(env.module.actions()) |> refused(env.module)
 
   @doc "The event a target plugin registers on."
   @spec event() :: String.t()
@@ -185,6 +177,15 @@ defmodule MishkaCmsMigration.Target do
   end
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
+
+  defp refused([], _module), do: :ok
+
+  defp refused(problems, module),
+    do:
+      raise(
+        ArgumentError,
+        "#{inspect(module)} cannot be a migration target: " <> Enum.join(problems, "; ")
+      )
 
   defp problems(resource, actions), do: problems(Info.resource?(resource), resource, actions)
 

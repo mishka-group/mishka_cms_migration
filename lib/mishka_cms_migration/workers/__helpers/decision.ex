@@ -33,12 +33,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
-  def call(state, kind, items) do
-    case Target.fetch(kind) do
-      {:ok, target} -> plans(state.run, target, kind, items)
-      {:error, :not_installed} -> Map.new(items, &{&1.source_id, {:skipped, "no_target"}})
-    end
-  end
+  def call(state, kind, items), do: kind |> Target.fetch() |> plans(state.run, kind, items)
+
+  defp plans({:ok, target}, run, kind, items), do: plans(run, target, kind, items)
+
+  defp plans({:error, :not_installed}, _run, _kind, items),
+    do: Map.new(items, &{&1.source_id, {:skipped, "no_target"}})
 
   defp plans(run, target, kind, items) do
     known = known(run, kind, items)
@@ -58,12 +58,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
 
-  defp decide(target, known, _hash, record) do
-    case edited?(record, known) do
-      true -> {:skipped, "edited_in_cms"}
-      false -> {:updated, target, record}
-    end
-  end
+  defp decide(target, known, _hash, record),
+    do: record |> edited?(known) |> updated(target, record)
+
+  defp updated(true, _target, _record), do: {:skipped, "edited_in_cms"}
+  defp updated(false, target, record), do: {:updated, target, record}
 
   defp edited?(%{updated_at: %DateTime{} = now}, %{target_updated_at: %DateTime{} = then}),
     do: DateTime.compare(now, then) != :eq
