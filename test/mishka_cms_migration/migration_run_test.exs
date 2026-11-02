@@ -49,12 +49,17 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert :binary.match(sent, run.connection_secret) == :nomatch
     end
 
-    test "keeps the admin's choices as made, reads the others as their defaults, refuses an unknown one",
+    test "stores the admin's choices with the defaults of the others, and names an unknown one",
          %{site: site, admin: admin} do
       run = create_run!(site, admin, rows(), %{options: %{pages: "publish"}})
       stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).options
 
-      assert stored == %{"pages" => "publish"}
+      assert stored == %{
+               "authors" => "connect",
+               "pages" => "publish",
+               "post_address" => "blog",
+               "comments" => false
+             }
 
       assert {:ok,
               %Options{
@@ -65,8 +70,11 @@ defmodule MishkaCmsMigration.MigrationRunTest do
               }} =
                Options.builder(stored)
 
-      for options <- [%{pages: "maybe"}, %{mode: "x"}] do
-        assert {:error, _refused} =
+      for {options, field} <- [{%{pages: "maybe"}, :pages}, {%{mode: "x"}, :mode}] do
+        assert {:error,
+                %Ash.Error.Invalid{
+                  errors: [%Ash.Error.Changes.InvalidAttribute{field: ^field, path: [:options]}]
+                }} =
                  MishkaCmsMigration.create_run(
                    %{source: "fake", source_host: "old.example.com", options: options},
                    actor: admin,

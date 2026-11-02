@@ -60,7 +60,7 @@ defmodule MishkaCmsMigration.MixProject do
       {:ash_oban, "~> 0.10.3"},
       {:req, "~> 0.7"},
       mishka_dep(:mishka_installer, "~> 0.1.15"),
-      {:guarded_struct, "~> 0.1.4"},
+      mishka_dep(:guarded_struct, "~> 0.1.4", override: true),
       {:igniter, "~> 0.8", only: [:dev, :test]},
       mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.2"),
       mishka_dep(:mishka_gervaz, "~> 0.0.3"),
@@ -79,13 +79,15 @@ defmodule MishkaCmsMigration.MixProject do
   # A Mishka package is its sibling checkout `../<name>` when there is one, and its Hex release
   # otherwise. Only a git checkout counts, so the copy Mix fetched into a host's `deps/` never does,
   # and a `hex.*` task (`mix hex.build`, `mix hex.publish`) always takes Hex, as a package must.
-  defp mishka_dep(name, requirement) do
+  # `path_opts` go with the sibling only: `override: true` for a package another dependency takes
+  # from Hex, such as guarded_struct, which mishka_installer and mishka_cms_core take from Hex.
+  defp mishka_dep(name, requirement, path_opts \\ []) do
     sibling? =
       File.dir?(Path.expand("../#{name}/.git", __DIR__)) and
         not Enum.any?(System.argv(), &String.starts_with?(&1, "hex."))
 
     case sibling? do
-      true -> {name, path: "../#{name}"}
+      true -> {name, [path: "../#{name}"] ++ path_opts}
       false -> {name, requirement}
     end
   end

@@ -12,10 +12,12 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   ## The admin's choices
 
-  `options` is checked by the resource's own guardedstruct (`options` is a `sub_field`), which
-  refuses a key or a value it does not know, and is stored as chosen. A job reads it through
-  `MishkaCmsMigration.MigrationRun.Options.builder/1`, the module the `sub_field` generates, which
-  fills in each choice left out with its default, and hands the result to every target:
+  `options` is checked by the resource's own guardedstruct (`options` is a `sub_field`): a key or a
+  value it does not know is refused as an invalid attribute named by its key, under the path
+  `[:options]`. It is stored with every choice, what the admin chose and the default of each one
+  left out. A job turns the stored map, whose keys are strings, into
+  `MishkaCmsMigration.MigrationRun.Options`, the struct the `sub_field` generates, with its
+  `builder/1`, and hands it to every target:
 
     * `:authors` — `"connect"` (the default) ties each source author to an existing user, matched by
       email; `"create"` makes a user and a blog author for each.
