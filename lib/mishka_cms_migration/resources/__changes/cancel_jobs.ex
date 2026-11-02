@@ -4,10 +4,11 @@
 
 defmodule MishkaCmsMigration.Resources.Changes.CancelJobs do
   @moduledoc """
-  Cancels a run's jobs on the `migration` queue that are not done — waiting, scheduled, waiting to
-  be tried again or running — with `Oban.cancel_all_jobs/1`, in the same transaction as the action,
-  once the run is written. A cancelled job no longer holds the site's one migration job, so the
-  site can start another run.
+  Cancels a run's jobs that are not done — waiting, scheduled, waiting to be tried again or
+  running — with `Oban.cancel_all_jobs/1`, in the same transaction as the action, once the run is
+  written. A job AshOban queued for one of the run's triggers would find the run out of the
+  trigger's `where` when it ran and stop there; cancelling it now leaves nothing waiting in the
+  queue for a run that is over.
 
       update :cancel do
         change MishkaCmsMigration.Resources.Changes.CancelJobs
@@ -25,11 +26,13 @@ defmodule MishkaCmsMigration.Resources.Changes.CancelJobs do
   @impl true
   def atomic(changeset, opts, context), do: {:ok, change(changeset, opts, context)}
 
-  defp cancel(run) do
+  defp cancel(%resource{} = run) do
+    workers = resource |> AshOban.Info.oban_triggers() |> Enum.map(&inspect(&1.worker))
+
     {:ok, _cancelled} =
       Oban.Job
-      |> where([job], job.queue == "migration")
-      |> where([job], fragment("?->>'run_id'", job.args) == ^run.id)
+      |> where([job], job.worker in ^workers)
+      |> where([job], fragment("?->'primary_key'->>'id'", job.args) == ^run.id)
       |> Oban.cancel_all_jobs()
 
     {:ok, run}

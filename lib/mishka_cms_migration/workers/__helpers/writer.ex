@@ -103,8 +103,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         reason: nil,
         extra: item.extra
       },
-      tenant: state.run.site_id,
-      authorize?: false
+      scope: state.scope
     )
   end
 
@@ -120,8 +119,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                outcome: outcome,
                reason: reason
              },
-             tenant: state.run.site_id,
-             authorize?: false
+             scope: state.scope
            ),
          do: :ok
   end

@@ -5,8 +5,9 @@
 defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
   @moduledoc """
   Fails the run of a migration job Oban discarded — its last attempt timed out or crashed past
-  every rescue, so the job never returned to say so — with Oban's reason, which also clears the
-  run's secret (`MishkaCmsMigration.MigrationRun`'s `:fail`). A run no longer dry running or
+  every rescue, so AshOban never ran the trigger's `on_error` — with Oban's reason, which also
+  clears the run's secret (`MishkaCmsMigration.MigrationRun`'s `:fail`). It runs outside any job,
+  so it acts as the system (`authorize?: false`). A run no longer dry running or
   importing is left as it is. Attached to Oban's `[:oban, :job, :exception]` telemetry by
   `MishkaCmsMigration.Workers.attach/0`.
 
@@ -15,8 +16,6 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
   """
 
   require Logger
-
-  alias MishkaCmsMigration.Report
 
   @workers ["MishkaCmsMigration.Workers.DryRunWorker", "MishkaCmsMigration.Workers.ImportWorker"]
 
@@ -29,7 +28,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
         _config
       )
       when worker in @workers do
-    fail(args, Report.reason(meta[:reason]))
+    fail(args, meta[:reason])
   rescue
     error ->
       Logger.error(
@@ -41,9 +40,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
 
   def call(_event, _measurements, _meta, _config), do: :ok
 
-  defp fail(%{"run_id" => run_id, "site_id" => site_id}, reason) do
+  defp fail(%{"primary_key" => %{"id" => run_id}, "tenant" => site_id}, error) do
     with {:ok, run} <- MishkaCmsMigration.get_run(run_id, tenant: site_id, authorize?: false) do
-      MishkaCmsMigration.fail_run(run, reason, authorize?: false)
+      MishkaCmsMigration.fail_run(run, error, authorize?: false)
     end
 
     :ok

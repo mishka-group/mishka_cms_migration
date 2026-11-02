@@ -58,6 +58,7 @@ defmodule MishkaCmsMigration.PluginsTest do
     assert [%{outcome: :skipped, reason: "no_target"}] = run.report.entries
   end
 
+  @tag capture_log: true
   test "a run whose source plugin is gone when its job runs fails with the reason" do
     site = create_site!()
     admin = migration_admin!(site)
@@ -69,10 +70,9 @@ defmodule MishkaCmsMigration.PluginsTest do
         |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
       end)
 
-    args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+    [job] = assert_triggered(run, :run_dry_run)
 
-    assert {:cancel, :not_installed} =
-             perform_job(MishkaCmsMigration.Workers.DryRunWorker, args, attempt: 3)
+    assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
 
     assert %{status: :failed, reason: "not_installed"} =
              MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)

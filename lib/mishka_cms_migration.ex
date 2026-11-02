@@ -13,9 +13,8 @@ defmodule MishkaCmsMigration do
       updates instead of duplicating and keeps what an admin changed in the CMS.
 
   A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
-  existing CMS action by a `MishkaCmsMigration.Target`, the jobs are the workers'
-  (`MishkaCmsMigration.Workers.Helpers.Pipeline`),
-  and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
+  existing CMS action by a `MishkaCmsMigration.Target`, the jobs are the run's AshOban triggers
+  (`MishkaCmsMigration.Workers`), and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
   creates the permission names its runs are gated by (`MishkaCmsMigration.Provision`).
 
   ## Usage
@@ -50,7 +49,7 @@ defmodule MishkaCmsMigration do
       define :cancel_run, action: :cancel
       define :finish_dry_run, action: :finish_dry_run, args: [:report, :extra]
       define :finish_import, action: :finish_import, args: [:report, :extra]
-      define :fail_run, action: :fail, args: [:reason]
+      define :fail_run, action: :fail, args: [:error]
       define :record_progress, action: :record_progress, args: [:progress]
     end
 

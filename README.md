@@ -22,7 +22,7 @@
 
 ## 🔌 In a host
 
-The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
+The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`); it starts Oban with `AshOban.config/2` over its `ash_domains`, as Mishka CMS does, since the jobs are AshOban triggers on the run. Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
 
 ## 🔀 Several sources into one site
 
@@ -42,8 +42,8 @@ lib/
     ├── report.ex                     what a dry run or an import did with each item
     ├── provision.ex                  installing the extension on a site: its permission names
     ├── resources/                    MigrationRun and MigrationItem, with their __changes and __validations
-    ├── workers.ex                    the jobs' shared Oban options and the handler that fails a run whose job Oban discarded
-    └── workers/                      the dry-run and import jobs, and their __helpers: the job, the decision, the write
+    ├── workers.ex                    the AshOban jobs, and the handler that fails a run whose job Oban discarded
+    └── workers/__helpers/            what a job does: the walk, the decision, the write, who it runs as, the discard handler
 test/
 ├── mishka_cms_migration/             behaviour tests: runs, items, the walk, events, targets, provisioning
 ├── support/                          the case, the factory, and plugins for the suite: a fake source, two targets, event probes

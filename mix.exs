@@ -57,6 +57,7 @@ defmodule MishkaCmsMigration.MixProject do
       {:ash_phoenix, "~> 2.3"},
       {:ash, "~> 3.37"},
       {:oban, "~> 2.24"},
+      {:ash_oban, "~> 0.10.3"},
       {:req, "~> 0.7"},
       mishka_dep(:mishka_installer, "~> 0.1.15"),
       {:guarded_struct, "~> 0.1.4"},

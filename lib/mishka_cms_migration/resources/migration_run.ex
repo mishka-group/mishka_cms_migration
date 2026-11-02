@@ -39,21 +39,31 @@ defmodule MishkaCmsMigration.MigrationRun do
       cancel: :pending, :dry_running, :dry_run or :importing ─▶ :cancelled
 
   An admin creates a run (`:create`), asks for a dry run (`:start_dry_run`) and, once it has
-  reported, for the import (`:start_import`). Each request queues a job on the `migration` queue
-  (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`) carrying
-  who asked; only one job of a site may wait or run at a time, so a request made while another is
-  pending is refused and nothing changes. The job saves its `report` (`MishkaCmsMigration.Report`)
-  through `:finish_dry_run` or `:finish_import`, how far it is through `:record_progress`, or the
-  reason it could not go on through `:fail`. Those four are the system's own: no actor may run
-  them.
+  reported, for the import (`:start_import`). Each request queues the job of one of the run's
+  AshOban triggers, `:run_dry_run` or `:run_import`, on the `migration` queue
+  (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`), as the
+  admin who asked (`MishkaCmsMigration.Resources.Changes.EnqueueJob`). A trigger has no
+  scheduler: its job is queued by the request alone, and runs only while the run is in the status
+  the trigger's `where` names. One run of a site is dry running or importing at a time: the
+  `:one_active_per_site` identity is a unique index on the site over those two statuses, so the
+  database refuses a second and nothing changes. A job tries three times, an hour each
+  (`MishkaCmsMigration.Workers`).
 
-  An admin ends a run that is not done with `:cancel`: its job, waiting or running, is cancelled
-  (`MishkaCmsMigration.Resources.Changes.CancelJobs`), so the site can start another, and a job
-  that was already past that point finds the run no longer waiting for it and stops; the job's
-  write and the record of each item share one transaction, so a job stopped there leaves either
-  both or neither. A job Oban stops on its last attempt, at its timeout, fails its run on its own
-  (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run
-  whose job was lost with its node.
+  The job's action walks the source (`MishkaCmsMigration.Workers.Helpers.Pipeline`) and saves its
+  `report` (`MishkaCmsMigration.Report`) through `:finish_dry_run` or `:finish_import` and how far
+  it is through `:record_progress`; after its last attempt fails, AshOban runs `:fail`, the
+  triggers' `on_error`, which keeps the reason. Those six are the system's own: every actor is
+  refused them, and only what AshOban runs, and what its job runs with its context, passes
+  (`AshOban.Checks.AshObanInteraction`).
+
+  An admin ends a run that is not done with `:cancel`, which frees the site for another: its job,
+  waiting or running, is cancelled (`MishkaCmsMigration.Resources.Changes.CancelJobs`); a job that
+  already left the queue finds the run out of its trigger's `where` and is cancelled, or, already
+  walking, stops at its next page. The job's write and the record of each item share one
+  transaction, so a job stopped there leaves either both or neither. A job Oban stops on its last
+  attempt, at its timeout, never reaches `on_error` and fails its run through Oban's own telemetry
+  (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run whose job was lost
+  with its node.
 
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
@@ -84,21 +94,27 @@ defmodule MishkaCmsMigration.MigrationRun do
     otp_app: :mishka_cms_migration,
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
-    extensions: [GuardedStruct.AshResource],
+    extensions: [GuardedStruct.AshResource, AshOban],
     notifiers: [Ash.Notifier.PubSub],
     authorizers: [Ash.Policy.Authorizer]
 
+  use Gettext, backend: MishkaCmsCore.Gettext
+
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob}
+  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob, Reason}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
-  alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
+  alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
   @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed, :cancelled]
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
+  @busy dgettext_noop(
+          "errors",
+          "Another migration of this site is still waiting or running. Try again once it is done."
+        )
 
   postgres do
     table "mishka_cms_migration_runs"
@@ -112,6 +128,8 @@ defmodule MishkaCmsMigration.MigrationRun do
     custom_indexes do
       index [:site_id, :inserted_at], name: "mishka_cms_migration_runs_site_feed_index"
     end
+
+    identity_wheres_to_sql one_active_per_site: "status IN ('dry_running', 'importing')"
   end
 
   guardedstruct do
@@ -141,6 +159,40 @@ defmodule MishkaCmsMigration.MigrationRun do
         derives: "sanitize(trim) validate(enum=String[blog::keep])"
 
       field :comments, :boolean, default: false, derives: "validate(boolean)"
+    end
+  end
+
+  oban do
+    triggers do
+      trigger :run_dry_run do
+        action :run_dry_run
+        where expr(status == :dry_running)
+        queue(:migration)
+        scheduler_cron(false)
+        lock_for_update?(false)
+        max_attempts(3)
+        backoff :exponential
+        timeout :timer.hours(1)
+        on_error :fail
+        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
+        shared_context([:ash_oban?])
+        worker_module_name(MishkaCmsMigration.Workers.DryRunWorker)
+      end
+
+      trigger :run_import do
+        action :run_import
+        where expr(status == :importing)
+        queue(:migration)
+        scheduler_cron(false)
+        lock_for_update?(false)
+        max_attempts(3)
+        backoff :exponential
+        timeout :timer.hours(1)
+        on_error :fail
+        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
+        shared_context([:ash_oban?])
+        worker_module_name(MishkaCmsMigration.Workers.ImportWorker)
+      end
     end
   end
 
@@ -175,7 +227,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:pending, :dry_run]}
 
       change set_attribute(:status, :dry_running)
-      change {EnqueueJob, worker: DryRunWorker}
+      change {EnqueueJob, trigger: :run_dry_run}
 
       description "Queues a dry run: what an import would create, update and skip, writing nothing"
     end
@@ -187,9 +239,33 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:dry_run]}
 
       change set_attribute(:status, :importing)
-      change {EnqueueJob, worker: ImportWorker}
+      change {EnqueueJob, trigger: :run_import}
 
       description "Queues the import of a run whose dry run has reported"
+    end
+
+    update :run_dry_run do
+      accept []
+      transaction? false
+      require_atomic? false
+
+      validate {Status, from: [:dry_running]}
+
+      manual {Pipeline, mode: :dry_run}
+
+      description "System-internal: the dry run's job walks the source and saves the report"
+    end
+
+    update :run_import do
+      accept []
+      transaction? false
+      require_atomic? false
+
+      validate {Status, from: [:importing]}
+
+      manual {Pipeline, mode: :import}
+
+      description "System-internal: the import's job writes every item and saves the report"
     end
 
     update :finish_dry_run do
@@ -237,10 +313,16 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
 
     update :fail do
-      accept [:reason]
+      accept []
+
+      argument :error, :term do
+        allow_nil? false
+        description "What stopped the job: AshOban's error after the last attempt, or Oban's"
+      end
 
       validate {Status, from: [:dry_running, :importing]}
 
+      change Reason
       change set_attribute(:status, :failed)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
@@ -250,7 +332,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   policies do
-    policy action([:finish_dry_run, :finish_import, :record_progress, :fail]) do
+    bypass AshOban.Checks.AshObanInteraction do
+      authorize_if always()
+    end
+
+    policy action([
+             :run_dry_run,
+             :run_import,
+             :finish_dry_run,
+             :finish_import,
+             :record_progress,
+             :fail
+           ]) do
       forbid_if always()
     end
 
@@ -446,6 +539,12 @@ defmodule MishkaCmsMigration.MigrationRun do
       public? true
       filter expr(outcome == :failed)
     end
+  end
+
+  identities do
+    identity :one_active_per_site, [:site_id],
+      where: expr(status in [:dry_running, :importing]),
+      message: @busy
   end
 
   @doc """

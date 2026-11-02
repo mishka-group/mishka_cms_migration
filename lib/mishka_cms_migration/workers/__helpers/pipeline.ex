@@ -4,9 +4,11 @@
 
 defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   @moduledoc """
-  What a `migration` job does with its run (`call/2`, for `MishkaCmsMigration.Workers.DryRunWorker`
-  and `MishkaCmsMigration.Workers.ImportWorker`): find the run waiting for it and who asked, walk
-  the run's source, and save what came of it on the run.
+  What a `migration` job does with its run: the manual `update/3` behind
+  `MishkaCmsMigration.MigrationRun`'s `:run_dry_run` and `:run_import`, the actions AshOban's
+  triggers of the same names run (`MishkaCmsMigration.Workers.DryRunWorker`,
+  `MishkaCmsMigration.Workers.ImportWorker`). It walks the run's source as the admin who started
+  the run and saves what came of it on the run.
 
   ## The walk
 
@@ -25,6 +27,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   remembered. A row the source cannot normalize fails alone, and the report says why, also when
   `normalize/3` raises or exits: a plugin's mistake costs that item, not the run.
 
+  Every action the job runs on the run and its items carries the trigger's context
+  (`scope: context`), so the policies' `AshOban.Checks.AshObanInteraction` bypass lets the job
+  through where every actor is refused. A target writes as the admin alone, under the CMS's own
+  policies.
+
   ## Dry run and import
 
   A dry run decides and reports; it writes nothing and fires no event. An import writes each item
@@ -35,93 +42,76 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   ## When the job stops
 
   A run that is no longer waiting for its job — an admin cancelled it — cancels the job: at its
-  start, at the first page whose progress the run no longer takes, and when the run refuses the
-  report. A job whose run is gone is cancelled too.
+  start, when AshOban's worker finds the run out of the trigger's `where`; at the first page whose
+  progress the run no longer takes; and when the run refuses the report
+  (`AshOban.Errors.CancelJob`, reason `:not_running`).
 
   An error from `connect/2` or `list/3`, a raise outside a single item, a secret that can no longer
   be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
   a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
-  kind — fails the job. Oban tries it again, and the last attempt fails the run with the reason
-  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A last attempt that
-  never returns — Oban stops it at its timeout, or it crashes past every rescue — fails its run
-  through Oban's own telemetry (`MishkaCmsMigration.Workers.Helpers.Discarded`).
+  kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
+  tries it again, and after the last attempt runs the trigger's `on_error`, the run's `:fail`,
+  which keeps the reason and clears the secret. A last attempt that never returns — Oban stops it at
+  its timeout, or it crashes past every rescue — fails its run through Oban's own telemetry
+  (`MishkaCmsMigration.Workers.Helpers.Discarded`).
   """
 
-  alias MishkaCmsCore.Accounts.Checks.AccessPermissions
+  use Ash.Resource.ManualUpdate
+
+  alias AshOban.Errors.CancelJob
   alias MishkaCmsMigration.{Events, MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Workers.Helpers.{Decision, Writer}
 
-  @running %{dry_run: :dry_running, import: :importing}
   @max_pages 10_000
 
   @typedoc "Whether a job only reports, or writes."
   @type mode :: :dry_run | :import
 
-  @doc "Runs `job` of a run in `mode` and answers as an `Oban.Worker` does."
-  @spec call(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
-  def call(%Oban.Job{args: args} = job, mode) do
-    with {:ok, run} <- running(args, mode) do
-      run |> walked(mode, args) |> settled(run, mode, job)
-    end
+  @doc """
+  Walks the run of `changeset` in `opts[:mode]` as `context.actor` and answers the run as its
+  finish left it, an `AshOban.Errors.CancelJob` when the run stopped waiting, or the reason the
+  walk could not go on.
+  """
+  @impl Ash.Resource.ManualUpdate
+  def update(%Ash.Changeset{data: run}, opts, context) do
+    run
+    |> walked(opts[:mode], context)
+    |> settled(run, opts[:mode], context)
   end
 
-  defp running(%{"run_id" => run_id, "site_id" => site_id}, mode) do
-    run_id
-    |> MishkaCmsMigration.get_run(tenant: site_id, authorize?: false)
-    |> waiting(Map.fetch!(@running, mode))
-  end
-
-  defp waiting({:ok, %{status: status} = run}, status), do: {:ok, run}
-  defp waiting({:ok, _run}, _status), do: {:cancel, :not_running}
-  defp waiting({:error, _error}, _status), do: {:cancel, :run_not_found}
-
-  defp walked(run, mode, args) do
-    with {:ok, actor} <- actor(args),
-         {:ok, report, extra} <- walk(run, mode, actor) do
-      {:ok, report, extra, actor}
-    end
+  defp walked(run, mode, context) do
+    walk(run, mode, context)
   rescue
     error -> {:error, error}
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp settled({:ok, report, extra, actor}, run, mode, _job),
-    do: finish(run, mode, Report.done(report), extra, actor)
+  defp settled({:ok, report, extra}, run, mode, context),
+    do: finish(run, mode, Report.done(report), extra, context)
 
-  defp settled({:error, :not_running}, _run, _mode, _job), do: {:cancel, :not_running}
+  defp settled({:error, :not_running}, _run, _mode, _context),
+    do: {:error, CancelJob.exception(reason: :not_running)}
 
-  defp settled({:error, reason}, run, _mode, %{attempt: attempt, max_attempts: attempt}) do
-    MishkaCmsMigration.fail_run(run, Report.reason(reason), authorize?: false)
-    {:cancel, reason}
-  end
+  defp settled({:error, reason}, _run, _mode, _context), do: {:error, Report.reason(reason)}
 
-  defp settled({:error, reason}, _run, _mode, _job), do: {:error, reason}
+  defp finish(run, :dry_run, report, extra, context),
+    do: run |> MishkaCmsMigration.finish_dry_run(report, extra, scope: context) |> saved()
 
-  defp actor(%{"actor_id" => id}) when is_binary(id),
-    do: MishkaCmsCore.Accounts.User |> Ash.get(id, authorize?: false) |> found_actor()
-
-  defp actor(_args), do: {:error, :actor_not_found}
-
-  defp found_actor({:ok, user}), do: {:ok, AccessPermissions.with_permissions(user)}
-  defp found_actor({:error, _error}), do: {:error, :actor_not_found}
-
-  defp finish(run, :dry_run, report, extra, _actor),
-    do: run |> MishkaCmsMigration.finish_dry_run(report, extra, authorize?: false) |> saved()
-
-  defp finish(run, :import, report, extra, actor) do
+  defp finish(run, :import, report, extra, context) do
     with {:ok, run} <-
-           run |> MishkaCmsMigration.finish_import(report, extra, authorize?: false) |> saved() do
-      Events.finished(report, run, actor)
+           run |> MishkaCmsMigration.finish_import(report, extra, scope: context) |> saved() do
+      Events.finished(report, run, context.actor)
+      {:ok, run}
     end
   end
 
   defp saved({:ok, run}), do: {:ok, run}
-  defp saved({:error, _refused}), do: {:cancel, :not_running}
+  defp saved({:error, _refused}), do: {:error, CancelJob.exception(reason: :not_running)}
 
-  defp walk(run, mode, actor) do
+  defp walk(run, mode, context) do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
@@ -131,7 +121,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
            walk_kinds(%{
              run: run,
              mode: mode,
-             actor: actor,
+             actor: context.actor,
+             scope: context,
              source: source,
              conn: conn,
              options: options
@@ -225,7 +216,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp progress(state, kind, _rows, counts) do
     state.run
-    |> MishkaCmsMigration.record_progress(%{kind: kind, counts: counts}, authorize?: false)
+    |> MishkaCmsMigration.record_progress(%{kind: kind, counts: counts}, scope: state.scope)
     |> progressed()
   end
 

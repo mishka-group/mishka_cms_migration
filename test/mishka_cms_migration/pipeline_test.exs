@@ -378,6 +378,7 @@ defmodule MishkaCmsMigration.PipelineTest do
   end
 
   describe "a source that cannot be read" do
+    @tag capture_log: true
     test "is tried again, and its last attempt fails the run with the reason", %{
       site: site,
       admin: admin
@@ -387,14 +388,16 @@ defmodule MishkaCmsMigration.PipelineTest do
         |> create_run!(admin, %{"redirect" => @rows}, %{secret: "wrong"})
         |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      [job] = assert_triggered(run, :run_dry_run)
 
-      assert {:error, :unauthorized} = perform_job(DryRunWorker, args, attempt: 1)
+      assert_raise Ash.Error.Invalid, ~r/unauthorized/, fn ->
+        perform_job(DryRunWorker, job.args, attempt: 1)
+      end
 
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
                :dry_running
 
-      assert {:cancel, :unauthorized} = perform_job(DryRunWorker, args, attempt: 3)
+      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert {run.status, run.reason} == {:failed, "unauthorized"}
@@ -411,12 +414,8 @@ defmodule MishkaCmsMigration.PipelineTest do
         |> dry_run!(admin)
         |> MishkaCmsMigration.start_import!(actor: admin, tenant: site.id)
 
-      job = %Oban.Job{
-        worker: "MishkaCmsMigration.Workers.ImportWorker",
-        args: %{"run_id" => run.id, "site_id" => site.id, "actor_id" => admin.id},
-        attempt: 3,
-        max_attempts: 3
-      }
+      [job] = assert_triggered(run, :run_import)
+      job = %{job | attempt: 3}
 
       :telemetry.execute([:oban, :job, :exception], %{duration: 0}, %{
         job: job,
@@ -447,16 +446,20 @@ defmodule MishkaCmsMigration.PipelineTest do
              )
     end
 
+    @tag capture_log: true
     test "fails the run when listing breaks, and nothing is written", %{site: site, admin: admin} do
       run =
         site
         |> create_run!(admin, %{"redirect" => @rows}, %{connection: %{"broken" => "list"}})
         |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      [job] = assert_triggered(run, :run_dry_run)
 
-      assert {:cancel, :source_unreachable} = perform_job(DryRunWorker, args, attempt: 3)
-      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :failed
+      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+
+      assert %{status: :failed, reason: "source_unreachable"} =
+               MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
       assert redirects(site) == []
     end
   end
@@ -529,6 +532,7 @@ defmodule MishkaCmsMigration.PipelineTest do
                run |> dry_run!(admin) |> import!(admin)
     end
 
+    @tag capture_log: true
     test "one sealed under another key fails the run instead of connecting without it", %{
       site: site,
       admin: admin
@@ -544,9 +548,9 @@ defmodule MishkaCmsMigration.PipelineTest do
       ])
 
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      [job] = assert_triggered(run, :run_dry_run)
 
-      assert {:cancel, :unreadable_secret} = perform_job(DryRunWorker, args, attempt: 3)
+      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
 
@@ -581,7 +585,8 @@ defmodule MishkaCmsMigration.PipelineTest do
       refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
     end
 
-    test "outside a row is tried again, and its last attempt fails the run and drops the secret",
+    @tag capture_log: true
+    test "outside an item is tried again, and its last attempt fails the run and drops the secret",
          %{
            site: site,
            admin: admin
@@ -591,14 +596,16 @@ defmodule MishkaCmsMigration.PipelineTest do
         |> create_run!(admin, %{"redirect" => @rows}, %{connection: %{"broken" => "raise"}})
         |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      [job] = assert_triggered(run, :run_dry_run)
 
-      assert {:error, %RuntimeError{}} = perform_job(DryRunWorker, args, attempt: 1)
+      assert_raise Ash.Error.Invalid, ~r/the source broke/, fn ->
+        perform_job(DryRunWorker, job.args, attempt: 1)
+      end
 
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
                :dry_running
 
-      assert {:cancel, %RuntimeError{}} = perform_job(DryRunWorker, args, attempt: 3)
+      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert run.status == :failed
@@ -609,19 +616,21 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   describe "a source whose pages never end" do
     for {broken, reason} <- [{"loop", :cursor_repeated}, {"endless", :too_many_pages}] do
+      @tag capture_log: true
       test "fails the run with #{reason} when its cursors #{broken}", %{site: site, admin: admin} do
         run =
           site
           |> create_run!(admin, %{}, %{connection: %{"broken" => unquote(broken)}})
           |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-        args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+        [job] = assert_triggered(run, :run_dry_run)
 
-        assert {:cancel, {unquote(reason), "redirect"}} =
-                 perform_job(DryRunWorker, args, attempt: 3)
+        assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
 
-        assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
-                 :failed
+        assert %{status: :failed, reason: reason} =
+                 MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+        assert reason =~ "#{unquote(reason)}"
       end
     end
   end
@@ -632,9 +641,9 @@ defmodule MishkaCmsMigration.PipelineTest do
       admin: admin
     } do
       run = create_run!(site, admin, %{"redirect" => @rows})
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      args = %{primary_key: %{id: run.id}, tenant: site.id, actor: %{id: admin.id}}
 
-      assert {:cancel, :not_running} = perform_job(ImportWorker, args)
+      assert {:cancel, :trigger_no_longer_applies} = perform_job(ImportWorker, args)
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :pending
       assert redirects(site) == []
     end
@@ -651,11 +660,15 @@ defmodule MishkaCmsMigration.PipelineTest do
         redirect_row(3, "/three", "/c")
       ]
 
-      run = site |> create_run!(admin, %{"redirect" => rows}) |> dry_run!(admin)
-      MishkaCmsMigration.start_import!(run, actor: admin, tenant: site.id)
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => rows})
+        |> dry_run!(admin)
+        |> MishkaCmsMigration.start_import!(actor: admin, tenant: site.id)
 
-      assert {:cancel, :not_running} = perform_job(ImportWorker, args)
+      [job] = assert_triggered(run, :run_import)
+
+      assert {:cancel, :not_running} = perform_job(ImportWorker, job.args)
 
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
                :cancelled

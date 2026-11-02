@@ -33,16 +33,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
-  def call(state, kind, items), do: kind |> Target.fetch() |> plans(state.run, kind, items)
+  def call(state, kind, items), do: kind |> Target.fetch() |> plans(state, kind, items)
 
-  defp plans({:ok, target}, run, kind, items), do: plans(run, target, kind, items)
+  defp plans({:ok, target}, state, kind, items), do: plans(state, target, kind, items)
 
-  defp plans({:error, :not_installed}, _run, _kind, items),
+  defp plans({:error, :not_installed}, _state, _kind, items),
     do: Map.new(items, &{&1.source_id, {:skipped, "no_target"}})
 
-  defp plans(run, target, kind, items) do
-    known = known(run, kind, items)
-    records = Target.current(target, Enum.flat_map(Map.values(known), &target_id/1), run.site_id)
+  defp plans(state, target, kind, items) do
+    known = known(state, kind, items)
+
+    records =
+      Target.current(target, Enum.flat_map(Map.values(known), &target_id/1), state.run.site_id)
 
     Map.new(items, fn item ->
       {item.source_id, plan(target, item, Map.get(known, item.source_id), records)}
@@ -72,13 +74,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp target_id(%{target_id: nil}), do: []
   defp target_id(%{target_id: id}), do: [id]
 
-  defp known(_run, _kind, []), do: %{}
+  defp known(_state, _kind, []), do: %{}
 
-  defp known(run, kind, items) do
-    run.source_host
+  defp known(state, kind, items) do
+    state.run.source_host
     |> MishkaCmsMigration.items_by_sources!(kind, Enum.map(items, & &1.source_id),
-      tenant: run.site_id,
-      authorize?: false
+      scope: state.scope
     )
     |> Map.new(&{&1.source_id, &1})
   end

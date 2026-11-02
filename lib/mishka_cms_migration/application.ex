@@ -18,9 +18,11 @@ defmodule MishkaCmsMigration.Application do
   At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
   discards (`MishkaCmsMigration.Workers.attach/0`).
 
-  The migration jobs run on the host's Oban, on a `migration` queue the host declares. Each site has
-  one migration job at a time, waiting or running (`MishkaCmsMigration.Workers.unique/0`);
-  the queue's limit is how many sites migrate at once across the whole installation. With
+  The migration jobs run on the host's Oban, on a `migration` queue the host declares; the host
+  starts Oban through `AshOban.config/2` with its `ash_domains`, which refuses to start without the
+  queue. Each site has one run dry running or importing at a time
+  (`MishkaCmsMigration.MigrationRun`'s `:one_active_per_site`); the queue's limit is how many sites
+  migrate at once across the whole installation. With
   `queues: [migration: 1]` one site migrates while the others' jobs wait their turn; a host with
   many sites may raise it, at the cost of that many imports writing at the same time.
   """

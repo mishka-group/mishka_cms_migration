@@ -9,12 +9,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  alias MishkaCmsMigration.{
-    MigrationRun,
-    Report,
-    Workers.DryRunWorker,
-    Workers.ImportWorker
-  }
+  alias MishkaCmsMigration.{MigrationRun, Report}
+  alias MishkaCmsMigration.Workers.DryRunWorker
 
   alias MishkaCmsMigration.MigrationRun.Options
 
@@ -121,9 +117,16 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
       assert run.status == :dry_running
 
-      assert_enqueued worker: DryRunWorker,
-                      queue: :migration,
-                      args: %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+      assert [%{queue: "migration", args: args}] = assert_triggered(run, :run_dry_run)
+
+      assert %{
+               "tenant" => site_id,
+               "actor" => %{"id" => actor_id},
+               "site_id" => site_id,
+               "actor_id" => actor_id
+             } = args
+
+      assert {site_id, actor_id} == {site.id, admin.id}
     end
 
     test "an import waits for the dry run's report", %{site: site, admin: admin} do
@@ -137,7 +140,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
       run = MishkaCmsMigration.start_import!(run, actor: admin, tenant: site.id)
       assert run.status == :importing
-      assert_enqueued worker: ImportWorker, args: %{run_id: run.id}
+      assert_triggered(run, :run_import)
     end
 
     test "a dry run may be asked again before the import, and not after", %{
@@ -162,13 +165,16 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       second = create_run!(site, admin, rows())
       MishkaCmsMigration.start_dry_run!(first, actor: admin, tenant: site.id)
 
-      assert {:error, %Ash.Error.Invalid{}} =
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :site_id, message: message}]}} =
                MishkaCmsMigration.start_dry_run(second, actor: admin, tenant: site.id)
+
+      assert message =~ "Another migration of this site"
 
       assert MishkaCmsMigration.get_run!(second.id, actor: admin, tenant: site.id).status ==
                :pending
 
       assert [_one] = all_enqueued(queue: :migration)
+      refute_triggered(second, :run_dry_run)
 
       other_site = create_site!()
       other_admin = migration_admin!(other_site)
@@ -188,18 +194,45 @@ defmodule MishkaCmsMigration.MigrationRunTest do
         |> create_run!(admin, rows())
         |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
+      [job] = assert_triggered(run, :run_dry_run)
       run = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
 
       assert {run.status, run.connection_secret} == {:cancelled, nil}
-      refute_enqueued worker: DryRunWorker, args: %{run_id: run.id}
+      assert Repo.get!(Oban.Job, job.id).state == "cancelled"
+      refute_triggered(run, :run_dry_run)
 
       assert {:ok, %{status: :dry_running}} =
                site
                |> create_run!(admin, rows())
                |> MishkaCmsMigration.start_dry_run(actor: admin, tenant: site.id)
 
-      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
-      assert {:cancel, :not_running} = perform_job(DryRunWorker, args)
+      assert {:cancel, :trigger_no_longer_applies} = perform_job(DryRunWorker, job.args)
+
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+               :cancelled
+    end
+
+    test "the database itself holds one run of a site dry running or importing", %{
+      site: site,
+      admin: admin
+    } do
+      first =
+        site
+        |> create_run!(admin, rows())
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      second = create_run!(site, admin, rows())
+
+      assert_raise Postgrex.Error, ~r/mishka_cms_migration_runs_one_active_per_site_index/, fn ->
+        Repo.query!("UPDATE mishka_cms_migration_runs SET status = 'importing' WHERE id = $1", [
+          Ecto.UUID.dump!(second.id)
+        ])
+      end
+
+      MishkaCmsMigration.cancel_run!(first, actor: admin, tenant: site.id)
+
+      assert {:ok, %{status: :dry_running}} =
+               MishkaCmsMigration.start_dry_run(second, actor: admin, tenant: site.id)
     end
 
     test "a run that is done cannot be cancelled", %{site: site, admin: admin} do
@@ -229,6 +262,11 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
         assert {:error, %Ash.Error.Forbidden{}} =
                  MishkaCmsMigration.fail_run(run, "stop", actor: actor, tenant: site.id)
+
+        assert {:error, %Ash.Error.Forbidden{}} =
+                 run
+                 |> Ash.Changeset.for_update(:run_dry_run, %{}, actor: actor, tenant: site.id)
+                 |> Ash.update()
       end
     end
   end

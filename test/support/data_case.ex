@@ -46,7 +46,7 @@ defmodule MishkaCmsMigration.DataCase do
       import MishkaCmsMigration.DataCase
       import MishkaCmsMigration.Test.Factory
 
-      use Oban.Testing, repo: MishkaCmsMigration.Repo
+      use AshOban.Test, repo: MishkaCmsMigration.Repo
     end
   end
 
