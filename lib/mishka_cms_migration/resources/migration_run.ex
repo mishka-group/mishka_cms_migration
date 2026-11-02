@@ -43,8 +43,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`) carrying
   who asked; only one job of a site may wait or run at a time, so a request made while another is
   pending is refused and nothing changes. The job saves its `report` (`MishkaCmsMigration.Report`)
-  through `:finish_dry_run` or `:finish_import`, or the reason it could not go on through `:fail`.
-  Those three are the system's own: no actor may run them.
+  through `:finish_dry_run` or `:finish_import`, how far it is through `:record_progress`, or the
+  reason it could not go on through `:fail`. Those four are the system's own: no actor may run
+  them.
 
   An admin ends a run that is not done with `:cancel`: its job, waiting or running, is cancelled
   (`MishkaCmsMigration.Resources.Changes.CancelJobs`), so the site can start another, and a job

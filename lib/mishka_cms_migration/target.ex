@@ -6,7 +6,7 @@ defmodule MishkaCmsMigration.Target do
   @moduledoc """
   Where one kind of item goes in the CMS: one module that is a `mishka_installer` plugin on the
   `"migration:targets"` event and names an existing CMS resource and the create and update actions
-  that write it. The extension adds no write path of its own: every row is written by that action,
+  that write it. The extension adds no write path of its own: every record is written by that action,
   as the admin who pressed Import and under the run's site, so the resource's policies, validations
   and plugins decide as they do for anything else.
 
@@ -42,7 +42,7 @@ defmodule MishkaCmsMigration.Target do
 
   Checked when the target compiles, which fails with the reason when one is missing:
 
-    * it is an Ash resource whose primary key is `:id`, a UUID — an item records the row it wrote
+    * it is an Ash resource whose primary key is `:id`, a UUID — an item records the record it wrote
       by that id (`MishkaCmsMigration.MigrationItem`'s `target_id`);
     * its `updated_at` is an `update_timestamp`, which Ash sets on every write and no input may
       set — a re-run compares it with the one recorded when the record was written, to keep an
@@ -63,8 +63,8 @@ defmodule MishkaCmsMigration.Target do
 
   ## Keeping an admin's edits
 
-  A re-run reads the rows earlier runs wrote (`current/3`) and compares each one's `updated_at`
-  with the one the run recorded when it wrote it. A row changed in the CMS since is never written
+  A re-run reads the records earlier runs wrote (`current/3`) and compares each one's `updated_at`
+  with the one the run recorded when it wrote it. A record changed in the CMS since is never written
   again, and one that is gone is not brought back.
   """
 
@@ -90,7 +90,7 @@ defmodule MishkaCmsMigration.Target do
   @doc "The kind of item this target writes, such as `\"post\"`."
   @callback id() :: String.t()
 
-  @doc "The CMS resource the rows are written to."
+  @doc "The CMS resource the records are written to."
   @callback resource() :: Ash.Resource.t()
 
   @doc "The resource's actions this target writes through."
@@ -144,8 +144,8 @@ defmodule MishkaCmsMigration.Target do
   def fetch(kind), do: Source.installed(@event, __MODULE__, kind)
 
   @doc """
-  The rows of `ids` the target's resource still holds on `site_id`, by id. Read through the
-  resource's primary read as the system: only to tell whether each row is still there and when it
+  The records of `ids` the target's resource still holds on `site_id`, by id. Read through the
+  resource's primary read as the system: only to tell whether each record is still there and when it
   last changed.
   """
   @spec current(module(), [String.t()], String.t()) :: %{String.t() => struct()}

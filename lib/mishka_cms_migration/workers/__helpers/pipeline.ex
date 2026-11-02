@@ -23,7 +23,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
   remembered. A row the source cannot normalize fails alone, and the report says why, also when
-  `normalize/3` raises or exits: a plugin's mistake costs the row, not the run.
+  `normalize/3` raises or exits: a plugin's mistake costs that item, not the run.
 
   ## Dry run and import
 
@@ -38,7 +38,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   start, at the first page whose progress the run no longer takes, and when the run refuses the
   report. A job whose run is gone is cancelled too.
 
-  An error from `connect/2` or `list/3`, a raise outside a single row, a secret that can no longer
+  An error from `connect/2` or `list/3`, a raise outside a single item, a secret that can no longer
   be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
   a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
   kind — fails the job. Oban tries it again, and the last attempt fails the run with the reason

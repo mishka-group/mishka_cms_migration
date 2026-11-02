@@ -25,8 +25,9 @@ defmodule MishkaCmsMigration.Report do
   `reason` says why an item was skipped or failed:
 
     * `"unchanged"` — the source has not changed the item since it was last written.
-    * `"edited_in_cms"` — the row was changed in the CMS after it was written, and is kept.
-    * `"target_missing"` — the row was deleted in the CMS after it was written, and stays deleted.
+    * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.
+    * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays
+      deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
@@ -35,7 +36,7 @@ defmodule MishkaCmsMigration.Report do
       is not the payload (`MishkaCmsMigration.Events`).
     * for a failure, what the source or the CMS action answered.
 
-  `counts` and `kinds` count every item. `kinds` has a line for each kind that had at least one
+  `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were met, so a report
   stays small however large the site: the items left out number the sum of `counts` less the
@@ -48,7 +49,7 @@ defmodule MishkaCmsMigration.Report do
   @typedoc "What happened, or would happen, to an item."
   @type outcome :: :created | :updated | :skipped | :failed
 
-  @typedoc "One item's line."
+  @typedoc "One item's entry."
   @type entry :: %{
           kind: String.t(),
           source_id: String.t() | nil,
@@ -99,7 +100,7 @@ defmodule MishkaCmsMigration.Report do
     }
   end
 
-  @doc "One item's line: its kind, source id and title, its outcome and why."
+  @doc "One item's entry: its kind, source id and title, its outcome and why."
   @spec entry(String.t(), String.t() | nil, String.t() | nil, outcome(), String.t() | nil) ::
           entry()
   def entry(kind, source_id, title, outcome, reason),

@@ -4,13 +4,13 @@
 
 defmodule MishkaCmsMigration.MigrationItem do
   @moduledoc """
-  What the migration remembers about one item of a source on a site: the CMS row it wrote
-  (`target_resource`, `target_id`), when that row last changed as the migration left it
+  What the migration remembers about one item of a source on a site: the CMS record it wrote
+  (`target_resource`, `target_id`), when that record last changed as the migration left it
   (`target_updated_at`), what the source said about the item then (`source_modified_at`,
   `content_hash`), and what the last run that met it did (`outcome`, `reason`, `run_id`).
 
   An item is one per site, source host, kind and source id (`:unique_source_item`). That is what
-  makes running again safe: a second run finds the row the first one wrote and updates it, leaves
+  makes running again safe: a second run finds the record the first one wrote and updates it, leaves
   it when the source has not changed it, and never overwrites one an admin changed in the CMS since
   (`MishkaCmsMigration.Workers.Helpers.Decision`).
 
@@ -21,7 +21,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   overwritten.
 
   Written by the import job alone (`authorize?: false`), as upserts on that identity: `:record`
-  after a row was written, `:record_outcome` after an item was skipped or failed, which keeps what
+  after its CMS record was written, `:record_outcome` after an item was skipped or failed, which keeps what
   the last write recorded. Read by whoever may read the site's runs
   (`MishkaCmsMigration.MigrationRun`).
   """
@@ -99,7 +99,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
-      description "System-internal: an item whose CMS row a run wrote"
+      description "System-internal: an item whose CMS record a run wrote"
     end
 
     create :record_outcome do
@@ -183,14 +183,14 @@ defmodule MishkaCmsMigration.MigrationItem do
     attribute :target_id, :uuid do
       allow_nil? true
       public? true
-      description "The CMS row the item was written to"
+      description "The CMS record the item was written to"
     end
 
     attribute :target_updated_at, :utc_datetime_usec do
       allow_nil? true
       public? true
 
-      description "The row's updated_at as the last write left it; any other value is an edit in the CMS"
+      description "The CMS record's updated_at as the last write left it; any other value is an edit in the CMS"
     end
 
     attribute :outcome, :atom do

@@ -10,18 +10,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
     * none, or one never written — `{:created, target, nil}`;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
-    * the row it was written to is gone — `{:skipped, "target_missing"}`;
-    * the row's `updated_at` is not the one recorded when it was written: an admin changed it in
+    * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
+    * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed it in
       the CMS — `{:skipped, "edited_in_cms"}`;
     * otherwise — `{:updated, target, record}`, the CMS record to write over.
 
   An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`.
 
   Items are found by source host as well as by kind and id, so several sources moved into one site
-  never meet: the same id from two hosts is two items, each with its own record.
+  never meet: the same id from two hosts is two items, each with its own CMS record.
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
-  rows they were written to.
+  CMS records they were written to.
   """
 
   alias MishkaCmsMigration.Source.Item

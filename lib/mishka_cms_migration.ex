@@ -18,7 +18,10 @@ defmodule MishkaCmsMigration do
   and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
   creates the permission names its runs are gated by (`MishkaCmsMigration.Provision`).
 
-  ## Its functions
+  ## Usage
+
+  `"wordpress"` below stands for an installed source: until a source with that id is installed,
+  `create_run` refuses the run (`MishkaCmsMigration.Source.fetch/1`).
 
       {:ok, run} =
         MishkaCmsMigration.create_run(
