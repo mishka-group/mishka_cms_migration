@@ -11,9 +11,10 @@ defmodule MishkaCmsMigration.Application do
   The plugins are the sources (`sources/0`, each a plugin on `"migration:sources"`, see
   `MishkaCmsMigration.Source`) and the targets (`targets/0`, each on `"migration:targets"`, see
   `MishkaCmsMigration.Target`) it ships; the two that make it installable on a site,
-  `MishkaCmsMigration.Provision` and `MishkaCmsMigration.Provision.Settings`; and the two that open
+  `MishkaCmsMigration.Provision` and `MishkaCmsMigration.Provision.Settings`; the two that open
   the chains of the events deciding what is written, `MishkaCmsMigration.Events.BeforeImportGuard`
-  and `MishkaCmsMigration.Events.ConvertGuard`.
+  and `MishkaCmsMigration.Events.ConvertGuard`; and the admin page's sidebar entry,
+  `MishkaCmsMigrationWeb.SidebarMenu`.
 
   At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
   discards (`MishkaCmsMigration.Workers.attach/0`).
@@ -32,6 +33,8 @@ defmodule MishkaCmsMigration.Application do
   @sources []
 
   @targets []
+
+  @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
   @provision_plugins [
     MishkaCmsMigration.Provision,
@@ -62,7 +65,8 @@ defmodule MishkaCmsMigration.Application do
   left out of it never registers, so the event it listens on never reaches it.
   """
   @spec plugins() :: [module()]
-  def plugins, do: sources() ++ targets() ++ @provision_plugins ++ @guard_plugins
+  def plugins,
+    do: sources() ++ targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus
 
   @impl true
   def start(_type, _args) do
