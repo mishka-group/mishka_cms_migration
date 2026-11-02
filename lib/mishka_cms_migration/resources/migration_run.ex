@@ -114,7 +114,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
   actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by
   the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
-  as its tooltip and accessible name. A row expands to what its last dry run or import found, kind
+  as its tooltip and accessible name. The Actions column is always as wide as the most a row shows,
+  two 30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose
+  status changes its buttons never moves the other columns. A row expands to what its last dry run or import found, kind
   by kind: the kind in words (`kind_label/1`), how many items the source listed, what was done with
   them (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`).
 
@@ -497,6 +499,10 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       row_actions do
+        actions_layout do
+          width "minmax(96px,max-content)"
+        end
+
         action :expand, type: :accordion
 
         action :dry_run do

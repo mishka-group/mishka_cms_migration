@@ -557,6 +557,91 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "the runs table's columns" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    # The domain's Tailwind adapter draws a row action as a 30px button, 4px from the next, in a
+    # cell with 16px of padding either side.
+    defp actions_width(0), do: 32
+    defp actions_width(buttons), do: buttons * 30 + (buttons - 1) * 4 + 32
+
+    defp px_min(track),
+      do: ~r/^(?:minmax\()?(\d+)px/ |> Regex.run(track) |> List.last() |> String.to_integer()
+
+    # A run in each of the seven statuses, the importing one `other`'s, since a site runs one dry
+    # run or import at a time. The jobs that finish runs are drained before any is left queued.
+    defp run_in_every_status!(site, other) do
+      admin = migration_admin!(site)
+      other_admin = migration_admin!(other)
+      ready = site |> create_run!(admin, %{}) |> dry_run!(admin)
+      done = migrate!(site, admin, %{})
+      other_ready = other |> create_run!(other_admin, %{}) |> dry_run!(other_admin)
+
+      failed =
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+        |> MishkaCmsMigration.fail_run!("stop", tenant: site.id, authorize?: false)
+
+      [
+        ready,
+        done,
+        failed,
+        create_run!(site, admin, %{}),
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.cancel_run!(actor: admin, tenant: site.id),
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id),
+        MishkaCmsMigration.start_import!(other_ready, actor: other_admin, tenant: other.id)
+      ]
+    end
+
+    test "keep their widths whatever each row's status, so a row moving on moves none of them", %{
+      conn: conn,
+      site: site
+    } do
+      runs = run_in_every_status!(site, create_site!())
+
+      assert runs |> Enum.map(&status/1) |> Enum.sort() ==
+               Enum.sort(MigrationRun.status_options() |> Enum.map(&elem(&1, 1)))
+
+      html =
+        conn
+        |> open!(create_user_with_permissions!(["admin:dashboard:migration"]))
+        |> render()
+        |> LazyHTML.from_fragment()
+
+      [style] =
+        html
+        |> LazyHTML.query(~s|#migration-runs-table [id$="-grid"]|)
+        |> LazyHTML.attribute("style")
+
+      [_, template] = Regex.run(~r/grid-template-columns: ([^;]+);/, style)
+      tracks = String.split(template)
+
+      for track <- tracks do
+        assert track =~ ~r/^(\d+px|minmax\(\d+px,[^)]+\))$/,
+               "#{track} has no fixed width, so its cells size it"
+      end
+
+      buttons =
+        for run <- runs do
+          html
+          |> LazyHTML.query(
+            ~s|#migration-runs-table [id$="-#{run.id}"] [data-role="gervaz-row-actions"] button|
+          )
+          |> Enum.count()
+        end
+
+      assert actions_width(Enum.max(buttons)) <= tracks |> List.last() |> px_min()
+    end
+  end
+
   describe "the sidebar" do
     test "has one entry, in Plugins, gated by the migration permission" do
       assert [item] = SidebarMenu.items()
