@@ -1,0 +1,35 @@
+---
+type: post
+slug: linking-between-posts-and-media
+status: publish
+date: 2026-02-02 11:00:00
+author: nadia
+title: Linking between posts and media
+categories: migration
+tags: Migration,SEO
+thumb: diagram
+excerpt: Every kind of internal link an importer has to rewrite.
+---
+<!-- wp:paragraph -->
+<p>Absolute permalink: <a href="{{post:welcome-to-the-mishka-test-blog}}">the welcome post</a>. Plain ID link: <a href="{{site}}/?p={{postid:gutenberg-all-core-blocks}}">post by ID</a>. Page ID link: <a href="{{site}}/?page_id={{postid:team}}">page by ID</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>Relative links: <a href="/about/team/">the team page</a> and <a href="/2026/01/gutenberg-all-core-blocks/">the blocks post</a>. With an anchor: <a href="{{post:classic-editor-with-shortcodes}}#a-heading-after-the-more-tag">to a heading</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>Media: <a href="{{url:guide}}">the PDF</a>, <a href="{{page:hero}}">the hero attachment page</a>, and a sized copy <a href="{{medium:hero}}">of the hero</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>Archives: <a href="{{site}}/category/news/">News</a>, <a href="{{site}}/?cat={{catid:news}}">News by ID</a>, <a href="{{site}}/tag/elixir/">the Elixir tag</a>, <a href="{{site}}/author/nadia/">Nadia</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:paragraph -->
+<p>Broken and external: <a href="{{site}}/2026/01/this-post-was-deleted/">a deleted post</a>, <a href="https://elixir-lang.org/" rel="noopener" target="_blank">elixir-lang.org</a>, <a href="mailto:hello@example.test">an email link</a>.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:image {"id":{{id:diagram}},"sizeSlug":"full","linkDestination":"custom"} -->
+<figure class="wp-block-image size-full"><a href="{{post:welcome-to-the-mishka-test-blog}}"><img src="{{url:diagram}}" alt="WordPress, Normalize and Mishka CMS boxes joined by arrows" class="wp-image-{{id:diagram}}"/></a></figure>
+<!-- /wp:image -->

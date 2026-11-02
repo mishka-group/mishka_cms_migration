@@ -1,0 +1,7 @@
+# WP-CLI settings for the seed and record scripts (the wp-cli container reads this file through
+# WP_CLI_CONFIG_PATH). `apache_modules` lets `wp rewrite structure --hard` write .htaccess, which
+# WP-CLI cannot detect on its own because it does not run inside Apache.
+path: /var/www/html
+url: http://localhost:8089
+apache_modules:
+  - mod_rewrite

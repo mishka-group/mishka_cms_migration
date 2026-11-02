@@ -1,0 +1,43 @@
+---
+type: post
+slug: classic-editor-with-shortcodes
+status: publish
+date: 2025-11-20 14:00:00
+author: omid
+title: A classic editor post with shortcodes
+categories: wordpress
+tags: Shortcodes,WordPress
+thumb: gallery-1
+attach: animated
+excerpt: Written before blocks existed: automatic paragraphs and shortcodes.
+---
+This post was written in the classic editor, so its body has no block comments. WordPress turns blank lines into paragraphs when it shows the post (wpautop).
+
+A second paragraph with <strong>bold</strong> text, an <a href="{{post:welcome-to-the-mishka-test-blog}}">internal link</a> and an image link to <a href="{{url:hero}}">the hero file</a>.
+
+<!--more-->
+
+<h2>A heading after the more tag</h2>
+
+<ul>
+<li>One</li>
+<li>Two</li>
+</ul>
+
+[caption id="attachment_{{id:hero}}" align="aligncenter" width="300"]<img class="size-medium wp-image-{{id:hero}}" src="{{medium:hero}}" alt="A blue gradient hero image with a white circle" width="300" height="169" /> The hero image, with a caption[/caption]
+
+[gallery ids="{{id:gallery-1}},{{id:gallery-2}},{{id:gallery-3}}" columns="3" link="file"]
+
+[embed]https://www.youtube.com/watch?v=jNQXAC9IVRw[/embed]
+
+[video src="{{url:sample}}" width="320" height="240"]
+
+<img class="alignleft size-medium wp-image-{{id:animated}}" src="{{url:animated}}" alt="Three frames of a colour-shifting gradient" width="400" height="300" />
+Text wraps around a floated image. A line break follows,
+and this line starts right after it.
+
+<pre>preformatted
+   text keeps its spaces</pre>
+
+[unknown_plugin_shortcode id="7" title="Unknown"]
+[pullbox align="right"]Content inside an enclosing shortcode from a plugin that is not installed.[/pullbox]

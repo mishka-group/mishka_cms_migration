@@ -1,0 +1,50 @@
+---
+type: post
+slug: unknown-and-dynamic-blocks
+status: publish
+date: 2026-04-20 09:00:00
+author: nadia
+title: Unknown and dynamic blocks
+categories: wordpress
+tags: Gutenberg,Shortcodes
+---
+<!-- wp:paragraph -->
+<p>Page one of a post that is split with the next-page block.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:acme/callout {"tone":"info","title":"Heads up"} -->
+<div class="acme-callout acme-callout--info"><strong>Heads up</strong><p>A block from a plugin that is not installed: WordPress keeps its saved HTML.</p></div>
+<!-- /wp:acme/callout -->
+
+<!-- wp:latest-posts {"postsToShow":2,"displayPostDate":true} /-->
+
+<!-- wp:shortcode -->
+[gallery ids="{{id:gallery-1}},{{id:gallery-2}}"]
+<!-- /wp:shortcode -->
+
+<!-- wp:details -->
+<details class="wp-block-details"><summary>A details block</summary><!-- wp:paragraph -->
+<p>Hidden until opened.</p>
+<!-- /wp:paragraph --></details>
+<!-- /wp:details -->
+
+<!-- wp:verse -->
+<pre class="wp-block-verse">A verse block
+  keeps its line breaks.</pre>
+<!-- /wp:verse -->
+
+<!-- wp:spacer {"height":"40px"} -->
+<div style="height:40px" aria-hidden="true" class="wp-block-spacer"></div>
+<!-- /wp:spacer -->
+
+<!-- wp:more -->
+<!--more-->
+<!-- /wp:more -->
+
+<!-- wp:nextpage -->
+<!--nextpage-->
+<!-- /wp:nextpage -->
+
+<!-- wp:paragraph -->
+<p>Page two starts here.</p>
+<!-- /wp:paragraph -->

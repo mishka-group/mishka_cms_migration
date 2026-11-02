@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+# Files that cannot carry a header: the content files start with front matter, the media are binaries.
+[[annotations]]
+path = ["media/**", "seed/**", "wp-cli.yml"]
+SPDX-FileCopyrightText = "2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>"
+SPDX-License-Identifier = "Apache-2.0"

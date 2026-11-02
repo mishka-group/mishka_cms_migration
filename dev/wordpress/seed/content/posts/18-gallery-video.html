@@ -1,0 +1,25 @@
+---
+type: post
+slug: post-with-gallery-and-video
+status: publish
+date: 2026-04-02 10:00:00
+author: nadia
+title: A post with a gallery and a video
+categories: wordpress
+tags: Gutenberg
+thumb: gallery-2
+attach: gallery-1,gallery-3,sample
+---
+<!-- wp:gallery {"linkTo":"media"} -->
+<figure class="wp-block-gallery has-nested-images columns-default is-cropped"><!-- wp:image {"id":{{id:gallery-1}},"sizeSlug":"large","linkDestination":"media"} -->
+<figure class="wp-block-image size-large"><a href="{{url:gallery-1}}"><img src="{{url:gallery-1}}" alt="A green gradient with the text Gallery 1" class="wp-image-{{id:gallery-1}}"/></a></figure>
+<!-- /wp:image -->
+
+<!-- wp:image {"id":{{id:gallery-3}},"sizeSlug":"large","linkDestination":"media"} -->
+<figure class="wp-block-image size-large"><a href="{{url:gallery-3}}"><img src="{{url:gallery-3}}" alt="A blue and violet gradient with the text Gallery 3" class="wp-image-{{id:gallery-3}}"/></a></figure>
+<!-- /wp:image --></figure>
+<!-- /wp:gallery -->
+
+<!-- wp:video {"id":{{id:sample}},"poster":"{{url:gallery-2}}"} -->
+<figure class="wp-block-video"><video controls poster="{{url:gallery-2}}" src="{{url:sample}}"></video><figcaption class="wp-element-caption">A two-second test pattern</figcaption></figure>
+<!-- /wp:video -->

@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# A real WordPress for the migration extension's tests: WordPress + MariaDB on http://localhost:8089,
+# bound to this machine only, and a WP-CLI container that seeds it and exports from it.
+#
+#   docker compose up -d --wait      start WordPress and MariaDB
+#   ./seed.sh                        install and fill the site (safe to run again)
+#   ./record.sh                      record the REST responses and the WXR export as test fixtures
+#   docker compose down -v           stop and delete the site (named volumes included)
+
+name: mishka-wordpress
+
+x-wordpress-env: &wordpress-env
+  WORDPRESS_DB_HOST: db
+  WORDPRESS_DB_NAME: wordpress
+  WORDPRESS_DB_USER: wordpress
+  WORDPRESS_DB_PASSWORD: wordpress
+
+services:
+  db:
+    image: mariadb:11.8.9
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  wordpress:
+    image: wordpress:7.1.4-php8.4-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8089:80"
+    environment:
+      <<: *wordpress-env
+      # Read once, when the entrypoint writes wp-config.php into the volume. The environment type
+      # `local` is what lets application passwords work over plain HTTP (they need HTTPS otherwise).
+      WORDPRESS_CONFIG_EXTRA: |
+        define( 'WP_HOME', 'http://localhost:8089' );
+        define( 'WP_SITEURL', 'http://localhost:8089' );
+        define( 'WP_ENVIRONMENT_TYPE', 'local' );
+        define( 'DISABLE_WP_CRON', true );
+        define( 'AUTOMATIC_UPDATER_DISABLED', true );
+        define( 'DISALLOW_FILE_EDIT', true );
+    volumes:
+      - wp_data:/var/www/html
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/www/html/wp-config.php && curl -s -o /dev/null http://localhost/"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  # Not started by `up`; `docker compose run --rm wp-cli <wp command>` starts it for one command.
+  # It runs as www-data (uid 33, the same user as Apache) so files it writes stay writable by WordPress.
+  wp-cli:
+    image: wordpress:cli-2.12.0-php8.4
+    profiles: ["cli"]
+    user: "33:33"
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    environment:
+      <<: *wordpress-env
+      WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+      WP_CLI_CONFIG_PATH: /seed/wp-cli.yml
+      HOME: /tmp
+    volumes:
+      - wp_data:/var/www/html
+      - ./:/seed
+
+volumes:
+  db_data:
+  wp_data:

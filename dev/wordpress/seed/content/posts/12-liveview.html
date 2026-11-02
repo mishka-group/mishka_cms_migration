@@ -1,0 +1,32 @@
+---
+type: post
+slug: phoenix-liveview-tips
+status: publish
+date: 2025-12-02 10:00:00
+author: omid
+title: Phoenix LiveView tips
+categories: elixir
+tags: Elixir,Phoenix,LiveView
+thumb: photo
+yoast_title: Phoenix LiveView tips for real projects
+yoast_desc: Three habits that keep LiveView pages fast and simple.
+yoast_focuskw: phoenix liveview
+yoast_og_image: photo
+---
+<!-- wp:paragraph -->
+<p>Three habits that keep a LiveView page simple.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">Keep assigns small</h2>
+<!-- /wp:heading -->
+
+<!-- wp:code -->
+<pre class="wp-block-code"><code>def mount(_params, _session, socket) do
+  {:ok, assign(socket, :count, 0)}
+end</code></pre>
+<!-- /wp:code -->
+
+<!-- wp:paragraph -->
+<p>Use <code>Phoenix.LiveView.JS</code> for client-side effects instead of a hook.</p>
+<!-- /wp:paragraph -->
