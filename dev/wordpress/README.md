@@ -66,6 +66,22 @@ WXR item counts from the recorded files alone.
 Record on a clean site (`down -v`, `./seed.sh`, `./record.sh`) and only from this curated seed, never after
 adding bulk content, so the fixtures stay small and the same.
 
+## Bulk content
+
+`seed_bulk.sh` runs after `seed.sh` and fills the site the way a company blog looks after years of use: 8 more
+users, 25 categories (some nested), about 80 tags, 40 pages in a hierarchy, 350 posts in every status with
+block and classic bodies, featured images, excerpts, internal links and a few password-protected and sticky
+posts, about 600 comments with replies, and an extra menu. The text comes from the banks in `bulk/`, and the
+plan (`bulk/plan-*.sh`) uses a fixed seed. It is safe to run again: a second run creates nothing.
+
+```sh
+cd dev/wordpress
+./seed.sh && ./seed_bulk.sh   # the bulk run takes several minutes
+```
+
+Fixtures are never recorded from bulk data. Record only from the curated seed, on a clean site:
+`docker compose down -v && ./seed.sh && ./record.sh`.
+
 ## Testing approach
 
 - **Unit tests** replay the recorded responses from `test/fixtures/wordpress/` (REST bodies and headers, WXR files).

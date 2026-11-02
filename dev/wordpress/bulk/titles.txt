@@ -1,0 +1,262 @@
+elixir|en|Why we moved our job queue from Sidekiq to Oban
+elixir|en|Supervision trees, explained with a coffee shop
+elixir|en|Writing a Phoenix context that does not leak Ecto everywhere
+elixir|en|Pattern matching tricks we use every week
+elixir|en|Ecto multi: one transaction, many steps, no surprises
+elixir|en|LiveView forms without the boilerplate
+elixir|en|Testing GenServers without sleeping
+elixir|en|Property-based testing with StreamData for parsers
+elixir|en|What we learned running Phoenix on a 512 MB server
+elixir|en|Telemetry events every Phoenix app should emit
+elixir|en|Hot code upgrades: do you really need them?
+elixir|en|Using Task.async_stream without melting the database
+elixir|en|A gentle introduction to OTP behaviours
+elixir|en|Phoenix PubSub for live dashboards
+elixir|en|Mix tasks that save an afternoon every month
+elixir|en|Typespecs: the documentation that the compiler reads
+elixir|en|Building a small rate limiter with ETS
+elixir|en|Deploying Elixir releases with Docker and a healthcheck
+elixir|en|Ecto schemas versus changesets: where validation belongs
+elixir|en|Streaming large CSV files in Elixir
+elixir|en|LiveView streams: rendering ten thousand rows politely
+elixir|en|Handling webhooks reliably with idempotency keys
+elixir|en|Running ExUnit in CI in under three minutes
+elixir|en|Dialyzer in a real project: the first hundred warnings
+elixir|en|From Rails to Phoenix: a year of honest notes
+elixir|en|Why our Phoenix app has no JavaScript framework
+elixir|en|Background jobs with retries that do not hammer the API
+elixir|en|The Registry module, and why we stopped writing our own
+elixir|en|Feature flags in Elixir without a third-party service
+elixir|en|Ecto query composition for search filters
+elixir|en|Securing a Phoenix API with tokens that expire
+elixir|en|Phoenix generators: when to use them and when not to
+elixir|en|Clustering two nodes on a private network
+elixir|en|Writing a custom Plug for request IDs and logs
+elixir|en|Erlang ports, NIFs and the cost of crossing the boundary
+elixir|en|Measuring a slow endpoint with :eprof and :fprof
+elixir|en|Migrating a schema on a live table without downtime
+elixir|en|A Phoenix dashboard that updates itself every second
+elixir|en|Common mistakes with Enum.reduce and Stream
+elixir|en|Mox, behaviours and fakes that stay honest
+elixir|en|Guarding against N+1 queries in Ecto
+elixir|en|Using GenStage for a small ingest pipeline
+elixir|en|Naming modules after the things they do
+elixir|en|Caching in Phoenix: ETS, Cachex or Redis
+elixir|en|Live components: state, events and pitfalls
+elixir|en|What the BEAM does with a crashed process
+elixir|fa|چرا ما از ریلز به الیکسیر مهاجرت کردیم
+elixir|fa|راهنمای شروع با فونیکس برای توسعه‌دهندگان وب
+elixir|fa|سه اشتباه رایج در نوشتن GenServer
+elixir|fa|لایو ویو چیست و چرا کار با فرم‌ها را ساده می‌کند
+elixir|de|Phoenix LiveView für Teams, die bisher JavaScript-Frameworks nutzen
+elixir|de|Ecto-Migrationen ohne Ausfallzeit
+wordpress|en|Moving a WordPress site to a new domain without losing rankings
+wordpress|en|Block themes in 2026: what changed for content editors
+wordpress|en|Our checklist before updating WordPress core
+wordpress|en|Custom post types that editors actually like
+wordpress|en|How we cut our WordPress admin load time in half
+wordpress|en|Gutenberg patterns for landing pages
+wordpress|en|Redirect maps: the boring work that saves traffic
+wordpress|en|Yoast SEO settings we change on every new site
+wordpress|en|Scheduled posts that never publish: a debugging story
+wordpress|en|Writing a plugin that stays out of the way
+wordpress|en|Classic editor to block editor: an honest migration review
+wordpress|en|Permalinks, slugs and what happens when you rename a post
+wordpress|en|Multilingual WordPress without three plugins
+wordpress|en|REST API recipes for headless WordPress
+wordpress|en|Why we keep our media library tidy every quarter
+wordpress|en|Image sizes that make sense for modern screens
+wordpress|en|Comment moderation rules that catch most spam
+wordpress|en|Backups that you have actually restored at least once
+wordpress|en|WP-CLI commands we run from cron every night
+wordpress|en|A short guide to wp_options autoload problems
+wordpress|en|Child themes are still useful, and here is when
+wordpress|en|Porting a shortcode-heavy site to blocks
+wordpress|en|Menus, mega menus and navigation blocks compared
+wordpress|en|Page builders versus the block editor: our verdict
+wordpress|en|The security settings we turn on before launch
+wordpress|en|Users, roles and capabilities for a company blog
+wordpress|en|Writing alt text that describes the image, not the file
+wordpress|en|Cron on WordPress: why DISABLE_WP_CRON matters
+wordpress|en|Exporting a WordPress site with WXR and what it leaves out
+wordpress|en|Custom fields in 2026: meta boxes, blocks or a plugin
+wordpress|en|Taxonomies for a knowledge base
+wordpress|en|Our staging workflow with Docker and WP-CLI
+wordpress|en|Sticky posts, featured posts and the homepage
+wordpress|en|Shortcodes are not evil, but they are not portable
+wordpress|en|Writing a migration plan for a 10-year-old blog
+wordpress|en|Why your gallery block looks different on mobile
+wordpress|en|Scheduling a month of posts in one afternoon
+wordpress|en|What to keep when you leave WordPress
+wordpress|en|Content audits: finding the posts nobody reads
+wordpress|en|Password-protected posts and what Google sees
+wordpress|fa|راهنمای نصب وردپرس روی لینوکس با داکر
+wordpress|fa|چطور یک وبلاگ وردپرسی را سریع‌تر کنیم
+wordpress|fa|انتقال یک سایت وردپرسی به دامنه جدید
+wordpress|fa|امنیت وردپرس: پنج تنظیم که نباید فراموش شود
+wordpress|fa|چرا باید نسخه پشتیبان را آزمایش کنیم
+wordpress|fa|راهنمای ساخت قالب کودک برای وردپرس
+wordpress|ar|كيف تنقل موقعك على وردپرس دون أن تفقد ترتيبك في محركات البحث
+wordpress|ar|أفضل إضافات الأمان لمواقع الأعمال الصغيرة
+wordpress|ar|دليل سريع لإعداد الروابط الدائمة
+wordpress|ar|لماذا تبطئ إضافاتك الكثيرة موقعك
+wordpress|de|WordPress-Sicherheit: die Einstellungen, die wir jedem Kunden empfehlen
+wordpress|de|Umzug einer WordPress-Seite Schritt für Schritt
+webdev|en|HTTP caching headers that actually work
+webdev|en|Core Web Vitals: the numbers we watch every week
+webdev|en|A pragmatic guide to Content Security Policy
+webdev|en|Why we serve our images as WebP and AVIF
+webdev|en|Lazy loading done right, and where it hurts
+webdev|en|HTTP/3 on a small VPS: is it worth it?
+webdev|en|Our CDN bill went down after one config change
+webdev|en|Writing a robots.txt that does not block your own pages
+webdev|en|Forms that work without JavaScript
+webdev|en|Rate limiting an API behind nginx
+webdev|en|Database indexes we added after reading the slow query log
+webdev|en|Passwordless login: magic links, passkeys and trade-offs
+webdev|en|CORS explained for people who only want it to work
+webdev|en|Logs that answer questions: structured logging for small teams
+webdev|en|Zero-downtime deploys with a blue-green switch
+webdev|en|Monitoring uptime without paying for a big tool
+webdev|en|Email deliverability: SPF, DKIM and DMARC in plain words
+webdev|en|Caching HTML pages safely with cache keys
+webdev|en|Preloading fonts without layout shifts
+webdev|en|Our three-tier backup plan for small web apps
+webdev|en|A practical HTTPS setup with automatic renewal
+webdev|en|Why we moved our staging server to a separate region
+webdev|en|Accessibility audits for developers who hate audits
+webdev|en|The cost of third-party scripts on a product page
+webdev|en|JSON APIs: pagination that does not break mobile apps
+webdev|en|Cookies, consent and the banners nobody reads
+webdev|en|Writing a status page that customers trust
+webdev|en|Performance budgets we actually enforce in CI
+webdev|en|Setting up a development environment in one command
+webdev|fa|چطور تصاویر وب را بهینه کنیم بدون از دست دادن کیفیت
+webdev|fa|امنیت ورود به سایت: گذرواژه، کد یک‌بارمصرف و کلید امنیتی
+webdev|ar|تحسين سرعة الموقع: قائمة مختصرة للمطورين
+webdev|de|Warum wir auf HTTP/2 und Brotli setzen
+design|en|Designing empty states people do not dread
+design|en|A type scale for content-heavy sites
+design|en|Color contrast checks that take two minutes
+design|en|Dark mode without losing the brand
+design|en|How we run design reviews in a remote team
+design|en|Icons: when a word is clearer than a picture
+design|en|Spacing systems that make layouts boring in a good way
+design|en|Designing forms for mobile keyboards
+design|en|Our component library, one year later
+design|en|Motion design rules for subtle interfaces
+design|en|Buttons: how many styles does a product really need?
+design|en|Writing microcopy that sounds like a person
+design|en|Grids, baselines and the reasons we still use them
+design|en|Accessible focus states that look good too
+design|en|Choosing a typeface for a Persian and Latin site
+design|en|Illustrations for a blog that is not a stock photo site
+design|en|Design tokens: the boring part that pays off
+design|en|A checklist for a launch page
+design|en|Navigation patterns for sites with a lot of content
+design|en|Card layouts that do not fall apart on tablets
+design|en|Designing for slow connections
+design|en|Hover states on touch screens: a small rant
+design|en|Image cropping rules for article headers
+design|en|Designing a newsletter signup that people finish
+design|en|The three-column layout is not dead, but it is tired
+design|en|Visual hierarchy with fewer colours
+design|fa|اصول طراحی رابط کاربری فارسی و راست‌به‌چپ
+design|fa|تایپوگرافی برای مقاله‌های بلند
+design|fa|چطور رنگ‌بندی سایت را ساده نگه داریم
+design|ar|مبادئ تصميم الواجهات الداكنة للمواقع العربية
+design|de|Barrierefreie Formulare: fünf Punkte, die sofort helfen
+business|en|Remote work rules that survived our first two years
+business|en|How we price a website project without surprises
+business|en|Hiring our first junior developer: what we learned
+business|en|Case study: a bakery that tripled its online orders
+business|en|Invoicing clients in three currencies
+business|en|Why we stopped billing by the hour
+business|en|A one-page plan for a small agency in 2026
+business|en|Saying no to clients without losing them
+business|en|Running a monthly retro that people look forward to
+business|en|Case study: a school that moved its admissions online
+business|en|Contracts for small web projects: what to keep
+business|en|How our support inbox got to zero by Friday
+business|en|Choosing tools for a team of six
+business|en|Writing a job post that attracts real candidates
+business|en|Quarterly goals: fewer, clearer, reviewed weekly
+business|en|Case study: a clinic that rebuilt its booking flow
+business|en|Remote onboarding: the first week checklist
+business|en|Why our pricing page has only three plans
+business|en|Retainers versus projects: how we decide
+business|en|A calm approach to late payments
+business|en|Hosting costs we cut without downtime
+business|en|Interviewing developers with a small take-home task
+business|en|Team rituals that do not feel like meetings
+business|fa|راهنمای قیمت‌گذاری خدمات طراحی سایت
+business|fa|کار از راه دور: تجربه‌ای از دو سال کار تیمی
+business|fa|چطور مشتری‌های قدیمی را حفظ کنیم
+business|ar|إدارة الفريق عن بعد: ما الذي نجح معنا
+business|de|Angebote für Webprojekte: unser Aufbau in fünf Abschnitten
+travel|en|Three days in Isfahan with a notebook and no map
+travel|en|A winter weekend in Istanbul on a student budget
+travel|en|The quiet side of Berlin in November
+travel|en|Train travel through northern Iran: our route and notes
+travel|en|Packing light for a month in three countries
+travel|en|Cafés in Tehran that work for remote workers
+travel|en|A week of slow travel in the Turkish Black Sea region
+travel|en|What we ate, what we skipped, and where we stayed in Shiraz
+travel|en|Museum passes in Berlin: worth it or not?
+travel|en|Walking tour of old Tabriz, step by step
+travel|en|Booking accommodation for long stays
+travel|en|Driving the Caspian coast: road notes for 2026
+travel|en|Photography tips for markets and bazaars
+travel|en|A rainy day in Cologne, indoors
+travel|en|Overnight trains: our favourite routes and why
+travel|en|Yazd in spring: wind towers, sweets and quiet lanes
+travel|en|Packing a laptop for a trip without the stress
+travel|en|Visa paperwork: a checklist for independent travellers
+travel|fa|سه روز در اصفهان با دفترچه یادداشت
+travel|fa|گشت و گذاری در بازار تبریز
+travel|fa|چند کافه خوب در تهران برای کار کردن
+travel|fa|سفر با قطار در شمال ایران
+travel|ar|جولة في أسواق إسطنبول القديمة
+travel|de|Ein Wochenende in Dresden zwischen Altstadt und Elbe
+food|en|A weeknight khoresh that takes forty minutes
+food|en|Saffron rice without a rice cooker
+food|en|Our favourite flatbreads, baked at home
+food|en|Vegetarian stews that taste like a long simmer
+food|en|Breakfast ideas for busy weeks
+food|en|A simple tahdig guide for beginners
+food|en|Street food in Tehran: a short, honest list
+food|en|Herb platters, sabzi and why they matter
+food|en|Cardamom cake that survives the commute
+food|en|How to store spices so they stay fragrant
+food|en|Lentil soup for cold evenings
+food|en|Pomegranate molasses: three dishes to try
+food|en|Sourdough notes from a small kitchen
+food|en|A dinner menu for six in under two hours
+food|en|Why we cook from the same five cookbooks
+food|en|Desserts with dates and walnuts
+food|en|Kitchen tools worth buying once
+food|fa|طرز تهیه قورمه سبزی به روش خانگی
+food|fa|چطور برنج ایرانی را کامل دم کنیم
+food|fa|کیک هل و زعفران برای مهمانی کوچک
+food|fa|سوپ جو با سبزیجات تازه
+food|ar|طريقة إعداد الكبة المشوية في المنزل
+food|de|Persische Küche für Einsteiger: fünf einfache Rezepte
+news|en|Release 1.4: faster imports and clearer errors
+news|en|Release 1.5 adds scheduled jobs for every content type
+news|en|Our roadmap for the next quarter, in public
+news|en|We are hiring a support engineer in Tehran
+news|en|Our office moves to a bigger room in the old town
+news|en|Announcing the community forum for migration questions
+news|en|Changelog: the small fixes you asked for
+news|en|Two talks from our team at the spring meetup
+news|en|Security release: please update within seven days
+news|en|Welcome to our new documentation site
+news|en|Summer schedule for support and releases
+news|en|Thank you to everyone who sent bug reports this year
+news|en|Our first year as an open-source project
+news|en|A new partner program for agencies
+news|en|Winter maintenance window: what to expect
+news|fa|انتشار نسخه جدید با پشتیبانی بهتر از فارسی
+news|fa|اعلام برنامه کارگاه‌های آموزشی پاییز
+news|ar|إطلاق الإصدار الجديد بدعم أفضل للغة العربية
+news|de|Neue Version veröffentlicht: was sich ändert

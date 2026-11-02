@@ -1,0 +1,120 @@
+c|en|Reza Ahmadi|Great write-up. How long did the whole move take you?
+c|en|Mina Farhadi|Thanks, this saved me a weekend. The redirect section especially.
+c|en|Daniel Brooks|Do you have numbers for the page speed before and after? I would love to see them.
+c|en|Sophie Lindqvist|We did the same switch last year and the redirects were the part nobody expected. Good to see it written down.
+c|en|Kaveh Nouri|Is this still true for the newer release? Some of the defaults changed.
+c|en|Laura Mendes|The table of examples made it click for me. Bookmarking this.
+c|en|Tom Harrington|I disagree a little about the plugin part, but the overall point is right.
+c|en|Priya Raman|Short and useful. More posts like this, please.
+c|en|Hossein Mohammadi|ممنون از توضیحات کامل. مرحله آخر را دقیق‌تر توضیح می‌دهید؟
+c|en|Azadeh Rostami|This helped our small team a lot. We followed the steps on a staging copy first.
+c|en|Jonas Keller|Clear and honest. The trade-offs section is the reason I read to the end.
+c|en|Maryam Sadeghi|عالی بود. مثال‌ها واقعی بودند و خیلی کمک کرد.
+c|en|Ben Carter|We hit the same error with the cron job. Setting the server cron fixed it for us too.
+c|en|Elena Popescu|Could you share the script you used for the backup? That part interests me most.
+c|en|Amir Hosseini|سپاس از این نوشته. یک سؤال داشتم: آیا این روش برای سایت‌های چندزبانه هم جواب می‌دهد؟
+c|en|Clara Weiss|Wunderbar erklärt. Wir setzen das im nächsten Monat um.
+c|en|Marcus Hill|Nice article. The diagram could be bigger on mobile, though.
+c|en|Ines Duarte|I had not thought about the autoload size. Checked ours this morning and it was far too large.
+c|en|Farid Asadi|دقیقاً همین مشکل را داشتم. ممنون که راه‌حل را نوشتید.
+c|en|Rachel Green|The checklist is going straight into our onboarding doc. Thank you.
+c|en|Yousef Haddad|شكرا على هذا المقال المفيد. التفاصيل حول إعادة التوجيه كانت واضحة جداً.
+c|en|Nora Schmidt|Super hilfreich. Die Schritte waren gut nachvollziehbar.
+c|en|Sam Okafor|Quick question: did you keep the old URLs in the sitemap during the transition?
+c|en|Leila Hosseini|Which of these steps was the hardest for your team?
+c|en|Oliver Grant|Thanks for the honest notes on what did not work. Most posts only show the success.
+c|en|Mehdi Jafari|روش خوبی است، اما برای سایت‌های بزرگ‌تر کمی زمان‌بر است. تجربه شما چطور بود؟
+c|en|Chloe Martin|Lovely photos too. The kitchen one made me hungry.
+c|en|Stefan Braun|Ich habe den Artikel gelesen und direkt die Sicherung getestet. Alles funktioniert.
+c|en|Dana Whitfield|We use this on three client sites now. The only change was the cache key.
+c|en|Kamran Eslami|با تشکر از نوشته‌تان. آیا نمونه‌ای از فایل تنظیمات دارید؟
+c|en|Hannah Fischer|The part about pending comments matches what we see every week. Glad someone wrote it down.
+c|en|Tariq Mansour|شكراً جزيلاً، المعلومات كانت دقيقة ومفيدة لفريقنا.
+c|en|Paul Dubois|Good points on the CDN. We had almost the same surprise with query strings.
+c|en|Shirin Abbasi|این نوشته را برای تیم‌مان فرستادم. همه از ساختار آن خوششان آمد.
+c|en|Greg Ellison|Honest question: would this still work with a much larger archive?
+c|en|Mona Kazemi|من این روش را روی وبلاگ شخصی‌ام امتحان کردم و خیلی ساده‌تر از انتظارم بود.
+c|en|Julian Park|The numbers in the table are a bit small on my screen, but the content is great.
+c|en|Lena Vogel|Kurz und klar. Genau so mag ich technische Artikel.
+c|en|Adam Rahimi|Your example with the menu made me rethink ours. Thanks.
+c|en|Yasmin Khoury|شكراً للتوضيح، الطريقة التي شرحتها مختلفة عما وجدته في أماكن أخرى.
+c|en|Nico Berger|Ist das auch mit einem älteren PHP-Stand möglich?
+c|en|Helen Cho|We tried the rollback steps last Tuesday and they worked exactly as written.
+c|en|Behzad Karimi|مطلب خوبی بود، فقط کاش تصاویر بیشتری داشت.
+c|en|Grace Mensah|This is the kind of post I wish existed when we started. Sharing with the team.
+c|en|Ryan Patel|Any plans for a follow-up on the editor side?
+c|en|Setareh Moradi|ممنون از راهنمایی‌های دقیقتان. امروز همین کار را برای سایت خودم انجام دادم.
+c|en|Fatemeh Najafi|Ich finde den Abschnitt zu den Kosten besonders gut.
+c|en|Owen Clarke|Really solid. Our backup routine was similar, but we added a monthly restore test after reading this.
+c|en|Rana Saleh|شكرا لكم، هذه أفضل مقالة قرأتها هذا الأسبوع عن المواقع الصغيرة.
+c|en|Jakob Meier|Der Vergleich der Menüs ist sehr nützlich, danke!
+c|en|Zahra Ebrahimi|عنوان نوشته دقیق است و محتوا هم همین‌طور. بهترین توضیح‌ها را داشت.
+c|en|Simon Lewis|I still prefer the other approach for very large sites, but this is a fair summary.
+c|en|Aisha Bello|Thanks for explaining why, not just how. That makes a big difference.
+c|en|Felix Wagner|Der Teil über die Bilder hat mir geholfen, meine Galerie zu verbessern.
+c|en|Nima Tavakoli|This was exactly what I needed for a client project next week. Really appreciated.
+c|en|Ella Brown|We print these posts for new hires. This one is going in the folder.
+c|en|Kourosh Amini|نکته آخر درباره امنیت بسیار مهم است. بیشتر وبلاگ‌ها این را جدی نمی‌گیرند.
+c|en|Lucas Silva|Obrigado! Also useful for people who write in Portuguese, though I had to translate a few terms.
+c|en|Sara Mohammadi|سلام، ممنون از مطلب خوبتان. آیا می‌شود این کار را بدون افزونه انجام داد؟
+c|en|Oscar Lind|The screenshots in the older article were broken. Is there a newer version of those?
+c|en|Ali Rezaei|سپاس بابت این نوشته‌ی جامع. منتظر ادامه‌اش هستم.
+c|en|Julia Lange|Ich habe das Thema mit meinem Team besprochen, und wir sind uns einig, dass die Checkliste fehlt.
+c|en|Omar Haddad|شكرا على المجهود، الشرح كان بسيطاً وواضحاً.
+c|en|Eva Novak|Interesting approach. We may try it on our smaller project first.
+c|en|Milad Shams|این روش را با تیم امتحان می‌کنیم. نتیجه را خبر می‌دهم.
+c|en|Maya Singh|Really nice to see a real example with real numbers. Thank you for sharing.
+c|en|Jan de Vries|Mooi stuk. Het voorbeeld met de redirects is precies wat we nodig hadden.
+c|en|Brian Foster|This takes me back. We made the same mistake with permalinks in 2019.
+c|en|Hadi Nasiri|با سپاس. این نوشته را به دوستانم معرفی کردم.
+c|en|Tessa Brooks|Would love a version of this for a shop with a few hundred products.
+c|en|Karl Hoffmann|Gut geschrieben. Ein Punkt fehlt mir: die Dauer der Übergangsphase.
+c|en|Noor Al-Sayed|مقال مفيد جداً، شكراً لكم على الشرح المفصل.
+c|en|Victor Ruiz|Excellent. The testing section convinced me to add a staging step to our process.
+c|en|Sanaz Ghaffari|عالی و کاربردی. مرسی.
+c|en|Harold Nguyen|Nice. Quick typo in the third paragraph, "recieve" should be "receive".
+c|en|Pooya Tehrani|در بخش مربوط به کش، من تجربه متفاوتی داشتم. شاید ارزش داشته باشد آن را هم بنویسید.
+c|en|Megan Doyle|Thanks, I shared this in our team channel and it started a good discussion.
+c|en|Thomas Richter|Ich verstehe den Punkt zur Pflege der Medien jetzt besser. Danke.
+c|en|Vahid Shariati|ممنون، بخش مربوط به ترتیب کارها بسیار روشن بود.
+c|en|Ruth Adler|Our editors asked for exactly this kind of guide. We will link it from the handbook.
+c|en|Ahmed Samir|شكراً لك، المقال أفادني كثيراً في مشروعي الجديد.
+c|en|Kate Osei|Do you have a version for beginners who only use the classic editor?
+c|en|Peter Zimmermann|Die Erklärung zu den Cronjobs war für mich neu. Vielen Dank!
+c|en|Shadi Golestan|سلام. آیا برای سایت‌هایی که هاست اشتراکی دارند هم این روش عملی است؟
+c|en|Mark Thompson|Good to see the rollback plan written out. Most guides skip it.
+c|en|Sophia Rossi|Grazie per il post, molto chiaro. Lo condivido con il mio team.
+c|en|Arash Mirzaei|من با این نکته موافقم، فقط یک نکته دیگر هم هست که دوست دارم اضافه کنید.
+c|en|Lily Chen|We are a team of four and this was perfectly sized for us. Thank you.
+c|en|Dennis Brandt|Eine klare Anleitung, die man wirklich befolgen kann. Gerne mehr davon.
+c|en|Jasmine Ortiz|Thank you for the honest timeline. It helps set expectations with clients.
+c|en|Keyvan Azizi|مطلب کامل و خوش‌خوان بود. ممنون از زحمت‌تان.
+c|en|Hugo Martin|The part about image sizes saved us a lot of disk space. Great tip.
+c|en|Zainab Hassan|مقال رائع ومفصل، أعجبتني الأمثلة العملية.
+c|en|Connor Bell|I would add a note about object caching, but otherwise this is spot on.
+c|en|Yuki Tanaka|Thank you. The examples are easy to follow even without much WordPress experience.
+c|en|Bahar Jalali|از اینکه این مطلب را با زبان ساده نوشته‌اید سپاسگزارم.
+c|en|Felix Hartmann|Gute Arbeit. Wir haben die Schritte schon in unserem Projekt umgesetzt.
+c|en|Rebecca Stone|This article came at the right time. We are planning the same move next spring.
+c|en|Mojtaba Rahmani|سپاس از نوشته خوبتان. کمی جزئیات بیشتر درباره نسخه‌های قدیمی می‌خواستم.
+c|en|Anna Kowalska|Dziękuję, bardzo pomocne. Czy są jakieś ograniczenia dotyczące dużych plików?
+c|en|Richard Bowen|Simple, correct, and short enough to read on the train. Perfect.
+r|en|Thank you, glad it helped.
+r|en|Good question. We will add a short section about that in the next update.
+r|en|Yes, we tested that on a staging copy and it worked.
+r|en|Thanks for the feedback. We fixed the typo.
+r|en|It depends on the size of the archive, but most sites finish in a day.
+r|en|We kept the old version running for two weeks as a fallback.
+r|en|Exactly. The timing matters more than the tool.
+r|en|Happy to share it. We will publish the script next month.
+r|en|Fair point. We went with the simpler option for our case.
+r|en|That is a good idea. We will try it on the next project.
+r|en|Thanks, we appreciate you taking the time to write.
+r|en|If you run into an error, send us the log and we can look at it together.
+r|fa|ممنون از شما، خوشحالیم که مفید بود.
+r|fa|بله، این کار روی سایت آزمایشی ما هم جواب داد.
+r|fa|سؤال خوبی است. در به‌روزرسانی بعدی توضیح بیشتری اضافه می‌کنیم.
+r|ar|شكراً لك، سعدنا بأن المقال كان مفيداً.
+r|ar|نعم، جربنا ذلك على نسخة تجريبية وكانت النتيجة جيدة.
+r|de|Danke für Ihr Feedback, wir freuen uns, dass es geholfen hat.
+r|de|Gute Frage. Wir ergänzen dazu einen kurzen Abschnitt.
