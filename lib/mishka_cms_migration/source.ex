@@ -359,6 +359,10 @@ defmodule MishkaCmsMigration.Source.Item do
       Together with the run's `source_host` and `:kind` it is how a re-run finds what an earlier run
       wrote.
     * `:title` — what the report calls the item.
+    * `:parent` — the source id of the item of the same kind this one sits under, such as a
+      category's parent category, kept as a string; `nil` for none. The walk writes the parent
+      first, whichever the source lists first, and the target is handed the CMS record it was
+      written to (`MishkaCmsMigration.Target`'s context, `parent_id`).
     * `:modified_at` — when the source last changed it: a `DateTime`, a `NaiveDateTime` taken as
       UTC, or an ISO 8601 string.
     * `:attrs` — everything else the target needs, as the source names it. Its keys are never
@@ -392,6 +396,8 @@ defmodule MishkaCmsMigration.Source.Item do
     field :title, String.t(),
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=1000])"
 
+    field :parent, String.t(), validator: {MishkaCmsMigration.Source.Item, :reference}
+
     field :modified_at, DateTime.t(), validator: {MishkaCmsMigration.Source.Item, :datetime}
 
     dynamic_field :attrs
@@ -417,7 +423,7 @@ defmodule MishkaCmsMigration.Source.Item do
   """
   @spec hash(t()) :: String.t()
   def hash(%__MODULE__{} = item) do
-    {item.kind, item.source_id, item.title, item.attrs, item.extra,
+    {item.kind, item.source_id, item.title, item.parent, item.attrs, item.extra,
      Enum.map(item.content || [], &piece/1)}
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
@@ -435,6 +441,10 @@ defmodule MishkaCmsMigration.Source.Item do
   def identifier(field, value) when is_integer(value), do: {:ok, field, Integer.to_string(value)}
   def identifier(field, value) when is_binary(value), do: {:ok, field, value}
   def identifier(field, _value), do: {:error, field, "must be a string or an integer"}
+
+  @doc false
+  def reference(field, nil), do: {:ok, field, nil}
+  def reference(field, value), do: identifier(field, value)
 
   @doc false
   def datetime(field, nil), do: {:ok, field, nil}

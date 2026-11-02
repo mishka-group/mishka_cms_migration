@@ -30,6 +30,8 @@ defmodule MishkaCmsMigration.Report do
       deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
+    * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
+      never written), so it is left out until a run writes the parent.
     * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
       of the plugins of that event, or of `migration:content:convert` for an item with a piece to
       convert, is not loaded; `"plugins_failed"` when one of them raised or answered something that
@@ -38,9 +40,10 @@ defmodule MishkaCmsMigration.Report do
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
-  `entries` are the last 1,000 items met (`max_entries/0`), in the order they were met, so a report
-  stays small however large the site: the items left out number the sum of `counts` less the
-  length of `entries`, and every item is still recorded (`MishkaCmsMigration.MigrationItem`).
+  `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
+  that waits for its parent comes right after it), so a report stays small however large the site:
+  the items left out number the sum of `counts` less the length of `entries`, and every item is
+  still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
   @outcomes [:created, :updated, :skipped, :failed]

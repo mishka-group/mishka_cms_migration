@@ -22,6 +22,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`MishkaCmsMigration.MigrationRun`'s `:record_progress`: the kind and the counts so far), and the
   run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`.
 
+  An item to write that sits under another of its kind (`MishkaCmsMigration.Source.Item`'s
+  `parent`) waits until that parent is settled, on the same page or a later one, whichever the
+  source lists first, and is settled right after it, so the parent's CMS record is there for the
+  target to point at. Its children wait in turn, so a tree is written from the top down. An item
+  whose parent the kind never lists, or one in a loop of parents, is settled once the kind's last
+  page is walked. An item left as it is (unchanged, or kept for an admin's edit) never waits.
+
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
   remembered. A row the source cannot normalize fails alone, and the report says why, also when
@@ -141,7 +148,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
-      walk = %{kind: kind, cursor: nil, cursors: %{}, source_ids: %{}, pages: 0}
+      walk = %{
+        kind: kind,
+        cursor: nil,
+        cursors: %{},
+        source_ids: %{},
+        settled: %{},
+        waiting: %{},
+        pages: 0
+      }
+
       state |> walk_kind(walk, report) |> walked_kind()
     end)
   end
@@ -154,13 +170,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp walk_kind(state, walk, report) do
     with {:ok, rows, next} <- state.source.list(state.conn, walk.kind, walk.cursor),
-         {report, source_ids} = page(state, walk, rows, report),
+         {report, walk} = page(state, walk, rows, report),
          :ok <- progress(state, walk.kind, rows, report.counts) do
-      walk_on(state, %{walk | source_ids: source_ids, pages: walk.pages + 1}, next, report)
+      walk_on(state, %{walk | pages: walk.pages + 1}, next, report)
     end
   end
 
-  defp walk_on(_state, _walk, nil, report), do: {:ok, report}
+  defp walk_on(state, walk, nil, report), do: {:ok, unheld(state, walk, report)}
 
   defp walk_on(_state, %{cursors: cursors, kind: kind}, next, _report)
        when is_map_key(cursors, next),
@@ -178,7 +194,37 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
     plans = Decision.call(state, walk.kind, for({:ok, item} <- built, do: item))
 
-    {Enum.reduce(built, report, &Report.add(&2, settle(state, plans, &1))), source_ids}
+    Enum.reduce(built, {report, %{walk | source_ids: source_ids}}, &place(state, plans, &1, &2))
+  end
+
+  defp place(state, plans, {:ok, item}, placed),
+    do: hold(state, {item, Map.fetch!(plans, item.source_id)}, placed)
+
+  defp place(state, _plans, built, {report, walk}),
+    do: {Report.add(report, settle(state, built)), walk}
+
+  defp hold(_state, {%Item{parent: parent}, {outcome, _target, _record}} = held, {report, walk})
+       when outcome in [:created, :updated] and is_binary(parent) and
+              not is_map_key(walk.settled, parent),
+       do: {report, %{walk | waiting: Map.update(walk.waiting, parent, [held], &(&1 ++ [held]))}}
+
+  defp hold(state, held, placed), do: settle_tree(state, held, placed)
+
+  defp settle_tree(state, {item, plan}, {report, walk}) do
+    report = Report.add(report, Writer.call(state, item, plan))
+    {children, waiting} = Map.pop(walk.waiting, item.source_id, [])
+    walk = %{walk | settled: Map.put(walk.settled, item.source_id, true), waiting: waiting}
+
+    Enum.reduce(children, {report, walk}, &hold(state, &1, &2))
+  end
+
+  defp unheld(_state, %{waiting: waiting}, report) when map_size(waiting) == 0, do: report
+
+  defp unheld(state, walk, report) do
+    [{parent, children}] = Enum.take(walk.waiting, 1)
+    placed = {report, %{walk | waiting: Map.delete(walk.waiting, parent)}}
+    {report, walk} = Enum.reduce(children, placed, &settle_tree(state, &1, &2))
+    unheld(state, walk, report)
   end
 
   defp once({:ok, %Item{source_id: source_id} = item}, source_ids)
@@ -212,12 +258,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp source_id(%{"source_id" => id}) when is_binary(id) or is_integer(id), do: to_string(id)
   defp source_id(_attrs), do: nil
 
-  defp settle(state, plans, {:ok, item}),
-    do: Writer.call(state, item, Map.fetch!(plans, item.source_id))
+  defp settle(state, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
 
-  defp settle(state, _plans, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
-
-  defp settle(state, _plans, {:failed, item, reason}),
+  defp settle(state, {:failed, item, reason}),
     do: Writer.call(state, item, {:failed, Report.reason(reason)})
 
   defp progress(_state, _kind, [], _counts), do: :ok

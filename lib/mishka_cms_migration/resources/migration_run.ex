@@ -1433,6 +1433,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   def reason_label("duplicate_in_source"),
     do: dgettext("mishka_gervaz", "Listed twice by the source")
 
+  def reason_label("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+
   def reason_label("plugins_cannot_run"),
     do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
 

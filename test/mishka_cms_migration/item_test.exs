@@ -20,6 +20,16 @@ defmodule MishkaCmsMigration.ItemTest do
     assert %Item{source_id: "12", title: "Hello"} = build!(%{source_id: 12, title: "  Hello  "})
   end
 
+  test "keeps its parent's source id as a string, none as nil, and refuses one that is not an id" do
+    assert %Item{parent: "7"} = build!(%{parent: 7})
+    assert %Item{parent: "7"} = build!(%{parent: "7"})
+    assert %Item{parent: nil} = build!(%{parent: nil})
+    assert %Item{parent: nil} = build!(%{})
+
+    assert {:error, [%{field: :parent}]} =
+             Item.build(%{kind: "post", source_id: "1", parent: [7]})
+  end
+
   test "takes string keys and keeps the keys of attrs as they are" do
     assert {:ok, %Item{attrs: %{"slug" => "hello", "parent" => %{"id" => 3}}}} =
              Item.build(%{
@@ -58,6 +68,7 @@ defmodule MishkaCmsMigration.ItemTest do
 
     assert Item.hash(item) == Item.hash(%{item | modified_at: DateTime.utc_now()})
     refute Item.hash(item) == Item.hash(%{item | title: "Hello again"})
+    refute Item.hash(item) == Item.hash(%{item | parent: "7"})
     refute Item.hash(item) == Item.hash(build!(%{title: "Hello", content: [%{html: "<p>b</p>"}]}))
   end
 

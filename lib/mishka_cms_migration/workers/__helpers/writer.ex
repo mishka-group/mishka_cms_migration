@@ -17,6 +17,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   recorded, the item's entry says it failed, with why. A dry run records nothing and writes nothing:
   it reports the plan.
 
+  An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
+  first, is written under the CMS record its parent's item recorded: the target is handed that
+  record's id as its context's `parent_id`. When the parent has none — it failed, was never written,
+  or the source never listed it — the item is skipped as `"parent_missing"`, so it is not written
+  out of its place, and the run that writes the parent writes it too.
+
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason.
   """
@@ -68,10 +74,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     do: Report.entry(item.kind, item.source_id, item.title, :failed, Report.reason(error))
 
   defp written(state, source_item, target, outcome, record) do
-    with {:ok, item} <- convert(state, source_item),
+    with {:ok, context} <- parented(state, source_item),
+         {:ok, item} <- convert(state, source_item),
          {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor) do
       Ash.transact([target.resource(), MigrationItem], fn ->
-        store(state, source_item, item, {outcome, target, record})
+        store(state, source_item, item, {outcome, target, record}, context)
       end)
     end
   rescue
@@ -80,12 +87,26 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp store(state, source_item, item, {outcome, target, record}) do
-    with {:ok, written} <- write(target, item, record, target_context(state)),
+  defp store(state, source_item, item, {outcome, target, record}, context) do
+    with {:ok, written} <- write(target, item, record, context),
          {:ok, _item} <- recorded(state, source_item, target, written, outcome) do
       {:ok, written}
     end
   end
+
+  defp parented(state, %Item{parent: nil}), do: {:ok, target_context(state, nil)}
+
+  defp parented(state, %Item{kind: kind, parent: parent}) do
+    state.run.source_host
+    |> MishkaCmsMigration.items_by_sources(kind, [parent], scope: state.scope)
+    |> parent_record(state)
+  end
+
+  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, state) when is_binary(id),
+    do: {:ok, target_context(state, id)}
+
+  defp parent_record({:ok, _items}, _state), do: {:skipped, "parent_missing"}
+  defp parent_record({:error, error}, _state), do: {:error, error}
 
   defp write(target, item, nil, context) do
     target.resource()
@@ -167,12 +188,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp target_context(state),
+  defp target_context(state, parent_id),
     do: %{
       actor: state.actor,
       site_id: state.run.site_id,
       run_id: state.run.id,
       source_host: state.run.source_host,
-      options: state.options
+      options: state.options,
+      parent_id: parent_id
     }
 end

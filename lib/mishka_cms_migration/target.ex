@@ -61,6 +61,19 @@ defmodule MishkaCmsMigration.Target do
       def attrs(item, _context),
         do: %{title: item.title, path: item.attrs["path"], extra: %{"migration" => item.extra}}
 
+  ## An item's parent
+
+  An item that sits under another of its kind (`MishkaCmsMigration.Source.Item`'s `parent`, such
+  as a category's parent category) is written after its parent, and `attrs/2` is handed the id of
+  the CMS record the parent was written to as `context.parent_id` (`nil` for an item with none), to
+  put where the resource keeps its parent:
+
+      def attrs(item, context),
+        do: %{name: item.title, slug: item.attrs["slug"], parent_collection_id: context.parent_id}
+
+  An item whose parent has no CMS record is not written; it is skipped as `"parent_missing"`
+  (`MishkaCmsMigration.Workers.Helpers.Writer`).
+
   ## Keeping an admin's edits
 
   A re-run reads the records earlier runs wrote, as the admin running it
@@ -77,13 +90,17 @@ defmodule MishkaCmsMigration.Target do
   @uuid_types [Ash.Type.UUID, Ash.Type.UUIDv7]
   @timestamp_types [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
 
-  @typedoc "What `attrs/2` is told: who writes, on which site, from which run, with which choices."
+  @typedoc """
+  What `attrs/2` is told: who writes, on which site, from which run, with which choices, and the
+  CMS record of the item's parent (see "An item's parent").
+  """
   @type context :: %{
           actor: map(),
           site_id: String.t(),
           run_id: String.t(),
           source_host: String.t(),
-          options: map()
+          options: map(),
+          parent_id: Ecto.UUID.t() | nil
         }
 
   @doc "The kind of item this target writes, such as `\"post\"`."
