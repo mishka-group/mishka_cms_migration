@@ -9,9 +9,17 @@ defmodule MishkaCmsMigrationTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  test "the application is supervised and ships no source or target of its own yet" do
+  test "the application supervises its install plugins and ships no source or target yet" do
     assert is_pid(Process.whereis(MishkaCmsMigration.Supervisor))
-    assert MishkaCmsMigration.Application.plugins() == []
+
+    assert {MishkaCmsMigration.Application.sources(), MishkaCmsMigration.Application.targets()} ==
+             {[], []}
+
+    for plugin <- MishkaCmsMigration.Application.plugins() do
+      assert is_pid(Process.whereis(plugin))
+    end
+
+    assert MishkaCmsMigration.Plugins.Installer in MishkaCmsMigration.Application.plugins()
   end
 
   test "the domain is registered and holds the runs and their items" do
