@@ -62,7 +62,16 @@ defmodule MishkaCmsMigration.MixProject do
       {:guarded_struct, "~> 0.1.4"},
       {:igniter, "~> 0.8", only: [:dev, :test]},
       mishka_dep(:mishka_cms_core, "~> 0.0.4"),
-      mishka_dep(:mishka_gervaz, "~> 0.0.3")
+      mishka_dep(:mishka_gervaz, "~> 0.0.3"),
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.18", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
+      {:jump_credo_checks, "~> 0.7", only: [:dev, :test], runtime: false},
+      {:ex_slop, "~> 0.4", only: [:dev, :test], runtime: false},
+      {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      # `mix hex.publish` builds the docs with it.
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]
   end
 
