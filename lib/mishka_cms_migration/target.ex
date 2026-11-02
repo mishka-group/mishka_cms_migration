@@ -27,10 +27,23 @@ defmodule MishkaCmsMigration.Target do
         end
       end
 
-  `:create` and `:update` default to the resource's `:create` and `:update`. Supervise the module
-  in the extension's application, like any other plugin (`plugins/0`). `use` adds the plugin half —
-  the `"migration:targets"` registration, see `MishkaCmsCore.ProviderRegistry` — with `id/0` (the
-  kind), `resource/0` and `actions/0`; a target writes only `attrs/2`.
+  `:create` and `:update` default to the resource's `:create` and `:update`. `use` adds the plugin
+  half — the `"migration:targets"` registration, see `MishkaCmsCore.ProviderRegistry` — with `id/0`
+  (the kind), `resource/0` and `actions/0`; a target writes only `attrs/2`.
+
+  A target registers once it is supervised. An extension that ships one lists the module among the
+  children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
+  this extension's; no list here names it.
+
+  ## What the resource needs
+
+  Checked when the target compiles, which fails with the reason when one is missing:
+
+    * it is an Ash resource whose primary key is `:id`, a UUID — an item records the row it wrote
+      by that id (`MishkaCmsMigration.MigrationItem`'s `target_id`);
+    * it has an `updated_at` timestamp — a re-run compares it with the one recorded when the row was
+      written, to keep an admin's edits (below);
+    * `:create` names one of its create actions and `:update` one of its update actions.
 
   ## Keeping an admin's edits
 
@@ -41,6 +54,7 @@ defmodule MishkaCmsMigration.Target do
 
   require Ash.Query
 
+  alias Ash.Resource.Info
   alias MishkaCmsCore.ProviderRegistry
   alias MishkaCmsMigration.Item
 
@@ -81,6 +95,9 @@ defmodule MishkaCmsMigration.Target do
         priority: unquote(priority)
 
       @behaviour MishkaCmsMigration.Target
+      @after_compile MishkaCmsMigration.Target
+
+      require unquote(resource)
 
       @impl MishkaCmsMigration.Target
       def id, do: unquote(kind)
@@ -90,6 +107,18 @@ defmodule MishkaCmsMigration.Target do
 
       @impl MishkaCmsMigration.Target
       def actions, do: %{create: unquote(create), update: unquote(update)}
+    end
+  end
+
+  @doc false
+  def __after_compile__(env, _bytecode) do
+    case problems(env.module.resource(), env.module.actions()) do
+      [] ->
+        :ok
+
+      problems ->
+        raise ArgumentError,
+              "#{inspect(env.module)} cannot be a migration target: " <> Enum.join(problems, "; ")
     end
   end
 
@@ -139,4 +168,40 @@ defmodule MishkaCmsMigration.Target do
   end
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
+
+  defp problems(resource, actions) do
+    case Info.resource?(resource) do
+      true -> resource_problems(resource, actions)
+      false -> ["#{inspect(resource)} is not an Ash resource"]
+    end
+  end
+
+  defp resource_problems(resource, actions) do
+    [
+      {uuid_id?(resource), "its primary key must be :id, a UUID"},
+      {timestamped?(resource), "it must have an updated_at timestamp"},
+      {action?(resource, actions.create, :create),
+       "#{inspect(actions.create)} is not one of its create actions"},
+      {action?(resource, actions.update, :update),
+       "#{inspect(actions.update)} is not one of its update actions"}
+    ]
+    |> Enum.reject(&elem(&1, 0))
+    |> Enum.map(&"#{inspect(resource)}: #{elem(&1, 1)}")
+  end
+
+  defp uuid_id?(resource) do
+    Info.primary_key(resource) == [:id] and
+      Info.attribute(resource, :id).type in [Ash.Type.UUID, Ash.Type.UUIDv7]
+  end
+
+  defp timestamped?(resource) do
+    case Info.attribute(resource, :updated_at) do
+      %{type: type} -> type in [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
+      nil -> false
+    end
+  end
+
+  defp action?(resource, name, type) do
+    match?(%{type: ^type}, Info.action(resource, name))
+  end
 end
