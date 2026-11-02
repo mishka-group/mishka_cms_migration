@@ -22,7 +22,7 @@ defmodule MishkaCmsMigration.Workers.DryRunWorker do
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
   @impl Oban.Worker
-  def perform(%Oban.Job{} = job), do: Pipeline.perform(job, :dry_run)
+  def perform(%Oban.Job{} = job), do: Pipeline.call(job, :dry_run)
 
   @impl Oban.Worker
   def timeout(%Oban.Job{} = job), do: Pipeline.timeout(job)

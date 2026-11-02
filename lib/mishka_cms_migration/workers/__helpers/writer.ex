@@ -4,59 +4,67 @@
 
 defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   @moduledoc """
-  How an import writes one item and remembers it. The item's content is converted
-  (`migration:content:convert`), the item is offered to the plugins (`migration:item:before_import`),
-  and it is written through its target (`MishkaCmsMigration.Target.write/4`) as the admin who
-  pressed Import, and recorded (`MishkaCmsMigration.MigrationItem`'s `:record`) with the row it was
-  written to, in one transaction (`Ash.transact/3`): either the row and its record are both there,
-  or neither is, so a retry never meets a row no item remembers. An item skipped or failed is
-  recorded with why (`:record_outcome`), which keeps what the last write recorded. A dry run
-  records nothing.
+  What happens to one item once it is decided (`MishkaCmsMigration.Workers.Helpers.Decision`), and
+  its line of the report (`call/3`, answering `MishkaCmsMigration.Report.entry/5`).
+
+  In an import an item to create or update has its content converted (`migration:content:convert`),
+  is offered to the plugins (`migration:item:before_import`), is written through its target
+  (`MishkaCmsMigration.Target.write/4`) as the admin who pressed Import, and is recorded
+  (`MishkaCmsMigration.MigrationItem`'s `:record`) with the record it was written to, in one
+  transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
+  so a retry never meets a record no item remembers. An item skipped or failed is recorded with why
+  (`:record_outcome`), which keeps what the last write recorded. A dry run records nothing and
+  writes nothing: it reports the plan.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason.
-
-  Each function answers the item's line of the report (`MishkaCmsMigration.Report.entry/5`).
   """
 
   alias MishkaCmsMigration.{Events, MigrationItem, Report, Target}
   alias MishkaCmsMigration.Source.Item
 
   @doc """
-  Writes `item` of `page` as a new row (`:created`) or over `record` (`:updated`), and records what
-  happened.
+  Settles `item` by `plan` and answers its line of the report:
+
+    * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
+      in a dry run;
+    * `{:skipped, reason}` — recorded as skipped in an import;
+    * `:duplicate` — the source listed its id before: reported, never recorded;
+    * `{:failed, reason}` with `{kind, source_id}` in place of the item — a row the source could
+      not hand over as an item, recorded as failed when it named its source id.
   """
-  @spec write(map(), map(), Item.t(), :created | :updated, struct() | nil) :: Report.entry()
-  def write(state, page, item, outcome, record) do
-    case written(state, page, item, outcome, record) do
-      {:ok, _row} -> Report.entry(page.kind, item.source_id, item.title, outcome, nil)
-      {:skipped, reason} -> leave(state, page.kind, item, :skipped, reason)
-      {:error, error} -> leave(state, page.kind, item, :failed, Report.reason(error))
+  @spec call(map(), Item.t() | {String.t(), String.t() | nil}, term()) :: Report.entry()
+  def call(state, %Item{} = item, {:skipped, reason}), do: leave(state, item, :skipped, reason)
+
+  def call(_state, %Item{} = item, :duplicate),
+    do: Report.entry(item.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
+
+  def call(%{mode: :dry_run}, %Item{} = item, {outcome, _target, _record}),
+    do: Report.entry(item.kind, item.source_id, item.title, outcome, nil)
+
+  def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
+    case written(state, item, target, outcome, record) do
+      {:ok, _record} -> Report.entry(item.kind, item.source_id, item.title, outcome, nil)
+      {:skipped, reason} -> leave(state, item, :skipped, reason)
+      {:error, error} -> leave(state, item, :failed, Report.reason(error))
     end
   end
 
-  @doc "Records `item` of `kind` as `:skipped` or `:failed`, with `reason`, in an import."
-  @spec leave(map(), String.t(), Item.t(), :skipped | :failed, String.t()) :: Report.entry()
-  def leave(state, kind, item, outcome, reason) do
-    note(state, kind, item.source_id, outcome, reason)
-    Report.entry(kind, item.source_id, item.title, outcome, reason)
-  end
-
-  @doc """
-  Records a row of `kind` the source could not hand over as an item as failed, when it named its
-  source id, in an import.
-  """
-  @spec fail(map(), String.t(), String.t() | nil, String.t()) :: Report.entry()
-  def fail(state, kind, source_id, reason) do
+  def call(state, {kind, source_id}, {:failed, reason}) do
     note(state, kind, source_id, :failed, reason)
     Report.entry(kind, source_id, nil, :failed, reason)
   end
 
-  defp written(state, page, source_item, outcome, record) do
+  defp leave(state, item, outcome, reason) do
+    note(state, item.kind, item.source_id, outcome, reason)
+    Report.entry(item.kind, item.source_id, item.title, outcome, reason)
+  end
+
+  defp written(state, source_item, target, outcome, record) do
     with {:ok, item} <- convert(state, source_item),
          {:import, item} <- Events.before_import(item, outcome, state.run, state.actor) do
-      Ash.transact([page.target.resource(), MigrationItem], fn ->
-        store(state, page, source_item, item, outcome, record)
+      Ash.transact([target.resource(), MigrationItem], fn ->
+        store(state, source_item, item, {outcome, target, record})
       end)
     end
   rescue
@@ -65,25 +73,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp store(state, page, source_item, item, outcome, record) do
-    with {:ok, row} <- Target.write(page.target, item, record, target_context(state)),
-         {:ok, _recorded} <- recorded(state, page, source_item, row, outcome) do
-      {:ok, row}
+  defp store(state, source_item, item, {outcome, target, record}) do
+    with {:ok, written} <- Target.write(target, item, record, target_context(state)),
+         {:ok, _item} <- recorded(state, source_item, target, written, outcome) do
+      {:ok, written}
     end
   end
 
-  defp recorded(state, page, item, row, outcome) do
+  defp recorded(state, item, target, record, outcome) do
     MishkaCmsMigration.record_item(
       %{
         source_host: state.run.source_host,
-        source_kind: page.kind,
+        source_kind: item.kind,
         source_id: item.source_id,
         run_id: state.run.id,
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
-        target_resource: inspect(page.target.resource()),
-        target_id: row.id,
-        target_updated_at: Map.get(row, :updated_at),
+        target_resource: inspect(target.resource()),
+        target_id: record.id,
+        target_updated_at: Map.get(record, :updated_at),
         outcome: outcome,
         reason: nil
       },

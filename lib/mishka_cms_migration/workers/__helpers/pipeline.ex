@@ -114,8 +114,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp mode("MishkaCmsMigration.Workers.ImportWorker"), do: :import
 
   @doc "Runs `job` of a run in `mode` and answers as an `Oban.Worker` does."
-  @spec perform(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
-  def perform(%Oban.Job{args: args} = job, mode) do
+  @spec call(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
+  def call(%Oban.Job{args: args} = job, mode) do
     case running(args, mode) do
       {:ok, run} -> settle(run, mode, job)
       {:error, reason} -> {:cancel, reason}
@@ -246,9 +246,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       |> Enum.map(&build(state, walk.kind, &1))
       |> Enum.map_reduce(walk.ids, &once/2)
 
-    page = Decision.page(state.run, walk.kind, for({:ok, item} <- built, do: item))
+    plans = Decision.call(state, walk.kind, for({:ok, item} <- built, do: item))
 
-    {Enum.reduce(built, report, &Report.add(&2, handle(state, page, &1))), ids}
+    {Enum.reduce(built, report, &Report.add(&2, handle(state, walk.kind, plans, &1))), ids}
   end
 
   defp once({:ok, item} = row, ids) do
@@ -281,25 +281,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     end
   end
 
-  defp handle(state, page, {:error, source_id, reason}),
-    do: Writer.fail(state, page.kind, source_id, Report.reason(reason))
+  defp handle(state, _kind, plans, {:ok, item}),
+    do: Writer.call(state, item, Map.fetch!(plans, item.source_id))
 
-  defp handle(_state, page, {:duplicate, item}),
-    do: Report.entry(page.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
+  defp handle(state, _kind, _plans, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
 
-  defp handle(%{mode: :dry_run}, page, {:ok, item}) do
-    case Decision.plan(page, item) do
-      {:skipped, reason} -> Report.entry(page.kind, item.source_id, item.title, :skipped, reason)
-      {outcome, _record} -> Report.entry(page.kind, item.source_id, item.title, outcome, nil)
-    end
-  end
-
-  defp handle(%{mode: :import} = state, page, {:ok, item}) do
-    case Decision.plan(page, item) do
-      {:skipped, reason} -> Writer.leave(state, page.kind, item, :skipped, reason)
-      {outcome, record} -> Writer.write(state, page, item, outcome, record)
-    end
-  end
+  defp handle(state, kind, _plans, {:error, source_id, reason}),
+    do: Writer.call(state, {kind, source_id}, {:failed, Report.reason(reason)})
 
   defp progress(_state, _kind, [], _counts), do: :ok
 

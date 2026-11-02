@@ -4,18 +4,21 @@
 
 defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @moduledoc """
-  What a dry run or an import does with each item of a page, against what earlier runs recorded for
-  the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the item's kind and
-  its source id:
+  What a dry run or an import does with each item of a page (`call/3`), against what earlier runs
+  recorded for the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the
+  item's kind and its source id:
 
-    * none, or one never written — **create**;
-    * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — **skip**, `"unchanged"`;
-    * the row it was written to is gone — **skip**, `"target_missing"`;
+    * none, or one never written — `{:created, target, nil}`;
+    * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
+    * the row it was written to is gone — `{:skipped, "target_missing"}`;
     * the row's `updated_at` is not the one recorded when it was written: an admin changed it in
-      the CMS — **skip**, `"edited_in_cms"`;
-    * otherwise — **update** that row.
+      the CMS — `{:skipped, "edited_in_cms"}`;
+    * otherwise — `{:updated, target, record}`, the CMS record to write over.
 
-  An item whose kind has no target (`MishkaCmsMigration.Target`) is skipped, `"no_target"`.
+  An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`.
+
+  Items are found by source host as well as by kind and id, so several sources moved into one site
+  never meet: the same id from two hosts is two items, each with its own record.
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
   rows they were written to.
@@ -24,58 +27,51 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
 
-  @typedoc "What one page of a kind is decided against."
-  @type page :: %{
-          kind: String.t(),
-          target: module() | nil,
-          known: %{String.t() => struct()},
-          current: %{String.t() => struct()}
-        }
+  @typedoc "What to do with an item: write a new record, write over `record`, or leave it, and why."
+  @type plan ::
+          {:created, module(), nil} | {:updated, module(), struct()} | {:skipped, String.t()}
 
-  @typedoc "What to do with an item: write a new row, update `record`, or leave it, and why."
-  @type plan :: {:created, nil} | {:updated, struct()} | {:skipped, String.t()}
-
-  @doc "What `items` of `kind`, one page of `run`'s source, are decided against."
-  @spec page(map(), String.t(), [Item.t()]) :: page()
-  def page(run, kind, items) do
-    target = target(kind)
-    known = known(run, kind, items)
-    %{kind: kind, target: target, known: known, current: current(target, known, run.site_id)}
-  end
-
-  @doc "What to do with `item` of `page`."
-  @spec plan(page(), Item.t()) :: plan()
-  def plan(%{target: nil}, _item), do: {:skipped, "no_target"}
-
-  def plan(page, item) do
-    case Map.get(page.known, item.source_id) do
-      %{target_id: id} = known when id != nil -> decide(item, known, Map.get(page.current, id))
-      _never_written -> {:created, nil}
-    end
-  end
-
-  defp decide(item, known, record) do
-    cond do
-      known.content_hash == Item.hash(item) -> {:skipped, "unchanged"}
-      is_nil(record) -> {:skipped, "target_missing"}
-      edited?(record, known) -> {:skipped, "edited_in_cms"}
-      true -> {:updated, record}
-    end
-  end
-
-  defp edited?(record, known) do
-    case {Map.get(record, :updated_at), known.target_updated_at} do
-      {%DateTime{} = now, %DateTime{} = then} -> DateTime.compare(now, then) != :eq
-      _unknown -> true
-    end
-  end
-
-  defp target(kind) do
+  @doc "The plan for each of `items`, a page of `kind`, by source id."
+  @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
+  def call(state, kind, items) do
     case Target.fetch(kind) do
-      {:ok, target} -> target
-      {:error, _reason} -> nil
+      {:ok, target} -> plans(state.run, target, kind, items)
+      {:error, :not_installed} -> Map.new(items, &{&1.source_id, {:skipped, "no_target"}})
     end
   end
+
+  defp plans(run, target, kind, items) do
+    known = known(run, kind, items)
+    records = Target.current(target, Enum.flat_map(Map.values(known), &target_id/1), run.site_id)
+
+    Map.new(items, fn item ->
+      {item.source_id, plan(target, item, Map.get(known, item.source_id), records)}
+    end)
+  end
+
+  defp plan(target, _item, nil, _records), do: {:created, target, nil}
+  defp plan(target, _item, %{target_id: nil}, _records), do: {:created, target, nil}
+
+  defp plan(target, item, known, records),
+    do: decide(target, known, Item.hash(item), Map.get(records, known.target_id))
+
+  defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
+  defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+
+  defp decide(target, known, _hash, record) do
+    case edited?(record, known) do
+      true -> {:skipped, "edited_in_cms"}
+      false -> {:updated, target, record}
+    end
+  end
+
+  defp edited?(%{updated_at: %DateTime{} = now}, %{target_updated_at: %DateTime{} = then}),
+    do: DateTime.compare(now, then) != :eq
+
+  defp edited?(_record, _known), do: true
+
+  defp target_id(%{target_id: nil}), do: []
+  defp target_id(%{target_id: id}), do: [id]
 
   defp known(_run, _kind, []), do: %{}
 
@@ -86,12 +82,5 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       authorize?: false
     )
     |> Map.new(&{&1.source_id, &1})
-  end
-
-  defp current(nil, _known, _site_id), do: %{}
-
-  defp current(target, known, site_id) do
-    ids = for {_source_id, %{target_id: id}} <- known, id != nil, do: id
-    Target.current(target, ids, site_id)
   end
 end

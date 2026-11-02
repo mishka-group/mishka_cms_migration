@@ -24,7 +24,7 @@ defmodule MishkaCmsMigration.Workers.ImportWorker do
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
   @impl Oban.Worker
-  def perform(%Oban.Job{} = job), do: Pipeline.perform(job, :import)
+  def perform(%Oban.Job{} = job), do: Pipeline.call(job, :import)
 
   @impl Oban.Worker
   def timeout(%Oban.Job{} = job), do: Pipeline.timeout(job)
