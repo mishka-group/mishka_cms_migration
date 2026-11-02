@@ -55,6 +55,7 @@ test/
 ├── support/                          the case, the factory, and plugins for the suite: a fake source, two targets, event probes
 └── fixtures/wordpress/               REST responses and WXR exports recorded from dev/wordpress
 dev/
+├── playground.exs                    `mix playground`: a run walked through by hand over the fake source
 └── wordpress/                        a real WordPress in Docker, seeded with realistic content, and the script that records it
 ```
 
@@ -80,9 +81,16 @@ MIX_ENV=test mix ash.codegen setup
 mix test
 ```
 
-There is no screen yet and no real source: the only source is the suite's fake one (`test/support/plugins/fake_source.ex`), so a run is tried through the tests, which create, dry-run and import runs over it.
+There is no screen yet and no real source. The only source is the suite's fake one (`test/support/plugins/fake_source.ex`): the tests create, dry-run and import runs over it, and `mix playground` (below) does the same by hand.
 
 `mix ci` runs every check: `hex.audit`, compile with warnings as errors, format, credo, sobelow, `deps.audit`, dialyzer, ExDNA and the tests. The tests need PostgreSQL on `localhost` (user and password `postgres`, or `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_HOST`).
+
+**Try it by hand.** `mix playground` walks through a run over the fake source and checks each step in plain words, then rolls everything back. `iex -S mix playground` does the same and stays in IEx with a `Playground` module to try your own rows. It needs the same PostgreSQL as the tests:
+
+```sh
+mix playground
+iex -S mix playground
+```
 
 ## 💬 Community and support
 
