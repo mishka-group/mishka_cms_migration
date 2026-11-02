@@ -49,7 +49,35 @@ defmodule MishkaCmsMigration.MixProject do
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-    []
+    [
+      {:decimal, "~> 3.2"},
+      {:sourceror, "~> 1.13", only: [:dev, :test]},
+      {:lazy_html, "~> 0.1", only: :test},
+      {:ash_postgres, "~> 2.15"},
+      {:ash_phoenix, "~> 2.3"},
+      {:ash, "~> 3.37"},
+      {:oban, "~> 2.24"},
+      {:req, "~> 0.7"},
+      mishka_dep(:mishka_installer, "~> 0.1.15"),
+      {:guarded_struct, "~> 0.1.4"},
+      {:igniter, "~> 0.8", only: [:dev, :test]},
+      mishka_dep(:mishka_cms_core, "~> 0.0.4"),
+      mishka_dep(:mishka_gervaz, "~> 0.0.3")
+    ]
+  end
+
+  # A Mishka package is its sibling checkout `../<name>` when there is one, and its Hex release
+  # otherwise. Only a git checkout counts, so the copy Mix fetched into a host's `deps/` never does,
+  # and a `hex.*` task (`mix hex.build`, `mix hex.publish`) always takes Hex, as a package must.
+  defp mishka_dep(name, requirement) do
+    sibling? =
+      File.dir?(Path.expand("../#{name}/.git", __DIR__)) and
+        not Enum.any?(System.argv(), &String.starts_with?(&1, "hex."))
+
+    case sibling? do
+      true -> {name, path: "../#{name}"}
+      false -> {name, requirement}
+    end
   end
 
   defp description() do
