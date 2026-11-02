@@ -7,8 +7,9 @@ defmodule MishkaCmsMigration.Provision do
   What setting the migration up on a site gives it: the permission names its runs are gated by
   (`permissions/0`), so a site's admin can be granted them. The names are shared by every site, so
   the first site's install creates them and every later one finds them; the system writes them,
-  whoever asked, as `MishkaCmsCore.Runtime.ExtensionProvision.ensure_permissions/1` does for every
-  extension. The extension ships no components, pages or snippets.
+  whoever asked, through `MishkaCmsCore.Install.Bootstrap.ensure_permissions/1`, as
+  `MishkaCmsCore.Runtime.ExtensionProvision` does for every extension. The extension ships no
+  components, pages or snippets.
 
   It runs when an admin installs the extension on a site (`MishkaCmsMigration.Plugins.Installer`),
   and needs `admin:dashboard:runtime:site` (`required/0`); a site's admin installs it only on their
@@ -19,6 +20,7 @@ defmodule MishkaCmsMigration.Provision do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Install
+  alias MishkaCmsCore.Install.Bootstrap
   alias MishkaCmsCore.Runtime.ExtensionProvision
 
   @permissions [
@@ -45,7 +47,7 @@ defmodule MishkaCmsMigration.Provision do
   @spec install(String.t(), map() | nil) :: ExtensionProvision.report() | %{error: String.t()}
   def install(site_id, actor) do
     case refusal(site_id, actor) do
-      nil -> report(ExtensionProvision.ensure_permissions(%{permissions: @permissions}))
+      nil -> created() |> report()
       message -> %{error: message}
     end
   end
@@ -71,6 +73,11 @@ defmodule MishkaCmsMigration.Provision do
       gettext("Setting the migration up needs these permissions: %{names}",
         names: Enum.join(names, ", ")
       )
+
+  defp created do
+    {:ok, %{created: created}} = Bootstrap.ensure_permissions(@permissions)
+    Enum.map(created, & &1.name)
+  end
 
   defp report(created) do
     %{
