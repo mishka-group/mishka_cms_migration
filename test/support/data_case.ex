@@ -15,8 +15,9 @@ defmodule MishkaCmsMigration.DataCase do
 
   The helpers come from the core too — `errors_on/1` and the rest of `MishkaCmsCore.DataCase`, the
   sites, users and runtime records of `MishkaCmsCore.Test.Factory`, `MishkaCmsCore.Test.VersionHelpers`
-  — and this case adds a plugin for the length of a block (`with_plugin/3`) and the SQL a block ran
-  (`queries_while/1`).
+  — and this case adds this extension's fixtures (`MishkaCmsMigration.Test.Factory`), Oban's test
+  helpers (`Oban.Testing`), a plugin for the length of a block (`with_plugin/3`) or of a test
+  (`register_plugin!/2`), and the SQL a block ran (`queries_while/1`).
   """
 
   use ExUnit.CaseTemplate
@@ -32,6 +33,9 @@ defmodule MishkaCmsMigration.DataCase do
       import MishkaCmsCore.Test.Factory
       import MishkaCmsCore.Test.VersionHelpers
       import MishkaCmsMigration.DataCase
+      import MishkaCmsMigration.Test.Factory
+
+      use Oban.Testing, repo: MishkaCmsMigration.Repo
     end
   end
 
@@ -47,6 +51,27 @@ defmodule MishkaCmsMigration.DataCase do
       with_plugin(MyPlugin, "migration:item:before_import", fn -> ... end)
   """
   def with_plugin(module, event, fun) do
+    register(module, event)
+
+    try do
+      fun.()
+    after
+      MishkaInstaller.Event.Event.unregister(:name, module, false)
+    end
+  end
+
+  @doc """
+  Registers and starts `module` as the plugin for `event` for the rest of the test, and unregisters
+  it when the test exits.
+
+      setup do: register_plugin!(MyPlugin, "migration:import:finished")
+  """
+  def register_plugin!(module, event) do
+    register(module, event)
+    on_exit(fn -> MishkaInstaller.Event.Event.unregister(:name, module, false) end)
+  end
+
+  defp register(module, event) do
     {:ok, _registered} =
       MishkaInstaller.Event.Event.write(%{
         name: module,
@@ -56,12 +81,6 @@ defmodule MishkaCmsMigration.DataCase do
       })
 
     :ok = MishkaInstaller.Event.EventHandler.do_compile(event, :start, false)
-
-    try do
-      fun.()
-    after
-      MishkaInstaller.Event.Event.unregister(:name, module, false)
-    end
   end
 
   @doc """
