@@ -28,8 +28,49 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   `extra/1` keeps the site's name, its home address and timezone, and who signed in.
 
-  It reads no content yet: `kinds/0` is empty, so a dry run of it finds nothing. Posts, categories
-  and tags come next (mishka_cms_migration#5), then authors (#6).
+  ## What it reads
+
+  `kinds/0` is `["user", "category", "tag", "page", "post"]`: authors and terms before the pages
+  and posts that point at them. `list/3` reads each from its REST route (`/wp/v2/users`,
+  `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with
+  `context=edit`, so WordPress answers the raw fields an editor sees, 100 rows a page. Pages and
+  posts are asked for with `status=any`: published, scheduled, draft, pending and private, but not
+  the trash. The cursor is the next page number while `X-WP-TotalPages` says there is one, and
+  `nil` after the last. A list WordPress refuses fails the walk:
+    * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
+      context, or the password was revoked since the run was made;
+    * `:unreachable` — nothing answered;
+    * `:no_site` — something answered that is not the REST API;
+    * `"WordPress answered <status>: <message>"` — any other error WordPress put in words, such as
+      a page past the last.
+
+  `normalize/3` makes each row an item (`MishkaCmsMigration.Source.Item`). Its `source_id` is the
+  WordPress id; keys are WordPress's own and are never atomized.
+
+    * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
+      `content` is one piece holding `content.raw` as `:html` (blocks are converted later). `attrs`
+      keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`, `template`, `excerpt`
+      (its raw text), and `parent` and `menu_order` for a page, `categories`, `tags`, `sticky` and
+      `format` for a post.
+    * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
+      and `parent` for a category. A term has no `modified_at`.
+    * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
+      `last_name`, `nickname`, `description`, `roles`, `url`, `link` and `avatar_urls`. A user has
+      no `modified_at`.
+
+  `extra` is every other field of the row: `meta` (Yoast's `_yoast_wpseo_*` fields and every other
+  registered meta), `guid`, `password`, `comment_status`, `class_list`, a user's `capabilities`
+  and `registered_date`, a term's `taxonomy`, and what a plugin adds. It leaves out what WordPress
+  works out afresh for each answer rather than keeps: `_links`, the `rendered` halves of the fields
+  above, and Yoast's `yoast_head` and `yoast_head_json`; and the local `modified`, which
+  `modified_at` already says. Yoast's head carries the modified time too, so keeping either would
+  make an item that was only saved again look changed to `MishkaCmsMigration.Source.Item.hash/1`.
+  A row without the fields its kind needs, such as one read with `_fields`, is refused as
+  `:unreadable`.
+
+  Nothing is written yet: no target takes these kinds, so a dry run reports every item as skipped
+  (`"no_target"`). Writing posts, pages and terms to the Blog comes next
+  (mishka_cms_migration#5), then authors (mishka_cms_migration#6).
 
   Requests go through `Req`. `req_options` in the application environment are merged into every
   request, which is how the suite replays what a real WordPress answered
@@ -41,8 +82,32 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   use MishkaCmsMigration.Source, id: "wordpress", label: "WordPress"
 
+  @kinds ["user", "category", "tag", "page", "post"]
+
+  @routes %{
+    "user" => {"/wp/v2/users", []},
+    "category" => {"/wp/v2/categories", []},
+    "tag" => {"/wp/v2/tags", []},
+    "page" => {"/wp/v2/pages", [status: "any"]},
+    "post" => {"/wp/v2/posts", [status: "any"]}
+  }
+
+  @per_page 100
+
+  @rendered ~w(_links yoast_head yoast_head_json)
+
+  @entries ["page", "post"]
+  @entry_attrs ~w(slug status link parent author categories tags featured_media date_gmt
+                  menu_order sticky format template)
+  @entry_read ~w(id title content excerpt modified modified_gmt) ++ @entry_attrs ++ @rendered
+
+  @term_attrs ~w(slug description parent count link)
+  @user_attrs ~w(username email slug name first_name last_name nickname description roles url
+                 link avatar_urls)
+  @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+
   @impl MishkaCmsMigration.Source
-  def kinds, do: []
+  def kinds, do: @kinds
 
   @impl MishkaCmsMigration.Source
   def connect(connection, secret) do
@@ -66,10 +131,78 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   end
 
   @impl MishkaCmsMigration.Source
-  def list(_conn, _kind, _cursor), do: {:ok, [], nil}
+  def list(%{req: req}, kind, cursor) when is_map_key(@routes, kind) do
+    {route, params} = Map.fetch!(@routes, kind)
+    page = cursor || 1
+
+    req
+    |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page] ++ params)
+    |> listed(page)
+  end
+
+  def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
 
   @impl MishkaCmsMigration.Source
+  def normalize(
+        %{"id" => id, "title" => %{"raw" => title}, "content" => %{"raw" => html}} = row,
+        kind,
+        _context
+      )
+      when kind in @entries do
+    {:ok,
+     %{
+       source_id: id,
+       title: title,
+       modified_at: Map.get(row, "modified_gmt"),
+       attrs: entry_attrs(row),
+       extra: Map.drop(row, @entry_read),
+       content: [%{html: html}]
+     }}
+  end
+
+  def normalize(%{"id" => id, "name" => name} = row, kind, _context)
+      when is_map_key(@named, kind) do
+    attrs = Map.fetch!(@named, kind)
+
+    {:ok,
+     %{
+       source_id: id,
+       title: name,
+       attrs: Map.take(row, attrs),
+       extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered)
+     }}
+  end
+
+  def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp entry_attrs(%{"excerpt" => %{"raw" => excerpt}} = row),
+    do: row |> Map.take(@entry_attrs) |> Map.put("excerpt", excerpt)
+
+  defp entry_attrs(row), do: Map.take(row, @entry_attrs)
+
+  defp listed({:ok, %Req.Response{status: 200, body: rows} = response}, page) when is_list(rows),
+    do: {:ok, rows, next_page(response, page)}
+
+  defp listed({:ok, %Req.Response{status: status}}, _page) when status in [401, 403],
+    do: {:error, :unauthorized}
+
+  defp listed({:ok, %Req.Response{status: status, body: %{"message" => message}}}, _page)
+       when is_binary(message),
+       do: {:error, "WordPress answered #{status}: #{message}"}
+
+  defp listed({:ok, %Req.Response{}}, _page), do: {:error, :no_site}
+  defp listed({:error, _exception}, _page), do: {:error, :unreachable}
+
+  defp next_page(response, page),
+    do:
+      response
+      |> Req.Response.get_header("x-wp-totalpages")
+      |> Enum.map(&Integer.parse/1)
+      |> page_after(page)
+
+  defp page_after([{total, ""} | _], page) when page < total, do: page + 1
+  defp page_after(_total, _page), do: nil
 
   defp base_url(url) when is_binary(url), do: url |> String.trim() |> URI.parse() |> base()
   defp base_url(_url), do: {:error, :invalid_address}
