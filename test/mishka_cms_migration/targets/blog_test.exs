@@ -664,6 +664,23 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                ["core/paragraph", "text", "core/table", "table"]
     end
 
+    test "an import keeps a usable address on every image of every post", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin)
+      pages = site |> posts() |> Map.values() |> Enum.map(&content/1)
+      images = pages |> Enum.map(&(&1 |> LazyHTML.query("img") |> Enum.count())) |> Enum.sum()
+
+      located =
+        pages
+        |> Enum.flat_map(&(&1 |> LazyHTML.query("img[src]") |> LazyHTML.attribute("src")))
+
+      assert images >= 10
+      assert length(located) == images
+      assert Enum.all?(located, &String.starts_with?(&1, "http://localhost:8089/wp-content/"))
+    end
+
     test "an import makes a classic post's paragraphs, and HTML of its [caption] and [gallery]",
          %{
            site: site,
