@@ -257,9 +257,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       categories = items!("category")
 
       assert categories["4"].title == "Announcements"
-      assert categories["4"].attrs["parent"] == 2
+      assert {categories["4"].parent, categories["4"].attrs["parent"]} == {"2", 2}
       assert categories["2"].title == "News"
-      assert categories["2"].attrs["parent"] == 0
+      assert {categories["2"].parent, categories["2"].attrs["parent"]} == {nil, 0}
+      assert categories["8"].parent == "7"
       assert Enum.any?(Map.values(categories), &(&1.title == "آموزش‌ها"))
       assert categories["8"].attrs["slug"] == "migration"
       assert categories["8"].extra["taxonomy"] == "category"
@@ -272,13 +273,25 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                {"Release notes", "release-notes", 2}
 
       refute is_map_key(tags["17"].attrs, "parent")
+      assert is_nil(tags["17"].parent)
+    end
+
+    test "a slug WordPress keeps percent-encoded is decoded, and an ASCII one is kept" do
+      [tag] = Enum.filter(recorded("tags"), &(&1["id"] == 20))
+      [category] = Enum.filter(recorded("categories"), &(&1["id"] == 9))
+
+      assert tag["slug"] =~ "%d9%88"
+      assert items!("tag")["20"].attrs["slug"] == "وردپرس"
+      assert category["slug"] =~ "%d8%a2"
+      assert items!("category")["9"].attrs["slug"] == "آموزش"
+      assert items!("post")["33"].attrs["slug"] == recorded("post-single")["slug"]
     end
 
     test "a page keeps its parent and its place in the menu order" do
       pages = items!("page")
 
       assert pages["26"].title == "Leadership"
-      assert pages["26"].attrs["parent"] == 25
+      assert {pages["26"].parent, pages["26"].attrs["parent"]} == {"25", 25}
       assert pages["25"].attrs["parent"] == 24
       assert pages["29"].attrs["menu_order"] == 5
       assert pages["3"].attrs["status"] == "draft"

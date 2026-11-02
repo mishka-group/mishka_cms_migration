@@ -48,7 +48,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       a page past the last.
 
   `normalize/3` makes each row an item (`MishkaCmsMigration.Source.Item`). Its `source_id` is the
-  WordPress id; keys are WordPress's own and are never atomized.
+  WordPress id, and its `parent` the id of a page's parent page or a category's parent category
+  (`nil` at the top, where WordPress says `0`); keys are WordPress's own and are never atomized.
+  WordPress keeps a slug written in another script percent-encoded (`%d9%88%d8%b1…` for
+  `وردپرس`), so the item's `slug` is decoded; one that does not decode to text is kept as it is.
 
     * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
       `content` is one piece holding `content.raw` as `:html` (blocks are converted later). `attrs`
@@ -183,8 +186,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      %{
        source_id: id,
        title: title,
+       parent: parent(row),
        modified_at: Map.get(row, "modified_gmt"),
-       attrs: entry_attrs(row),
+       attrs: row |> entry_attrs() |> decoded_slug(),
        extra: Map.drop(row, @entry_read),
        content: [%{html: html}]
      }}
@@ -198,13 +202,27 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      %{
        source_id: id,
        title: name,
-       attrs: Map.take(row, attrs),
+       parent: parent(row),
+       attrs: row |> Map.take(attrs) |> decoded_slug(),
        extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered)
      }}
   end
 
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp parent(%{"parent" => parent}) when is_integer(parent) and parent > 0, do: parent
+  defp parent(_row), do: nil
+
+  defp decoded_slug(%{"slug" => slug} = attrs) when is_binary(slug),
+    do: %{attrs | "slug" => slug |> URI.decode() |> text_or(slug)}
+
+  defp decoded_slug(attrs), do: attrs
+
+  defp text_or(decoded, slug), do: text_or(String.valid?(decoded), decoded, slug)
+
+  defp text_or(true, decoded, _slug), do: decoded
+  defp text_or(false, _decoded, slug), do: slug
 
   defp entry_attrs(%{"excerpt" => %{"raw" => excerpt}} = row),
     do: row |> Map.take(@entry_attrs) |> Map.put("excerpt", excerpt)
