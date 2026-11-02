@@ -22,9 +22,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   such as a second dry run while one of the site's runs is running, is said in Gervaz's words for
   a failed row action (`MishkaGervaz.Errors.format_flash_message/2`), and nothing changes.
 
-  An expanded row (`{:expand_row, id}`) shows the run's last report, kind by kind, read the same
-  way. The page keeps which row it last expanded and draws it again on each of that run's
-  notifications, so a dry run that finishes fills it in without a reload.
+  An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
+  `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
+  got there, what its last report found kind by kind and its latest items, how far a running job
+  is, why a failed run stopped, and what its source said of itself and the admin chose. The page
+  keeps which row it last expanded and draws it again on each of that run's notifications, so a
+  dry run moving on, or finishing, shows in it without a reload.
 
   Who may open it is the sidebar's declaration (`MishkaCmsMigrationWeb.SidebarMenu`), which
   `MishkaCmsCore.Sidebar.PageGuard` reads on every mount.
@@ -32,7 +35,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   use MishkaCmsCore.ExtensionLiveView
 
-  alias MishkaCmsMigration.{MigrationRun, Report, Source}
+  alias MishkaCmsMigration.{MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
   alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
 
@@ -157,9 +161,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   defp refresh(socket, _notification), do: socket
 
-  defp expanded({:ok, %MigrationRun{report: report}}),
-    do:
-      send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: report_html(report))
+  defp expanded({:ok, %MigrationRun{} = run}),
+    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(run))
 
   defp expanded({:ok, nil}),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: :not_found)
@@ -167,78 +170,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   defp expanded({:error, reason}),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
 
-  defp report_html(report) do
-    assigns = found(report)
+  defp details_html(run) do
+    assigns = %{run: run}
 
     ~H"""
-    <div data-role="run-report" class="grid gap-[8px]">
-      <div
-        :if={@note}
-        data-role="run-report-note"
-        class="text-[13px] font-medium text-[#8a877f]"
-      >
-        {@note}
-      </div>
-      <div
-        :for={kind <- @kinds}
-        data-role="run-report-kind"
-        data-kind={kind.kind}
-        class="grid grid-cols-[minmax(110px,0.7fr)_minmax(90px,0.5fr)_minmax(240px,2fr)] items-baseline gap-x-4 gap-y-1 rounded-[10px] border border-[#ecebe6] bg-white px-[14px] py-[10px] max-[640px]:grid-cols-1!"
-      >
-        <span class="text-[13px] font-semibold text-[#17161a]">{kind.label}</span>
-        <span
-          data-role="run-report-found"
-          class="font-['Space_Grotesk'] text-[12.5px] font-semibold text-[#3a382f]"
-        >
-          {kind.found}
-        </span>
-        <div class="min-w-0">
-          <div data-role="run-report-outcomes" class="text-[12.5px] font-medium text-[#3a382f]">
-            {kind.outcomes}
-          </div>
-          <div
-            :for={reason <- kind.reasons}
-            data-role="run-report-reason"
-            class="mt-[2px] text-[11.5px] font-medium text-[#8a877f]"
-          >
-            {gettext("Skipped: %{reason}", reason: reason)}
-          </div>
-        </div>
-      </div>
-    </div>
+    <RunDetails.panel run={@run} />
     """
     |> Phoenix.HTML.Safe.to_iodata()
     |> IO.iodata_to_binary()
-  end
-
-  defp found(%{kinds: [_ | _] = kinds, entries: entries}),
-    do: %{note: nil, kinds: Enum.map(kinds, &kind_found(&1, entries))}
-
-  defp found(%{kinds: []}), do: %{note: gettext("The source listed nothing to move."), kinds: []}
-  defp found(_no_report), do: %{note: gettext("No dry run yet."), kinds: []}
-
-  defp kind_found(%{kind: kind} = counts, entries) do
-    %{
-      kind: kind,
-      label: MigrationRun.kind_label(kind),
-      found:
-        gettext("%{count} found",
-          count:
-            counts
-            |> Map.take(Report.outcomes())
-            |> Map.values()
-            |> Enum.sum()
-            |> MishkaCmsCore.Localized.number()
-        ),
-      outcomes: MigrationRun.result_summary(%{counts: counts}),
-      reasons: skipped_reasons(entries, kind)
-    }
-  end
-
-  defp skipped_reasons(entries, kind) do
-    for %{kind: ^kind, outcome: :skipped, reason: reason} when is_binary(reason) <- entries,
-        uniq: true,
-        do: MigrationRun.reason_label(reason)
   end
 
   defp close_modal(socket),

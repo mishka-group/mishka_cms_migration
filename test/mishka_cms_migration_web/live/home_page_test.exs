@@ -108,21 +108,35 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     settled(view)
   end
 
-  defp outcomes(view), do: counted(view, "run-outcome", "data-outcome")
-  defp kinds(view), do: counted(view, "run-kind", "data-kind")
+  @result ~s|[data-role="run-result"]|
+  @details ~s|[data-role="run-details"]|
 
-  # The Result cells' pills or chips of `role`, as `key` attribute to `data-count`.
-  defp counted(view, role, key) do
-    found =
-      view
-      |> render()
-      |> LazyHTML.from_fragment()
-      |> LazyHTML.query(~s|[data-role="run-result"] [data-role="#{role}"]|)
+  defp outcomes(view), do: counted(view, @result, "run-outcome", "data-outcome")
+  defp kinds(view), do: counted(view, @result, "run-kind", "data-kind")
+
+  # The parts of `role` within `scope` (the Result cells, or the expanded row), as their `key`
+  # attribute to their `count` one.
+  defp counted(view, scope, role, key, count \\ "data-count") do
+    found = parts(view, scope, role)
 
     found
     |> LazyHTML.attribute(key)
-    |> Enum.zip(found |> LazyHTML.attribute("data-count") |> Enum.map(&String.to_integer/1))
+    |> Enum.zip(found |> LazyHTML.attribute(count) |> Enum.map(&String.to_integer/1))
     |> Map.new()
+  end
+
+  # The `key` attribute of each part of the expanded row whose `data-role` is `role`, in order.
+  defp detailed(view, role, key), do: view |> parts(@details, role) |> LazyHTML.attribute(key)
+
+  # The expanded row's parts of `role`, within `within` when given, as `counted/5` reads them.
+  defp detailed_counts(view, role, key, count \\ "data-count", within \\ ""),
+    do: counted(view, "#{@details} #{within}", role, key, count)
+
+  defp parts(view, scope, role) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(~s|#{scope} [data-role="#{role}"]|)
   end
 
   defp status(run),
@@ -474,7 +488,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       view = open!(conn, admin)
       expand!(view, run)
-      assert has_element?(view, ~s|[data-role="run-report-note"]|, "No dry run yet.")
+      assert has_element?(view, ~s|[data-role="run-details"][data-status="pending"]|)
+      assert has_element?(view, ~s|[data-role="run-details-empty"]|, "No dry run yet")
+      assert detailed(view, "run-details-reads", "data-kind") == ~w(user category tag page post)
       assert outcomes(view) == %{}
 
       assert row_action!(view, "dry_run", run) =~ "Dry run started."
@@ -505,32 +521,240 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
 
-      for {kind, label, found} <- [
-            {"user", "Users", 5},
-            {"category", "Categories", 9},
-            {"tag", "Tags", 11},
-            {"page", "Pages", 11},
-            {"post", "Posts", 21}
-          ] do
-        row = ~s|[data-role="run-report-kind"][data-kind="#{kind}"]|
+      assert detailed_counts(view, "run-details-kind", "data-kind", "data-found") == %{
+               "user" => 5,
+               "category" => 9,
+               "tag" => 11,
+               "page" => 11,
+               "post" => 21
+             }
 
-        assert has_element?(view, row, label)
-        assert has_element?(view, ~s|#{row} [data-role="run-report-found"]|, "#{found} found")
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") == %{"skipped" => 57}
+
+      refute has_element?(view, ~s|[data-role="run-details-empty"]|)
+    end
+
+    test "an expanded run shows why each kind was skipped, its latest items and what the WordPress site said of itself",
+         %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      for {kind, found} <- [{"user", 5}, {"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+        card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
+
+        assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
+                 %{"skipped" => found}
 
         assert has_element?(
                  view,
-                 ~s|#{row} [data-role="run-report-outcomes"]|,
-                 "#{found} skipped"
-               )
-
-        assert has_element?(
-                 view,
-                 ~s|#{row} [data-role="run-report-reason"]|,
+                 ~s|#{card} [data-role="run-details-kind-reason"][data-outcome="skipped"]|,
                  "Nothing imports these yet"
                )
       end
 
-      refute has_element?(view, ~s|[data-role="run-report-note"]|)
+      newest_posts =
+        "posts"
+        |> MishkaCmsMigration.Test.WordPress.recorded()
+        |> Enum.map(&to_string(&1["id"]))
+        |> Enum.take(-8)
+        |> Enum.reverse()
+
+      assert detailed(view, "run-details-item", "data-source-id") == newest_posts
+      assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post", 8)
+      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("skipped", 8)
+
+      assert detailed(view, "run-details-items-more", "data-count") == ["49"]
+
+      for {fact, said} <- [
+            {"name", "Mishka Test Blog"},
+            {"home", "localhost:8089"},
+            {"timezone", "Asia/Tehran"},
+            {"signed_in_as", "admin"}
+          ],
+          do:
+            assert(
+              has_element?(view, ~s|[data-role="run-details-fact"][data-fact="#{fact}"]|, said)
+            )
+
+      assert has_element?(
+               view,
+               ~s|[data-fact="home"] a[href="http://localhost:8089"][target="_blank"][rel~="noopener"]|
+             )
+
+      assert detailed(view, "run-details-option", "data-value") == [
+               "connect",
+               "draft",
+               "blog",
+               "false"
+             ]
+    end
+  end
+
+  describe "a run's expanded row" do
+    setup %{site: site} do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      {:ok, admin: migration_admin!(site)}
+    end
+
+    test "follows a dry run's job as it walks the source's kinds, then shows what it found", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      rows = for id <- 1..3, do: redirect_row(id, "/old-#{id}", "/new-#{id}")
+      run = site |> create_run!(admin, %{"redirect" => rows}) |> start_dry_run!(admin)
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      bar = ~s|[data-role="run-details-progress-bar"]|
+      assert has_element?(view, ~s|#{bar}[aria-valuenow="0"][aria-valuemax="3"]|)
+      refute has_element?(view, ~s|#{bar}[data-kind]|)
+      assert detailed(view, "run-details-progress-step", "data-state") == ~w(next next next)
+
+      walked!(run, "note", 2)
+      settled(view)
+
+      assert has_element?(view, ~s|#{bar}[data-kind="note"][aria-valuenow="1"]|)
+      assert detailed(view, "run-details-progress-step", "data-state") == ~w(done current next)
+
+      assert detailed(view, "run-details-progress-read", "data-count") == ["2"]
+
+      assert detailed_counts(view, "run-details-progress-outcome", "data-outcome") == %{
+               "created" => 2
+             }
+
+      refute has_element?(view, ~s|[data-role="run-details-kind"]|)
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      refute has_element?(view, ~s|[data-role="run-details-progress"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details"][data-status="dry_run"][data-step="dry_run"]|
+             )
+
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") == %{"created" => 3}
+
+      assert detailed_counts(view, "run-details-kind", "data-kind", "data-found") == %{
+               "redirect" => 3
+             }
+
+      assert detailed(view, "run-details-item", "data-source-id") == ~w(3 2 1)
+      refute has_element?(view, ~s|[data-role="run-details-items-more"]|)
+    end
+
+    test "shows an import that is done as the import's, with what it wrote", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      rows = [redirect_row(1, "/a", "/b"), redirect_row(2, "/c", "/d")]
+      run = migrate!(site, admin, %{"redirect" => rows})
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details"][data-status="done"][data-step="import"]|
+             )
+
+      assert has_element?(view, ~s|[data-role="run-details-moment"]|, "Import finished")
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") == %{"created" => 2}
+      assert detailed(view, "run-details-item", "data-outcome") == ~w(created created)
+    end
+
+    @tag capture_log: true
+    test "says in words why a failed run stopped", %{conn: conn, site: site, admin: admin} do
+      run = create_run!(site, admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+
+      MishkaCmsMigration.Repo.query!(
+        ~s(UPDATE mishka_cms_migration_runs SET connection = connection || '{"revoked": true}' WHERE id = $1),
+        [Ecto.UUID.dump!(run.id)]
+      )
+
+      run = start_dry_run!(run, admin)
+      [job] = assert_triggered(run, :run_dry_run)
+      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert has_element?(view, ~s|[data-role="run-details"][data-status="failed"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-reason"][data-reason="unauthorized"]|,
+               "Fake no longer accepts the user and password this run signed in with."
+             )
+
+      assert has_element?(view, ~s|[data-role="run-details-none"]|)
+    end
+
+    test "says so when the source listed nothing, and when a run ended before its dry run", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      empty = site |> create_run!(admin, %{}) |> dry_run!(admin)
+
+      cancelled =
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.cancel_run!(actor: admin, tenant: site.id)
+
+      view = open!(conn, admin)
+
+      expand!(view, empty)
+      assert has_element?(view, ~s|[data-role="run-details-total"][data-count="0"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-none"]|,
+               "The source listed nothing to move."
+             )
+
+      refute has_element?(view, ~s|[data-role="run-details-kind"]|)
+
+      expand!(view, cancelled)
+      assert has_element?(view, ~s|[data-role="run-details"][data-status="cancelled"]|)
+      assert has_element?(view, ~s|[data-role="run-details-none"]|, "ended before a dry run")
+      refute has_element?(view, ~s|[data-role="run-details-total"]|)
+    end
+
+    test "links the source's address only when it is a web address", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      facts = fn home ->
+        %{connection: %{"items" => %{}, "facts" => %{"name" => "Old blog", "home" => home}}}
+      end
+
+      script = create_run!(site, admin, %{}, facts.("javascript:alert(1)"))
+      web = create_run!(site, admin, %{}, facts.("https://old.example.com/"))
+      view = open!(conn, admin)
+
+      expand!(view, script)
+      assert has_element?(view, ~s|[data-fact="name"]|, "Old blog")
+      assert has_element?(view, ~s|[data-fact="home"]|, "old.example.com")
+      refute has_element?(view, ~s|[data-fact="home"] a|)
+
+      expand!(view, web)
+      assert has_element?(view, ~s|[data-fact="home"] a[href="https://old.example.com/"]|)
     end
   end
 

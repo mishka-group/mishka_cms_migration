@@ -1138,6 +1138,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   def outcome_class(:skipped), do: "bg-[#f2f1ec] text-[#8a877f]"
   def outcome_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
 
+  @doc "The heroicon of an outcome's pill: a plus created, arrows updated, a minus skipped, a warning failed."
+  @spec outcome_icon(atom()) :: String.t()
+  def outcome_icon(:created), do: "hero-plus"
+  def outcome_icon(:updated), do: "hero-arrow-path"
+  def outcome_icon(:skipped), do: "hero-minus"
+  def outcome_icon(:failed), do: "hero-exclamation-triangle"
+
   @doc """
   The heroicon that stands for the items of `kind` in the admin's lists, such as
   `"hero-document-text"` for `"post"`; a kind this extension does not name is a cube.
@@ -1389,11 +1396,6 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp at_least(total, done), do: max(total, done)
 
   defp items(counts), do: counts |> Map.take(@outcomes) |> Map.values() |> Enum.sum()
-
-  defp outcome_icon(:created), do: "hero-plus"
-  defp outcome_icon(:updated), do: "hero-arrow-path"
-  defp outcome_icon(:skipped), do: "hero-minus"
-  defp outcome_icon(:failed), do: "hero-exclamation-triangle"
 
   defp outcome_label(:created), do: dgettext("mishka_gervaz", "created")
   defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
