@@ -39,7 +39,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     :target_id,
     :target_updated_at,
     :outcome,
-    :reason
+    :reason,
+    :extra
   ]
 
   postgres do
@@ -64,6 +65,8 @@ defmodule MishkaCmsMigration.MigrationItem do
 
     field :reason, :string,
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=2000])"
+
+    field :extra, :map, derives: "validate(optional=[map])"
   end
 
   actions do
@@ -189,6 +192,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       public? true
       constraints one_of: @outcomes
       description "What the last run that met the item did with it"
+    end
+
+    attribute :extra, :map do
+      allow_nil? false
+      public? true
+      default %{}
+
+      description "The source's fields the CMS has no home for, as of the last write (Source.Item's extra)"
     end
 
     attribute :reason, :string do

@@ -89,11 +89,20 @@ defmodule MishkaCmsMigration.Source do
               {:ok, [term()], cursor()} | {:error, term()}
 
   @doc """
+  Facts about the source a run keeps in its `extra` (`MishkaCmsMigration.MigrationRun`), such as a
+  WordPress site's version and plugins, read once the job has connected. Optional; a source that
+  does not say has none.
+  """
+  @callback extra(conn()) :: map()
+
+  @doc """
   A listed row as the map `MishkaCmsMigration.Source.Item.build/1` takes, without `:kind`, which
   the walk adds.
   """
   @callback normalize(row :: term(), kind :: String.t(), context()) ::
               {:ok, map()} | {:error, term()}
+
+  @optional_callbacks extra: 1
 
   @doc false
   defmacro __using__(opts) do
@@ -196,6 +205,11 @@ defmodule MishkaCmsMigration.Source.Item do
       UTC, or an ISO 8601 string.
     * `:attrs` — everything else the target needs, as the source names it. Its keys are never
       turned into atoms.
+    * `:extra` — every field of the row the CMS has no home for (a WordPress post's custom fields,
+      ACF fields, another plugin's meta), as key and value. It is kept on the item's record
+      (`MishkaCmsMigration.MigrationItem`'s `extra`), and a target whose resource has an `extra` of
+      its own may copy it there (`MishkaCmsMigration.Target`). Its keys are never turned into
+      atoms.
     * `:content` — the item's body as a list of pieces, in order. A piece the source converted
       itself carries `:html`; a block or shortcode it could not convert carries `:name`, `:attrs`
       and `:raw` instead, and is offered to the `migration:content:convert` event
@@ -223,6 +237,7 @@ defmodule MishkaCmsMigration.Source.Item do
     field :modified_at, DateTime.t(), validator: {MishkaCmsMigration.Source.Item, :datetime}
 
     dynamic_field :attrs
+    dynamic_field :extra
 
     sub_field :content, list(), structs: true, authorized_fields: true do
       field :html, String.t(), derives: "validate(optional=[string])"
@@ -244,7 +259,8 @@ defmodule MishkaCmsMigration.Source.Item do
   """
   @spec hash(t()) :: String.t()
   def hash(%__MODULE__{} = item) do
-    {item.kind, item.source_id, item.title, item.attrs, Enum.map(item.content || [], &piece/1)}
+    {item.kind, item.source_id, item.title, item.attrs, item.extra,
+     Enum.map(item.content || [], &piece/1)}
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)

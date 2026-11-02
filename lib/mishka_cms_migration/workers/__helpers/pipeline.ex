@@ -134,15 +134,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp settle(run, mode, job) do
     case walked(run, mode, job.args) do
-      {:ok, report, actor} -> finish(run, mode, Report.done(report), actor)
+      {:ok, report, extra, actor} -> finish(run, mode, Report.done(report), extra, actor)
       {:error, reason} -> retry_or_fail(run, reason, job.attempt >= job.max_attempts)
     end
   end
 
   defp walked(run, mode, args) do
     with {:ok, actor} <- actor(args),
-         {:ok, report} <- walk(run, mode, actor) do
-      {:ok, report, actor}
+         {:ok, report, extra} <- walk(run, mode, actor) do
+      {:ok, report, extra, actor}
     end
   rescue
     error -> {:error, error}
@@ -159,15 +159,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp actor(_args), do: {:error, :actor_not_found}
 
-  defp finish(run, :dry_run, report, _actor) do
-    case MishkaCmsMigration.finish_dry_run(run, report, authorize?: false) do
+  defp finish(run, :dry_run, report, extra, _actor) do
+    case MishkaCmsMigration.finish_dry_run(run, report, extra, authorize?: false) do
       {:ok, _run} -> :ok
       {:error, error} -> {:cancel, error}
     end
   end
 
-  defp finish(run, :import, report, actor) do
-    case MishkaCmsMigration.finish_import(run, report, authorize?: false) do
+  defp finish(run, :import, report, extra, actor) do
+    case MishkaCmsMigration.finish_import(run, report, extra, authorize?: false) do
       {:ok, run} -> Events.finished(report, run, actor)
       {:error, error} -> {:cancel, error}
     end
@@ -184,15 +184,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
-         {:ok, conn} <- source.connect(run.connection, secret) do
-      walk_kinds(%{
-        run: run,
-        mode: mode,
-        actor: actor,
-        source: source,
-        conn: conn,
-        options: options
-      })
+         {:ok, conn} <- source.connect(run.connection, secret),
+         {:ok, report} <-
+           walk_kinds(%{
+             run: run,
+             mode: mode,
+             actor: actor,
+             source: source,
+             conn: conn,
+             options: options
+           }) do
+      {:ok, report, extra(source, conn)}
     end
   end
 
@@ -288,6 +290,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp handle(state, kind, _plans, {:error, source_id, reason}),
     do: Writer.call(state, {kind, source_id}, {:failed, Report.reason(reason)})
+
+  defp extra(source, conn) do
+    case function_exported?(source, :extra, 1) do
+      true -> source.extra(conn)
+      false -> %{}
+    end
+  end
 
   defp progress(_state, _kind, [], _counts), do: :ok
 

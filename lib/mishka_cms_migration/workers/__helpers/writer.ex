@@ -93,7 +93,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         target_id: record.id,
         target_updated_at: Map.get(record, :updated_at),
         outcome: outcome,
-        reason: nil
+        reason: nil,
+        extra: item.extra
       },
       tenant: state.run.site_id,
       authorize?: false

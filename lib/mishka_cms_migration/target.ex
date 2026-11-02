@@ -49,6 +49,17 @@ defmodule MishkaCmsMigration.Target do
       `updated_at` attribute that a write may leave alone is refused;
     * `:create` names one of its create actions and `:update` one of its update actions.
 
+  ## The source's other fields
+
+  `item.extra` holds the fields of the source's row the CMS has no home for (a WordPress post's
+  custom fields, ACF fields, another plugin's meta); the item's record keeps them either way
+  (`MishkaCmsMigration.MigrationItem`'s `extra`). A target whose resource keeps an `extra` map of
+  its own — the core's pages, layouts and components do — may copy them there, under a key of its
+  own so they sit beside what the CMS keeps in it:
+
+      def attrs(item, _context),
+        do: %{title: item.title, path: item.attrs["path"], extra: %{"migration" => item.extra}}
+
   ## Keeping an admin's edits
 
   A re-run reads the rows earlier runs wrote (`current/3`) and compares each one's `updated_at`

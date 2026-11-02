@@ -191,7 +191,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
 
     update :finish_dry_run do
-      accept [:report]
+      accept [:report, :extra]
 
       validate {Status, from: [:dry_running]}
 
@@ -201,7 +201,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
 
     update :finish_import do
-      accept [:report]
+      accept [:report, :extra]
 
       validate {Status, from: [:importing]}
 
@@ -362,6 +362,13 @@ defmodule MishkaCmsMigration.MigrationRun do
                   ]
 
       description "What the last dry run or import did with each item (MishkaCmsMigration.Report)"
+    end
+
+    attribute :extra, :map do
+      allow_nil? false
+      public? true
+      default %{}
+      description "Facts about the source, such as its version and plugins (Source's extra/1)"
     end
 
     attribute :progress, :map do

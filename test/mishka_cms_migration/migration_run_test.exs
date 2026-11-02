@@ -222,7 +222,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
       for actor <- [admin, master] do
         assert {:error, %Ash.Error.Forbidden{}} =
-                 MishkaCmsMigration.finish_dry_run(run, Report.done(Report.new()),
+                 MishkaCmsMigration.finish_dry_run(run, Report.done(Report.new()), %{},
                    actor: actor,
                    tenant: site.id
                  )

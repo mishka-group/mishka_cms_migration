@@ -12,7 +12,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   alias MishkaCmsCore.Runtime.Redirect
   alias MishkaCmsMigration.MigrationItem
-  alias MishkaCmsMigration.Test.Plugins.FakeSource
+  alias MishkaCmsMigration.Test.Plugins.{FakeSource, PageTarget}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   setup do
@@ -75,6 +75,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
     test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
       items = %{
+        "page" => [%{"id" => 5, "title" => "About", "path" => "/about"}],
         "note" => [%{"id" => 9}],
         "redirect" => [%{"id" => 1, "from" => "/a", "to" => "/b"}]
       }
@@ -295,6 +296,62 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert again.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0}
       assert Enum.map(redirects(site), & &1.from_path) == ["/old-one", "/old-three", "/old-two"]
+    end
+
+    test "keeps the source's fields the CMS has no home for and its facts, and a re-run updates them",
+         %{site: site, admin: admin} do
+      facts = %{"version" => "6.5", "plugins" => ["acf", "yoast"]}
+      row = Map.merge(hd(@rows), %{"_yoast_title" => "Old one", "acf" => %{"color" => "red"}})
+      connection = %{"items" => %{"redirect" => [row]}, "facts" => facts}
+
+      run =
+        site
+        |> create_run!(admin, %{}, %{connection: connection})
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      assert run.extra == facts
+
+      assert [%{extra: %{"_yoast_title" => "Old one", "acf" => %{"color" => "red"}}}] =
+               items(site)
+
+      changed = %{"items" => %{"redirect" => [Map.put(row, "acf", %{"color" => "blue"})]}}
+
+      again =
+        site
+        |> create_run!(admin, %{}, %{connection: changed})
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      assert %{"1" => {:updated, nil}} = outcomes(again)
+      assert [%{extra: %{"acf" => %{"color" => "blue"}}}] = items(site)
+    end
+
+    test "a target whose CMS resource has an extra of its own copies the source's fields there",
+         %{
+           site: site
+         } do
+      register_plugin!(PageTarget, MishkaCmsMigration.Target.event())
+
+      admin =
+        migration_admin!(site, ["admin:dashboard:migration", "admin:dashboard:runtime:page"])
+
+      row = %{
+        "id" => 5,
+        "title" => "About us",
+        "path" => "/about",
+        "content" => [%{"html" => "<p>About</p>"}],
+        "_wp_page_template" => "full-width"
+      }
+
+      run = migrate!(site, admin, %{"page" => [row]})
+
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 0}
+
+      assert %{extra: %{"migration" => %{"_wp_page_template" => "full-width"}}} =
+               MishkaCmsCore.Runtime.Page
+               |> Ash.read!(tenant: site.id, authorize?: false)
+               |> Enum.find(&(&1.path == "/about"))
     end
 
     test "writes as the admin, so a row their permissions do not cover fails", %{site: site} do
