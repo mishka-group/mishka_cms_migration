@@ -101,9 +101,11 @@ defmodule MishkaCmsMigration.MigrationRun do
   like the Pages table: the source with its icon (`source_icon/1`) and the run's short id, the
   address it is moved from with the source site's name under it, where the run is as a coloured pill
   (`status_label/1`, `status_class/1`), what the last dry run or import did, for a master the site,
-  and when it started. It filters by status, source, for a master the site, and the days a run
-  started in, and keeps them in the address. The table follows the run's PubSub notifications, so a
-  run moving on shows without a reload.
+  and when it started. Each column is as narrow as its cell can be drawn without cutting it off, an
+  address truncating with the whole of it as its tooltip, so the table fits beside the admin's
+  sidebar on a laptop screen without scrolling sideways. It filters by status, source, for a master
+  the site, and the days a run started in, and keeps them in the address. The table follows the
+  run's PubSub notifications, so a run moving on shows without a reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
   one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
@@ -256,7 +258,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "Source") end
 
           ui do
-            width "minmax(170px,1.2fr)"
+            width "minmax(184px,1.3fr)"
           end
 
           render fn record ->
@@ -301,7 +303,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "From") end
 
           ui do
-            width "minmax(150px,1.1fr)"
+            width "minmax(110px,1.1fr)"
           end
 
           render fn record ->
@@ -309,10 +311,17 @@ defmodule MishkaCmsMigration.MigrationRun do
 
             ~H"""
             <div class="min-w-0">
-              <div class="truncate font-['Space_Grotesk'] text-[12.5px] font-semibold text-[#3a382f]">
+              <div
+                class="truncate font-['Space_Grotesk'] text-[12.5px] font-semibold text-[#3a382f]"
+                title={@host}
+              >
                 {@host}
               </div>
-              <div :if={@name} class="mt-[2px] truncate text-[11px] font-medium text-[#a8a5a0]">
+              <div
+                :if={@name}
+                class="mt-[2px] truncate text-[11px] font-medium text-[#a8a5a0]"
+                title={@name}
+              >
                 {@name}
               </div>
             </div>
@@ -325,7 +334,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           sortable true
 
           ui do
-            width "minmax(130px,0.9fr)"
+            width "minmax(144px,0.9fr)"
           end
 
           render fn status ->
@@ -357,7 +366,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
-            width "minmax(280px,1.8fr)"
+            width "minmax(120px,1.6fr)"
           end
 
           render fn record ->
@@ -387,7 +396,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           visible fn state -> state.master_user? end
 
           ui do
-            width "minmax(140px,1fr)"
+            width "minmax(120px,0.9fr)"
           end
 
           render fn record ->
@@ -407,7 +416,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           sort_field [:inserted_at]
 
           ui do
-            width "minmax(110px,0.8fr)"
+            width "minmax(116px,0.7fr)"
           end
 
           render fn record ->
