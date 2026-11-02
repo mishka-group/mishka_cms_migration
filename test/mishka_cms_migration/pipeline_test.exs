@@ -259,6 +259,38 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert redirects(site) == []
     end
 
+    test "writes a row and its record together, so a record that fails takes the row back", %{
+      site: site,
+      admin: admin
+    } do
+      Repo.query!("""
+      CREATE FUNCTION refuse_created_two() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.source_id = '2' AND NEW.outcome = 'created' THEN
+          RAISE EXCEPTION 'the record of item 2 failed';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER refuse_created_two BEFORE INSERT ON mishka_cms_migration_items
+      FOR EACH ROW EXECUTE FUNCTION refuse_created_two()
+      """)
+
+      run = migrate!(site, admin, %{"redirect" => @rows})
+
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 0, failed: 1}
+      refute Enum.any?(redirects(site), &(&1.from_path == "/old-two"))
+      assert %{outcome: :failed, target_id: nil} = Enum.find(items(site), &(&1.source_id == "2"))
+
+      Repo.query!("DROP TRIGGER refuse_created_two ON mishka_cms_migration_items")
+      again = migrate!(site, admin, %{"redirect" => @rows})
+
+      assert again.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0}
+      assert Enum.map(redirects(site), & &1.from_path) == ["/old-one", "/old-three", "/old-two"]
+    end
+
     test "writes as the admin, so a row their permissions do not cover fails", %{site: site} do
       admin = migration_admin!(site, ["admin:dashboard:migration"])
       run = migrate!(site, admin, %{"redirect" => @rows})

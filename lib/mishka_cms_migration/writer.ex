@@ -7,9 +7,11 @@ defmodule MishkaCmsMigration.Writer do
   How an import writes one item and remembers it. The item's content is converted
   (`migration:content:convert`), the item is offered to the plugins (`migration:item:before_import`),
   and it is written through its target (`MishkaCmsMigration.Target.write/4`) as the admin who
-  pressed Import. Then it is recorded (`MishkaCmsMigration.MigrationItem`): `:record` with the row
-  it was written to, or `:record_outcome` with why it was skipped or failed, which keeps what the
-  last write recorded. A dry run records nothing.
+  pressed Import, and recorded (`MishkaCmsMigration.MigrationItem`'s `:record`) with the row it was
+  written to, in one transaction (`Ash.transact/3`): either the row and its record are both there,
+  or neither is, so a retry never meets a row no item remembers. An item skipped or failed is
+  recorded with why (`:record_outcome`), which keeps what the last write recorded. A dry run
+  records nothing.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason.
@@ -17,7 +19,7 @@ defmodule MishkaCmsMigration.Writer do
   Each function answers the item's line of the report (`MishkaCmsMigration.Report.entry/5`).
   """
 
-  alias MishkaCmsMigration.{Events, Item, Report, Target}
+  alias MishkaCmsMigration.{Events, Item, MigrationItem, Report, Target}
 
   @doc """
   Writes `item` of `page` as a new row (`:created`) or over `record` (`:updated`), and records what
@@ -26,7 +28,7 @@ defmodule MishkaCmsMigration.Writer do
   @spec write(map(), map(), Item.t(), :created | :updated, struct() | nil) :: Report.entry()
   def write(state, page, item, outcome, record) do
     case written(state, page, item, outcome, record) do
-      {:ok, row} -> recorded(state, page, item, row, outcome)
+      {:ok, _row} -> Report.entry(page.kind, item.source_id, item.title, outcome, nil)
       {:skipped, reason} -> leave(state, page.kind, item, :skipped, reason)
       {:error, error} -> leave(state, page.kind, item, :failed, Report.reason(error))
     end
@@ -49,10 +51,12 @@ defmodule MishkaCmsMigration.Writer do
     Report.entry(kind, source_id, nil, :failed, reason)
   end
 
-  defp written(state, page, item, outcome, record) do
-    with {:ok, item} <- convert(state, item),
+  defp written(state, page, source_item, outcome, record) do
+    with {:ok, item} <- convert(state, source_item),
          {:import, item} <- Events.before_import(item, outcome, state.run, state.actor) do
-      Target.write(page.target, item, record, target_context(state))
+      Ash.transact([page.target.resource(), MigrationItem], fn ->
+        store(state, page, source_item, item, outcome, record)
+      end)
     end
   rescue
     error -> {:error, error}
@@ -60,8 +64,15 @@ defmodule MishkaCmsMigration.Writer do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
+  defp store(state, page, source_item, item, outcome, record) do
+    with {:ok, row} <- Target.write(page.target, item, record, target_context(state)),
+         {:ok, _recorded} <- recorded(state, page, source_item, row, outcome) do
+      {:ok, row}
+    end
+  end
+
   defp recorded(state, page, item, row, outcome) do
-    MishkaCmsMigration.record_item!(
+    MishkaCmsMigration.record_item(
       %{
         source_host: state.run.source_host,
         source_kind: page.kind,
@@ -78,8 +89,6 @@ defmodule MishkaCmsMigration.Writer do
       tenant: state.run.site_id,
       authorize?: false
     )
-
-    Report.entry(page.kind, item.source_id, item.title, outcome, nil)
   end
 
   defp note(%{mode: :import} = state, kind, source_id, outcome, reason)
