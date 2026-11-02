@@ -16,7 +16,10 @@ defmodule MishkaCmsMigration.Registry do
 
   @running [:started, :restarted]
 
-  @doc "The running plugins of `event` that implement `behaviour`, by priority, the first of each id."
+  @doc """
+  What a screen offers and a run may use: the plugins of `event` an operator has not stopped, that
+  implement `behaviour`, in priority order, the first of each id.
+  """
   @spec plugins(String.t(), module()) :: [module()]
   def plugins(event, behaviour) do
     :event
@@ -28,7 +31,10 @@ defmodule MishkaCmsMigration.Registry do
     |> Enum.uniq_by(& &1.id())
   end
 
-  @doc "The running plugin of `event` implementing `behaviour` whose `id/0` is `id`."
+  @doc """
+  The one plugin a run of `id` uses, among `plugins/2`; `{:error, :not_installed}` when none
+  answers to it, so the run is refused or fails with that reason.
+  """
   @spec fetch(String.t(), module(), String.t() | nil) ::
           {:ok, module()} | {:error, :not_installed}
   def fetch(event, behaviour, id) when is_binary(id) do
