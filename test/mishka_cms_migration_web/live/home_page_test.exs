@@ -473,6 +473,26 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       for run <- [done, cancelled], do: refute(has_element?(view, action("cancel", run)))
     end
 
+    test "Run again, clicked the moment a dry run finishes live, starts the next dry run", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      run = create_run!(site, admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert row_action!(view, "dry_run", run) =~ "Dry run started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+      assert has_element?(view, action("dry_run", run), "Run again")
+
+      assert row_action!(view, "dry_run", run) =~ "Dry run started."
+      assert status(run) == :dry_running
+      assert [_job] = assert_triggered(run, :run_dry_run)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_running"]|)
+    end
+
     test "a second dry run while one of the site's runs is running is refused in words, and Cancel frees the site",
          %{conn: conn, site: site, admin: admin} do
       first =
