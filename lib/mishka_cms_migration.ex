@@ -8,7 +8,27 @@ defmodule MishkaCmsMigration do
   CMS site: WordPress is the first source, and Joomla and others come later as plugins that reuse the
   same mapping, dry run, import job and report.
 
-  The domain holds the resources of an import run once they exist; it has none yet.
+    * `MishkaCmsMigration.MigrationRun` — one move: its source, its choices, its life and its report.
+    * `MishkaCmsMigration.MigrationItem` — what was written for each item of a source, so a re-run
+      updates instead of duplicating and keeps what an admin changed in the CMS.
+
+  A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
+  existing CMS action by a `MishkaCmsMigration.Target`, the jobs are `MishkaCmsMigration.Pipeline`'s,
+  and an import fires the events of `MishkaCmsMigration.Events`.
+
+  ## Its functions
+
+      {:ok, run} =
+        MishkaCmsMigration.create_run(
+          %{source: "wordpress", source_host: "example.com",
+            connection: %{"url" => "https://example.com", "user" => "admin"},
+            options: %{pages: "draft"}, secret: "abcd efgh ijkl"},
+          actor: admin, tenant: site.id
+        )
+
+      {:ok, run} = MishkaCmsMigration.start_dry_run(run, actor: admin, tenant: site.id)
+      # … the dry run reports …
+      {:ok, run} = MishkaCmsMigration.start_import(run, actor: admin, tenant: site.id)
   """
   use Ash.Domain,
     otp_app: :mishka_cms_migration,
@@ -16,4 +36,25 @@ defmodule MishkaCmsMigration do
     extensions: [MishkaGervaz.Domain]
 
   use MishkaGervaz.Messages, backend: MishkaCmsCore.Gettext
+
+  resources do
+    resource MishkaCmsMigration.MigrationRun do
+      define :create_run, action: :create
+      define :get_run, action: :read, get_by: :id
+      define :start_dry_run, action: :start_dry_run
+      define :start_import, action: :start_import
+      define :finish_dry_run, action: :finish_dry_run, args: [:report]
+      define :finish_import, action: :finish_import, args: [:report]
+      define :fail_run, action: :fail, args: [:error]
+    end
+
+    resource MishkaCmsMigration.MigrationItem do
+      define :items_by_sources,
+        action: :by_sources,
+        args: [:source_host, :source_kind, :source_ids]
+
+      define :record_item, action: :record
+      define :record_item_outcome, action: :record_outcome
+    end
+  end
 end
