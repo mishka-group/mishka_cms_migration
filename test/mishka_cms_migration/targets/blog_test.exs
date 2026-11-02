@@ -874,6 +874,43 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                outcomes(run, "post")
     end
 
+    test "an import points a post's links to the run's posts at their Blog addresses, and keeps every other link",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      posts = posts(site)
+      html = content(posts["Linking between posts and media"])
+      hrefs = html |> LazyHTML.query("a") |> LazyHTML.attribute("href")
+
+      assert {posts["Welcome to the Mishka Test Blog"].slug,
+              posts["Every core block in one post"].slug} ==
+               {"welcome-to-the-mishka-test-blog", "gutenberg-all-core-blocks"}
+
+      assert Enum.frequencies(hrefs)["/blog/welcome-to-the-mishka-test-blog"] == 2
+      assert Enum.frequencies(hrefs)["/blog/gutenberg-all-core-blocks"] == 2
+      assert "/blog/classic-editor-with-shortcodes#a-heading-after-the-more-tag" in hrefs
+
+      assert for(
+               link <- LazyHTML.query(html, "a"),
+               Enum.any?(LazyHTML.query(link, "img")),
+               do: LazyHTML.attribute(link, "href")
+             ) == [["/blog/welcome-to-the-mishka-test-blog"]]
+
+      for kept <- [
+            "http://localhost:8089/?page_id=25",
+            "/about/team/",
+            "http://localhost:8089/2026/01/this-post-was-deleted/",
+            "http://localhost:8089/2026/01/welcome-to-the-mishka-test-blog/hero/",
+            "http://localhost:8089/category/news/",
+            "http://localhost:8089/?cat=2",
+            "http://localhost:8089/tag/elixir/",
+            "http://localhost:8089/author/nadia/",
+            "http://localhost:8089/wp-content/uploads/2026/11/guide.pdf",
+            "https://elixir-lang.org/",
+            "mailto:hello@example.test"
+          ],
+          do: assert(kept in hrefs)
+    end
+
     test "a second run skips every post WordPress did not change, and keeps one an admin edited",
          %{
            site: site,

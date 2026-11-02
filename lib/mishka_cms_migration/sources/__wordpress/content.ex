@@ -53,8 +53,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   shortcode (no namespace, so never mistaken for a block), with its attributes and its text as
   `raw`. A shortcode inside a block other than `core/shortcode` is left as text.
 
-  Images and links keep the addresses WordPress gave them: the media and the links are moved and
-  rewritten after this.
+  Images and links keep the addresses WordPress gave them. The links to the site's own posts are
+  named in the item's `links` (`MishkaCmsMigration.Sources.WordPress`), for the target to point
+  them at where the posts move; the media are moved after this.
   """
 
   @piece "mishka:piece"

@@ -14,7 +14,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   action itself (`MishkaCmsCore.Runtime.Helpers.slugifiers/1`), so a resource that slugifies
   otherwise is matched as it is written.
 
-  The records are read by `MishkaCmsMigration.Targets.Helpers.Read`.
+  The records are read by `MishkaCmsMigration.Targets.Helpers.Read`. `slug/2` is that slug alone,
+  for a target that points at a record by the address its slug makes, such as a post's link to
+  another post.
   """
 
   require Ash.Query
@@ -36,6 +38,13 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
       {item.source_id, {:connected, record}}
     end
   end
+
+  @doc """
+  The slug `target`'s resource stores for a source's `slug`, made as its create action makes it:
+  `"وردپرس"` is `"wrdprs"` for the Blog's tags; `nil` for no slug.
+  """
+  @spec slug(module(), String.t() | nil) :: String.t() | nil
+  def slug(target, slug), do: stored(slug, slugify_options(target))
 
   defp slugify_options(target) do
     target.resource()

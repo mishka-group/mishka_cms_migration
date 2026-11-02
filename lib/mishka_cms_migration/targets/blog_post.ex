@@ -45,11 +45,22 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     `MishkaCmsMigration.Targets.BlogTag`), read from the items they were recorded as; one that was
     never written is left out, and the post is still written.
 
+    ## Links to other posts
+
+    Its `"links"` name the links of its content that point at a post of the source, each by its
+    `href` as written and the source's slug of the post it points at (the WordPress source finds
+    them, `MishkaCmsMigration.Sources.WordPress`). Each such link points at that post's Blog
+    address instead (`address/3`), its slug made as the Blog's create makes it
+    (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/2`) in the language the site leads with, and
+    keeps its `#fragment`: `http://old.example/2025/12/hello/#more` becomes `/blog/hello#more`.
+    It is the address the run writes the post at, so a post that links to one listed after it
+    points at it too. Any other link is kept as it is: a page, a category, a file, an outside
+    site, or a post the source no longer has.
+
     ## Left for later
 
-    Its featured image (`"featured_media"`) and the images and internal links in its content keep
-    their WordPress addresses until the media and the links are moved (mishka_cms_migration#7,
-    #9).
+    Its featured image (`"featured_media"`) and the images in its content keep their WordPress
+    addresses until the media are moved (mishka_cms_migration#7).
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
@@ -64,6 +75,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaBlog.Provision
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
+    alias MishkaCmsMigration.Targets.Helpers.BySlug
 
     @drafted ["pending", "private", "password"]
 
@@ -75,7 +87,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       |> Map.merge(%{
         title: item.title,
         slug: slug(item),
-        content: Item.html(item),
+        content: item |> Item.html() |> relinked(item.attrs["links"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured: item.attrs["sticky"] == true,
         language: Languages.primary(context.site_id),
@@ -89,9 +101,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     Where the Blog serves a post with `slug` in `language` on the site `site_id`: the path of its
     post page (`MishkaBlog.Provision.item_paths/0`) as the site's own address
     (`MishkaCmsCore.Runtime.Languages.url/3`), `/blog/<slug>` in the language the site leaves
-    unprefixed and `/fa/blog/<slug>` in Persian. `nil` for a language the site does not publish in.
+    unprefixed and `/fa/blog/<slug>` in Persian. `nil` for no slug, and for a language the site does
+    not publish in.
     """
-    @spec address(String.t(), String.t(), String.t()) :: String.t() | nil
+    @spec address(String.t() | nil, String.t(), String.t()) :: String.t() | nil
     def address(slug, language, site_id),
       do:
         Languages.url(
@@ -143,6 +156,40 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     defp excerpt(""), do: nil
     defp excerpt(excerpt), do: excerpt
+
+    defp relinked(html, links, context) when is_map(links) and map_size(links) > 0,
+      do:
+        html
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.to_tree()
+        |> LazyHTML.Tree.postwalk(&relink(&1, links, context))
+        |> LazyHTML.Tree.to_html()
+
+    defp relinked(html, _no_links, _context), do: html
+
+    defp relink({"a", attributes, children}, links, context),
+      do: {"a", Enum.map(attributes, &href(&1, links, context)), children}
+
+    defp relink(node, _links, _context), do: node
+
+    defp href({"href", old}, links, context) when is_map_key(links, old),
+      do: {"href", links |> Map.fetch!(old) |> slug_address(context) |> anchored(old)}
+
+    defp href(attribute, _links, _context), do: attribute
+
+    defp slug_address(slug, context),
+      do:
+        __MODULE__
+        |> BySlug.slug(slug)
+        |> address(Languages.primary(context.site_id), context.site_id)
+
+    defp anchored(nil, old), do: old
+    defp anchored(new, old), do: old |> URI.parse() |> fragment(new)
+
+    defp fragment(%URI{fragment: fragment}, new) when is_binary(fragment) and fragment != "",
+      do: new <> "#" <> fragment
+
+    defp fragment(_uri, new), do: new
 
     defp written(context, kind, ids),
       do:

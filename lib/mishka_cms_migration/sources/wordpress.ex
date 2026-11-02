@@ -62,7 +62,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `normalize/3` (its context's `conn`); without one, or when WordPress does not answer, they are
       pieces too. `attrs` keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`,
       `template`, `excerpt` (its raw text), and `parent` and `menu_order` for a page, `categories`,
-      `tags`, `sticky` and `format` for a post.
+      `tags`, `sticky` and `format` for a post. Its `links` are the links of its content to a post
+      of the site, each `href` as written to the post's decoded slug. A link on the site's own
+      host, or a path alone, is asked for: `/?p=<id>` by its id (`include`), any other by the last
+      segment of its path (`slug`), from `/wp/v2/posts` in any status with only `id`, `slug` and
+      `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
+      page, a category, a file, an attachment page or a post the site no longer has is left out,
+      and so is every link when the connection is not at hand.
     * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
       and `parent` for a category. A term has no `modified_at`.
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
@@ -101,6 +107,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   use MishkaCmsMigration.Source, id: "wordpress", label: "WordPress"
   use Gettext, backend: MishkaCmsCore.Gettext
 
+  alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Sources.WordPress.Content
 
   @kinds ["user", "category", "tag", "page", "post", "post_redirect"]
@@ -139,6 +146,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   }
 
   @per_page 100
+
+  @linked_fields [status: "any", _fields: "id,slug,link"]
 
   @rendered ~w(_links yoast_head yoast_head_json)
 
@@ -204,7 +213,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
        title: title,
        parent: parent(row),
        modified_at: Map.get(row, "modified_gmt"),
-       attrs: row |> entry_attrs() |> decoded_slug(),
+       attrs: row |> entry_attrs() |> decoded_slug() |> Map.put("links", links(html, context)),
        extra: Map.drop(row, @entry_read),
        content: Content.call(html, fetch(context))
      }}
@@ -240,14 +249,90 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp fetch(%{conn: %{req: req}}), do: &fetched(req, &1, &2)
   defp fetch(_context), do: fn _route, _ids -> %{} end
 
-  defp fetched(req, route, ids) do
-    req
-    |> Req.get(
-      url: route,
-      params: [context: "edit", include: Enum.join(ids, ","), per_page: @per_page]
-    )
-    |> by_id()
+  defp fetched(req, route, ids), do: read(req, route, include: Enum.join(ids, ","))
+
+  defp read(req, route, params),
+    do:
+      req
+      |> Req.get(url: route, params: [context: "edit", per_page: @per_page] ++ params)
+      |> by_id()
+
+  defp links(html, %{conn: %{req: req, index: %{"home" => home}}}) when is_binary(home) do
+    asked =
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("a[href]")
+      |> LazyHTML.attribute("href")
+      |> Enum.uniq()
+      |> Enum.flat_map(&asked(&1, URI.parse(home)))
+
+    posts = linked_posts(req, asked)
+
+    for {href, reference} <- asked,
+        %{"slug" => slug} when slug != "" <- [Enum.find(posts, &links_to?(&1, reference))],
+        into: %{},
+        do: {href, decoded(slug)}
   end
+
+  defp links(_html, _context), do: %{}
+
+  defp asked(href, home) do
+    uri = href |> String.trim() |> URI.parse()
+
+    with true <- on_site?(uri, home),
+         {_by, _value} = reference <- reference(uri, href) do
+      [{href, reference}]
+    else
+      _not_a_post -> []
+    end
+  end
+
+  defp on_site?(%URI{scheme: scheme, host: nil, path: "/" <> _}, _home)
+       when scheme in [nil, "http", "https"],
+       do: true
+
+  defp on_site?(%URI{scheme: scheme, host: host}, %URI{host: home})
+       when scheme in [nil, "http", "https"] and is_binary(host) and is_binary(home),
+       do: String.downcase(host) == String.downcase(home)
+
+  defp on_site?(_uri, _home), do: false
+
+  defp reference(%URI{query: query}, href), do: query |> query_id() |> by_id_or_path(href)
+
+  defp query_id(query) when is_binary(query),
+    do: query |> URI.decode_query() |> Map.get("p", "") |> Integer.parse()
+
+  defp query_id(_no_query), do: :error
+
+  defp by_id_or_path({id, ""}, _href) when id > 0, do: {:include, id}
+  defp by_id_or_path(_no_id, href), do: href |> Redirects.normalize_path() |> by_path()
+
+  defp by_path({:ok, "/" <> rest = path}) when rest != "", do: {:slug, path}
+  defp by_path(_root_or_not_a_path), do: nil
+
+  defp linked_posts(req, asked) do
+    Enum.flat_map([:include, :slug], fn by ->
+      asked_posts(req, by, for({_href, {^by, value}} <- asked, do: asked_value(by, value)))
+    end)
+  end
+
+  defp asked_posts(_req, _by, []), do: []
+
+  defp asked_posts(req, by, values),
+    do:
+      req
+      |> read("/wp/v2/posts", [{by, values |> Enum.uniq() |> Enum.join(",")} | @linked_fields])
+      |> Map.values()
+
+  defp asked_value(:include, id), do: id
+  defp asked_value(:slug, path), do: path |> String.split("/") |> List.last()
+
+  defp links_to?(%{"id" => id}, {:include, id}), do: true
+
+  defp links_to?(%{"link" => link}, {:slug, path}) when is_binary(link),
+    do: Redirects.normalize_path(link) == {:ok, path}
+
+  defp links_to?(_post, _reference), do: false
 
   defp by_id({:ok, %Req.Response{status: 200, body: rows}}) when is_list(rows),
     do: Map.new(rows, &{&1["id"], &1})
@@ -266,9 +351,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp parent(_row), do: nil
 
   defp decoded_slug(%{"slug" => slug} = attrs) when is_binary(slug),
-    do: %{attrs | "slug" => slug |> URI.decode() |> text_or(slug)}
+    do: %{attrs | "slug" => decoded(slug)}
 
   defp decoded_slug(attrs), do: attrs
+
+  defp decoded(slug), do: slug |> URI.decode() |> text_or(slug)
 
   defp text_or(decoded, slug), do: text_or(String.valid?(decoded), decoded, slug)
 
