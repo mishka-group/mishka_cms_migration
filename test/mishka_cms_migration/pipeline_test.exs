@@ -195,6 +195,30 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert length(redirects(site)) == 2
     end
 
+    test "writes a source id listed twice once, on the same page or a later one", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [
+        %{"id" => 1, "from" => "/dup-a", "to" => "/a"},
+        %{"id" => 1, "from" => "/dup-b", "to" => "/b"},
+        %{"id" => 2, "from" => "/two", "to" => "/2"},
+        %{"id" => 1, "from" => "/dup-c", "to" => "/c"}
+      ]
+
+      run = migrate!(site, admin, %{"redirect" => rows})
+
+      assert run.report.counts == %{create: 2, update: 0, skip: 2, fail: 0}
+      assert Enum.map(redirects(site), & &1.from_path) == ["/dup-a", "/two"]
+
+      assert [{"1", %{outcome: :created, target_id: target_id}}, {"2", _two}] =
+               Enum.map(items(site), &{&1.source_id, &1})
+
+      assert Enum.find(redirects(site), &(&1.from_path == "/dup-a")).id == target_id
+
+      assert Enum.count(run.report.entries, &(&1.reason == "duplicate_in_source")) == 2
+    end
+
     test "writes as the admin, so a row their permissions do not cover fails", %{site: site} do
       admin = migration_admin!(site, ["admin:dashboard:migration"])
       run = migrate!(site, admin, %{"redirect" => @rows})

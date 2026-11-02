@@ -11,7 +11,9 @@ defmodule MishkaCmsMigration.Walker do
   import, written (`MishkaCmsMigration.Writer`). After each page the progress is broadcast
   (`MishkaCmsMigration.Progress`).
 
-  A row the source cannot normalize fails alone, and the report says why, also when `normalize/3`
+  A source id met again in the same kind, on the same page or a later one, is skipped as
+  `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
+  remembered. A row the source cannot normalize fails alone, and the report says why, also when `normalize/3`
   raises or exits: a plugin's mistake costs the row, not the run. An error from `connect/2` or
   `list/3` ends the walk with it; one that raises ends the job (`MishkaCmsMigration.Pipeline`).
   """
@@ -40,34 +42,47 @@ defmodule MishkaCmsMigration.Walker do
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
-      case walk_kind(state, kind, nil, report) do
+      case walk_kind(state, %{kind: kind, cursor: nil, ids: MapSet.new()}, report) do
         {:ok, report} -> {:cont, {:ok, report}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
-  defp walk_kind(state, kind, cursor, report) do
-    case state.source.list(state.conn, kind, cursor) do
+  defp walk_kind(state, walk, report) do
+    case state.source.list(state.conn, walk.kind, walk.cursor) do
       {:ok, rows, next} ->
-        report = page(state, kind, rows, report)
-        Progress.broadcast(state.run, state.mode, kind, report.counts)
-        walk_on(state, kind, next, report)
+        {report, ids} = page(state, walk, rows, report)
+        Progress.broadcast(state.run, state.mode, walk.kind, report.counts)
+        walk_on(state, %{walk | ids: ids}, next, report)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp walk_on(_state, _kind, nil, report), do: {:ok, report}
-  defp walk_on(state, kind, next, report), do: walk_kind(state, kind, next, report)
+  defp walk_on(_state, _walk, nil, report), do: {:ok, report}
+  defp walk_on(state, walk, next, report), do: walk_kind(state, %{walk | cursor: next}, report)
 
-  defp page(state, kind, rows, report) do
-    built = Enum.map(rows, &build(state, kind, &1))
-    page = Decision.page(state.run, kind, for({:ok, item} <- built, do: item))
+  defp page(state, walk, rows, report) do
+    {built, ids} =
+      rows
+      |> Enum.map(&build(state, walk.kind, &1))
+      |> Enum.map_reduce(walk.ids, &once/2)
 
-    Enum.reduce(built, report, &Report.add(&2, handle(state, page, &1)))
+    page = Decision.page(state.run, walk.kind, for({:ok, item} <- built, do: item))
+
+    {Enum.reduce(built, report, &Report.add(&2, handle(state, page, &1))), ids}
   end
+
+  defp once({:ok, item} = row, ids) do
+    case MapSet.member?(ids, item.source_id) do
+      true -> {{:duplicate, item}, ids}
+      false -> {row, MapSet.put(ids, item.source_id)}
+    end
+  end
+
+  defp once(row, ids), do: {row, ids}
 
   defp build(state, kind, row) do
     case state.source.normalize(row, kind, source_context(state)) do
@@ -92,6 +107,9 @@ defmodule MishkaCmsMigration.Walker do
 
   defp handle(state, page, {:error, source_id, reason}),
     do: Writer.fail(state, page.kind, source_id, Report.reason(reason))
+
+  defp handle(_state, page, {:duplicate, item}),
+    do: Report.entry(page.kind, item.source_id, item.title, :skip, "duplicate_in_source")
 
   defp handle(%{mode: :dry_run}, page, {:ok, item}) do
     case Decision.plan(page, item) do

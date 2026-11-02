@@ -23,6 +23,7 @@ defmodule MishkaCmsMigration.Report do
     * `"edited_in_cms"` — the row was changed in the CMS after it was written, and is kept.
     * `"target_missing"` — the row was deleted in the CMS after it was written, and stays deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
+    * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * a plugin's own reason, from `migration:item:before_import`, or `"plugins_cannot_run"` while
       one of that event's plugins is not loaded.
     * for a failure, what the source or the CMS action answered.
