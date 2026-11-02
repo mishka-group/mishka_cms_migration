@@ -88,8 +88,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   ## Who reaches it
 
   A run is a site's own. Reading, creating, starting and cancelling one takes
-  `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose `site_id` is nil) reaches every
-  site's runs; a site user only its own site's, whatever tenant it names.
+  `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose
+  `site_id` is nil) reaches every site's runs; a site user only its own site's, whatever tenant it
+  names.
   """
 
   use Ash.Resource,

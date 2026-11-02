@@ -10,14 +10,15 @@ defmodule MishkaCmsMigration.DataCase do
   The core's `MishkaCmsCore.DataCase` with this extension's helpers on top. The sandbox is the
   core's (`MishkaCmsCore.DataCase.setup_sandbox/1`): each test gets its own sandboxed connection and
   everything it writes is rolled back at the end; `async: false` (the default here) shares that
-  connection with any process the test spawns, and puts the site cache and the runtime modules back as
-  the test found them.
+  connection with any process the test spawns, and puts the site cache and the runtime modules back
+  as the test found them.
 
   The helpers come from the core too — `errors_on/1` and the rest of `MishkaCmsCore.DataCase`, the
-  sites, users and runtime records of `MishkaCmsCore.Test.Factory`, `MishkaCmsCore.Test.VersionHelpers`
-  — and this case adds this extension's fixtures (`MishkaCmsMigration.Test.Factory`), Oban's test
-  helpers (`Oban.Testing`), a plugin for the length of a block (`with_plugin/3`) or of a test
-  (`register_plugin!/2`), and the SQL a block ran (`queries_while/1`).
+  sites, users and runtime records of `MishkaCmsCore.Test.Factory`,
+  `MishkaCmsCore.Test.VersionHelpers` — and this case adds this extension's fixtures
+  (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
+  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), and the SQL a
+  block ran (`queries_while/1`).
 
   ## How the suite boots
 

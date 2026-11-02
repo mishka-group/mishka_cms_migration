@@ -4,8 +4,9 @@
 
 defmodule MishkaCmsMigration.Resources.Validations.SourceInstalled do
   @moduledoc """
-  Refuses a run whose `source` names no installed source plugin (`MishkaCmsMigration.Source.fetch/1`),
-  on its `source` field, so a run is never created for a source no job could read.
+  Refuses a run whose `source` names no installed source plugin
+  (`MishkaCmsMigration.Source.fetch/1`), on its `source` field, so a run is never created for a
+  source no job could read.
 
       create :create do
         validate MishkaCmsMigration.Resources.Validations.SourceInstalled, before_action?: true

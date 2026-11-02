@@ -20,11 +20,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   second and that item is recorded as failed with the CMS's reason; the first is never
   overwritten.
 
-  Written by the import job alone, which AshOban's context lets through where every actor is
-  refused (`AshOban.Checks.AshObanInteraction`), as upserts on that identity: `:record`
-  after its CMS record was written, `:record_outcome` after an item was skipped or failed, which keeps what
-  the last write recorded. Read by whoever may read the site's runs
-  (`MishkaCmsMigration.MigrationRun`).
+  Written by the import job alone, which AshOban's context lets through where every actor is refused
+  (`AshOban.Checks.AshObanInteraction`), as upserts on that identity: `:record` after its CMS record
+  was written, `:record_outcome` after an item was skipped or failed, which keeps what the last
+  write recorded. Read by whoever may read the site's runs (`MishkaCmsMigration.MigrationRun`).
   """
 
   use Ash.Resource,

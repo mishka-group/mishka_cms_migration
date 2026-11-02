@@ -25,8 +25,8 @@ defmodule MishkaCmsMigration.Repo do
 
   @doc """
   The Postgres extensions the migration generator installs. They must match the CMS's
-  `MishkaCms.Repo`: the resources are the same either way, and a user's `email` is a `citext` column,
-  so a repo without it cannot hold the accounts tables this extension borrows.
+  `MishkaCms.Repo`: the resources are the same either way, and a user's `email` is a `citext`
+  column, so a repo without it cannot hold the accounts tables this extension borrows.
   """
   def installed_extensions do
     ["ash-functions", "citext"]

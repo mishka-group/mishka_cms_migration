@@ -8,14 +8,16 @@ defmodule MishkaCmsMigration do
   CMS site. No source ships yet: WordPress is planned as the first, and Joomla and others come later
   as plugins that reuse the same mapping, dry run, import job and report.
 
-    * `MishkaCmsMigration.MigrationRun` — one move: its source, its choices, its life and its report.
+    * `MishkaCmsMigration.MigrationRun` — one move: its source, its choices, its life and its
+      report.
     * `MishkaCmsMigration.MigrationItem` — what was written for each item of a source, so a re-run
       updates instead of duplicating and keeps what an admin changed in the CMS.
 
   A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
   existing CMS action by a `MishkaCmsMigration.Target`, the jobs are the run's AshOban triggers
-  (`MishkaCmsMigration.Workers`), and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
-  creates the permission names its runs are gated by (`MishkaCmsMigration.Provision`).
+  (`MishkaCmsMigration.Workers`), and an import fires the events of `MishkaCmsMigration.Events`.
+  Installing the extension on a site creates the permission names its runs are gated by
+  (`MishkaCmsMigration.Provision`).
 
   ## Usage
 
