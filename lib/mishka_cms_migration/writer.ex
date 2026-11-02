@@ -104,6 +104,7 @@ defmodule MishkaCmsMigration.Writer do
     case convert_pieces(state, item, content, []) do
       {:ok, pieces} -> {:ok, %{item | content: pieces}}
       :cannot_run -> {:skipped, "plugins_cannot_run"}
+      :failed -> {:skipped, "plugins_failed"}
     end
   end
 
@@ -114,7 +115,7 @@ defmodule MishkaCmsMigration.Writer do
   defp convert_pieces(state, item, [piece | rest], done) do
     case converted(state, item, piece) do
       {:ok, piece} -> convert_pieces(state, item, rest, [piece | done])
-      :cannot_run -> :cannot_run
+      unconverted -> unconverted
     end
   end
 
@@ -124,7 +125,7 @@ defmodule MishkaCmsMigration.Writer do
     case Events.convert(piece, item, state.run, state.actor) do
       {:ok, html} -> {:ok, %{piece | html: html}}
       :unconverted -> {:ok, %{piece | html: escaped(piece.raw)}}
-      :cannot_run -> :cannot_run
+      failed -> failed
     end
   end
 

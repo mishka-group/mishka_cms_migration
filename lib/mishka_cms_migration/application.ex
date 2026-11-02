@@ -8,12 +8,15 @@ defmodule MishkaCmsMigration.Application do
   extension ships (`plugins/0`). A plugin registers on the event it listens on once it is supervised
   here.
 
-  The plugins come in three groups: `sources/0` and `targets/0` — each source is a plugin on
+  The plugins come in four groups: `sources/0` and `targets/0` — each source is a plugin on
   `"migration:sources"` (`MishkaCmsMigration.Source`) and each target on `"migration:targets"`
   (`MishkaCmsMigration.Target`) — and the two that make the extension installable on a site:
   `MishkaCmsMigration.Plugins.Installer`, which creates the migration's permission names
   (`MishkaCmsMigration.Provision`), and `MishkaCmsMigration.Plugins.InstallSettings`, which
-  registers the settings the installer records an install in.
+  registers the settings the installer records an install in. Two more open the chains of the
+  events that decide what is written (`MishkaCmsMigration.Plugins.BeforeImportGuard`,
+  `MishkaCmsMigration.Plugins.ConvertGuard`), so an import tells a plugin that raised from one that
+  answered (`MishkaCmsMigration.Events`).
 
   The migration jobs run on the host's Oban, on a `migration` queue the host declares
   (`queues: [migration: 1]`).
@@ -28,6 +31,11 @@ defmodule MishkaCmsMigration.Application do
   @provision_plugins [
     MishkaCmsMigration.Plugins.Installer,
     MishkaCmsMigration.Plugins.InstallSettings
+  ]
+
+  @guard_plugins [
+    MishkaCmsMigration.Plugins.BeforeImportGuard,
+    MishkaCmsMigration.Plugins.ConvertGuard
   ]
 
   @doc """
@@ -49,7 +57,7 @@ defmodule MishkaCmsMigration.Application do
   left out of it never registers, so the event it listens on never reaches it.
   """
   @spec plugins() :: [module()]
-  def plugins, do: sources() ++ targets() ++ @provision_plugins
+  def plugins, do: sources() ++ targets() ++ @provision_plugins ++ @guard_plugins
 
   @impl true
   def start(_type, _args) do

@@ -55,6 +55,7 @@ defmodule MishkaCmsMigration.EventsTest do
                outcome: :created,
                decision: :import,
                reason: nil,
+               asked: true,
                item: %Item{kind: "redirect", source_id: "1"}
              } = payload
 
@@ -89,6 +90,21 @@ defmodule MishkaCmsMigration.EventsTest do
       assert %{outcome: :skipped, reason: "held back", target_id: nil} = item(site, "1")
       assert %{outcome: :skipped, reason: reason} = item(site, "2")
       assert byte_size(reason) > 0
+    end
+
+    @tag capture_log: true
+    test "skips an item a plugin raises on, and writes the rest", %{site: site, admin: admin} do
+      rows = [
+        redirect_row(1, "/raised-on", "/a", %{"gate" => "raise"}),
+        redirect_row(2, "/fine", "/b")
+      ]
+
+      run = migrate!(site, admin, %{"redirect" => rows})
+
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0}
+      assert is_nil(redirect(site, "/raised-on"))
+      assert %{outcome: :skipped, reason: "plugins_failed", target_id: nil} = item(site, "1")
+      assert redirect(site, "/fine")
     end
 
     test "is not fired by a dry run", %{site: site, admin: admin} do
@@ -142,6 +158,23 @@ defmodule MishkaCmsMigration.EventsTest do
       assert description =~ "<strong>SEE HERE</strong>"
       refute description =~ "<b>"
       assert description =~ "[gallery]"
+    end
+
+    @tag capture_log: true
+    test "skips an item whose piece a plugin raises on, instead of writing it unconverted", %{
+      site: site,
+      admin: admin
+    } do
+      content = [%{"name" => "explode", "raw" => "boom"}]
+
+      run =
+        migrate!(site, admin, %{
+          "redirect" => [redirect_row(1, "/old", "/new", %{"content" => content})]
+        })
+
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0}
+      assert is_nil(redirect(site, "/old"))
+      assert %{outcome: :skipped, reason: "plugins_failed"} = item(site, "1")
     end
 
     test "skips an item with a piece to convert while one of its plugins cannot run", %{

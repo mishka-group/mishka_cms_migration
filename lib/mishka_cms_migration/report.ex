@@ -24,9 +24,10 @@ defmodule MishkaCmsMigration.Report do
     * `"target_missing"` — the row was deleted in the CMS after it was written, and stays deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
-    * a plugin's own reason, from `migration:item:before_import`, or `"plugins_cannot_run"` while
-      one of the plugins of that event, or of `migration:content:convert` for an item with a piece
-      to convert, is not loaded.
+    * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
+      of the plugins of that event, or of `migration:content:convert` for an item with a piece to
+      convert, is not loaded; `"plugins_failed"` when one of them raised or answered something that
+      is not the payload (`MishkaCmsMigration.Events`).
     * for a failure, what the source or the CMS action answered.
 
   `counts` and `kinds` count every item. `kinds` has a line for each kind that had at least one
