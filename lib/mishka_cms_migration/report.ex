@@ -16,8 +16,13 @@ defmodule MishkaCmsMigration.Report do
         ]
       }
 
-  The outcome of an entry is one of `outcomes/0`. In a dry run it is what an import would do; in an
-  import it is what was done. `reason` says why an item was skipped or failed:
+  The outcome of an entry is one of `outcomes/0`. In an import it is what was done. In a dry run it
+  is the plan, from what the source and earlier runs say; a dry run asks no plugin and does not run
+  the CMS action, so an item a `migration:item:before_import` plugin would skip, or one the CMS would
+  refuse (an address another source already took, a value its validations reject), reads as
+  created or updated in the dry run and as skipped or failed in the import.
+
+  `reason` says why an item was skipped or failed:
 
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — the row was changed in the CMS after it was written, and is kept.

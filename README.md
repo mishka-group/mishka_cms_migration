@@ -32,7 +32,7 @@ A site can take content from more than one source: a run names the host it reads
 
 ```
 lib/
-├── mishka_cms_migration.ex           the Ash domain: code interfaces and a run's progress topic
+├── mishka_cms_migration.ex           the Ash domain and its code interfaces
 └── mishka_cms_migration/
     ├── application.ex                the plugins the extension supervises
     ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
