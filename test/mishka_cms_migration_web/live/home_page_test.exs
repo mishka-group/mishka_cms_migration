@@ -4,12 +4,14 @@
 
 defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   @moduledoc """
-  The migration's admin page and its sidebar entry: who may open the page, and where the entry
-  lands.
+  The migration's admin page and its sidebar entry: who may open the page, where the entry lands,
+  the card of each installed source, and the runs table, which shows a site's own runs and follows
+  them as they move on.
   """
   use MishkaCmsMigration.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
 
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
@@ -45,6 +47,93 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       admin = migration_admin!(site, ["admin:dashboard:runtime:redirect"])
 
       assert {:error, {_redirect, %{to: _elsewhere}}} = conn |> signed_in(admin) |> live(@page)
+    end
+  end
+
+  defp open!(conn, user) do
+    {:ok, view, _html} = conn |> signed_in(user) |> live(@page)
+    render_async(view)
+    view
+  end
+
+  defp settled(view) do
+    _state = :sys.get_state(view.pid)
+    _state = :sys.get_state(view.pid)
+    render(view)
+  end
+
+  describe "the source cards" do
+    test "show each installed source", %{conn: conn, site: site} do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      view = open!(conn, migration_admin!(site))
+
+      assert has_element?(view, ~s|[data-role="migration-source"][data-source="fake"]|, "Fake")
+      refute has_element?(view, ~s|[data-role="migration-no-source"]|)
+    end
+
+    test "say so when no source is installed", %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+
+      assert has_element?(view, ~s|[data-role="migration-no-source"]|)
+      refute has_element?(view, ~s|[data-role="migration-source"]|)
+    end
+  end
+
+  describe "the runs table" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    test "is empty before the first run", %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+
+      assert has_element?(view, "#migration-runs-table", "No migration has run yet")
+    end
+
+    test "lists the site's runs with their source, address, status and result", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+
+      site
+      |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      |> dry_run!(admin)
+
+      view = open!(conn, admin)
+
+      assert has_element?(view, ~s|[data-role="run-source"]|, "Fake")
+      assert has_element?(view, "#migration-runs-table", "old.example.com")
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
+      assert has_element?(view, ~s|[data-role="run-result"]|, "1 created")
+    end
+
+    test "shows no other site's runs", %{conn: conn, site: site} do
+      other = create_site!()
+      other_admin = migration_admin!(other)
+      create_run!(other, other_admin, %{}, %{source_host: "elsewhere.example.com"})
+
+      view = open!(conn, migration_admin!(site))
+
+      refute has_element?(view, "#migration-runs-table", "elsewhere.example.com")
+      assert has_element?(view, "#migration-runs-table", "No migration has run yet")
+    end
+
+    test "shows a new run, and its status as it moves on, without a reload", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      run = create_run!(site, admin, %{})
+      assert settled(view) =~ "old.example.com"
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
+
+      dry_run!(run, admin)
+      settled(view)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
     end
   end
 

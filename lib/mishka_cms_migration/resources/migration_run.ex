@@ -91,17 +91,26 @@ defmodule MishkaCmsMigration.MigrationRun do
   `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose
   `site_id` is nil) reaches every site's runs; a site user only its own site's, whatever tenant it
   names.
+
+  ## In the admin
+
+  The Migration page lists a site's runs, every site's for a master, as a Gervaz table: the source,
+  the address it is moved from, where the run is (`status_label/1`), what the last dry run or import
+  did and when it started. The table follows the run's PubSub notifications, so a run moving on
+  shows without a reload.
   """
 
   use Ash.Resource,
     otp_app: :mishka_cms_migration,
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
-    extensions: [GuardedStruct.AshResource, AshOban],
+    extensions: [GuardedStruct.AshResource, AshOban, MishkaGervaz.Resource],
     notifiers: [Ash.Notifier.PubSub],
     authorizers: [Ash.Policy.Authorizer]
 
   use Gettext, backend: MishkaCmsCore.Gettext
+
+  import Phoenix.Component, only: [sigil_H: 2]
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
@@ -199,8 +208,183 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
   end
 
+  mishka_gervaz do
+    table do
+      identity do
+        name :migration_runs
+        route "/admin/dashboard/migration"
+        stream_name :migration_runs
+      end
+
+      source do
+        preload do
+          always [:site]
+        end
+      end
+
+      columns do
+        default_sort inserted_at: :desc
+
+        column :source do
+          label fn -> dgettext("mishka_gervaz", "Source") end
+
+          ui do
+            width "minmax(120px,0.8fr)"
+          end
+
+          render fn source ->
+            assigns = %{label: MishkaCmsMigration.Source.label(source)}
+
+            ~H"""
+            <span data-role="run-source" class="text-[13.5px] font-semibold text-[#17161a]">
+              {@label}
+            </span>
+            """
+          end
+        end
+
+        column :source_host do
+          label fn -> dgettext("mishka_gervaz", "From") end
+
+          ui do
+            width "minmax(180px,1.4fr)"
+          end
+        end
+
+        column :status do
+          label fn -> dgettext("mishka_gervaz", "Status") end
+          sortable true
+
+          ui do
+            width "minmax(130px,0.9fr)"
+          end
+
+          render fn status ->
+            assigns = %{
+              status: status,
+              label: MishkaCmsMigration.MigrationRun.status_label(status),
+              class: MishkaCmsMigration.MigrationRun.status_class(status)
+            }
+
+            ~H"""
+            <span
+              data-role="run-status"
+              data-status={@status}
+              class={[
+                "inline-flex items-center rounded-[6px] px-[7px] py-[2px] text-[11px] font-semibold",
+                @class
+              ]}
+            >
+              {@label}
+            </span>
+            """
+          end
+        end
+
+        column :result do
+          static true
+          requires [:report]
+          label fn -> dgettext("mishka_gervaz", "Result") end
+
+          ui do
+            width "minmax(200px,1.4fr)"
+          end
+
+          render fn record ->
+            assigns = %{summary: MishkaCmsMigration.MigrationRun.result_summary(record.report)}
+
+            ~H"""
+            <span data-role="run-result" class="text-[12.5px] text-[#3a382f]">{@summary}</span>
+            """
+          end
+        end
+
+        column :started do
+          static true
+          requires [:site_id, :site, :inserted_at]
+          label fn -> dgettext("mishka_gervaz", "Started") end
+          sortable true
+          sort_field [:inserted_at]
+
+          ui do
+            width "minmax(140px,1fr)"
+          end
+
+          render fn record, state ->
+            assigns = %{
+              started: MishkaCmsCore.Localized.date(record.inserted_at, :yMMMd),
+              site_name: state.master_user? && record.site && record.site.name
+            }
+
+            ~H"""
+            <div class="min-w-0">
+              <div :if={@site_name} class="truncate text-[12.5px] font-medium text-[#3a382f]">
+                {@site_name}
+              </div>
+              <div class="text-[12px] text-[#8a877f]">{@started}</div>
+            </div>
+            """
+          end
+        end
+      end
+
+      realtime do
+        prefix "migration_run"
+
+        visible fn record, user ->
+          is_nil(user.site_id) or record.site_id == user.site_id
+        end
+      end
+
+      url_sync do
+        mode :bidirectional
+        params [:sort, :page]
+        prefix "runs"
+      end
+
+      empty_state message: dgettext_noop("mishka_gervaz", "No migration has run yet"),
+                  icon: "hero-arrows-right-left"
+
+      presentation do
+        ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
+      end
+    end
+  end
+
   actions do
-    defaults [:read]
+    read :read do
+      description "A site's runs"
+      primary? true
+
+      pagination offset?: true,
+                 keyset?: true,
+                 default_limit: 20,
+                 max_page_size: 100,
+                 countable: true,
+                 required?: false
+    end
+
+    read :master_read do
+      description "Every site's runs (masters)"
+      multitenancy :bypass
+
+      pagination offset?: true,
+                 keyset?: true,
+                 default_limit: 20,
+                 max_page_size: 100,
+                 countable: true,
+                 required?: false
+
+      validate {TenantContext, require_master: true}
+    end
+
+    read :master_get do
+      description "One run of any site (masters)"
+      multitenancy :bypass
+      get? true
+
+      validate {TenantContext, require_master: true}
+    end
 
     create :create do
       primary? true
@@ -565,6 +749,44 @@ defmodule MishkaCmsMigration.MigrationRun do
     secret = Ash.Changeset.get_argument(changeset, :secret)
     changeset |> Ash.Changeset.delete_argument(:secret) |> sealed(secret)
   end
+
+  @doc "Where a run with `status` is, as the admin reads it."
+  @spec status_label(atom()) :: String.t()
+  def status_label(:pending), do: dgettext("mishka_gervaz", "Waiting")
+  def status_label(:dry_running), do: dgettext("mishka_gervaz", "Dry run running")
+  def status_label(:dry_run), do: dgettext("mishka_gervaz", "Dry run ready")
+  def status_label(:importing), do: dgettext("mishka_gervaz", "Importing")
+  def status_label(:done), do: dgettext("mishka_gervaz", "Imported")
+  def status_label(:failed), do: dgettext("mishka_gervaz", "Failed")
+  def status_label(:cancelled), do: dgettext("mishka_gervaz", "Cancelled")
+
+  @doc "The badge colours of a run with `status`."
+  @spec status_class(atom()) :: String.t()
+  def status_class(status) when status in [:dry_running, :importing],
+    do: "bg-[#eef0ff] text-[#4f4bcc]"
+
+  def status_class(:dry_run), do: "bg-[#fff6e0] text-[#8a5a00]"
+  def status_class(:done), do: "bg-[#e6f6ee] text-[#177a53]"
+  def status_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
+  def status_class(_waiting_or_cancelled), do: "bg-[#f1f0ec] text-[#6f6c64]"
+
+  @doc """
+  What a run's `report` counts, in one line: `"3 created · 1 updated · 2 skipped · 0 failed"`, or
+  `"—"` before its first dry run.
+  """
+  @spec result_summary(map() | nil) :: String.t()
+  def result_summary(%{counts: counts}) do
+    Enum.map_join(MishkaCmsMigration.Report.outcomes(), " · ", fn outcome ->
+      "#{MishkaCmsCore.Localized.number(Map.get(counts, outcome, 0))} #{outcome_label(outcome)}"
+    end)
+  end
+
+  def result_summary(_no_report), do: "—"
+
+  defp outcome_label(:created), do: dgettext("mishka_gervaz", "created")
+  defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
+  defp outcome_label(:skipped), do: dgettext("mishka_gervaz", "skipped")
+  defp outcome_label(:failed), do: dgettext("mishka_gervaz", "failed")
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

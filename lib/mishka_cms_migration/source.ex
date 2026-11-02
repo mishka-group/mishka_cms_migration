@@ -141,11 +141,21 @@ defmodule MishkaCmsMigration.Source do
   def event, do: @event
 
   @doc """
-  Every installed source (`installed/2`), by priority, the first of each id: what the coming Import
-  screen offers to migrate from, and what a developer reads to see which sources a node has.
+  Every installed source (`installed/2`), by priority, the first of each id: what the Migration
+  page offers to migrate from, and what a developer reads to see which sources a node has.
   """
   @spec all() :: [module()]
   def all, do: installed(@event, __MODULE__)
+
+  @doc """
+  The name to show for the source whose id is `id`: its label in the reader's language, or the id
+  itself for a source that is no longer installed.
+  """
+  @spec label(String.t()) :: String.t()
+  def label(id), do: id |> fetch() |> shown(id)
+
+  defp shown({:ok, source}, _id), do: Gettext.gettext(MishkaCmsCore.Gettext, source.label())
+  defp shown({:error, :not_installed}, id), do: id
 
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}

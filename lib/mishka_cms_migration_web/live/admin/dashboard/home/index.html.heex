@@ -10,9 +10,51 @@ SPDX-License-Identifier: Apache-2.0
       {gettext("Migration")}
     </h1>
     <div class="mt-[7px] max-w-[620px] text-[13.5px] font-medium text-[#7c7a75]">
-      {gettext(
-        "Move a site's posts, pages, authors and media here from another CMS. Try a dry run first: it shows what an import would do and writes nothing."
-      )}
+      {gettext("Move a site's posts, pages, authors and media here from another CMS.")}
     </div>
+  </div>
+
+  <div data-role="migration-sources" class="mb-5">
+    <div class="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-[#a8a5a0]">
+      {gettext("Sources")}
+    </div>
+
+    <div
+      :if={@sources != []}
+      class="grid grid-cols-3 gap-3 max-[980px]:grid-cols-2! max-[560px]:grid-cols-1!"
+    >
+      <div
+        :for={source <- @sources}
+        data-role="migration-source"
+        data-source={source.id()}
+        class="rounded-[14px] border border-[#ecebe6] bg-white px-4 py-[15px] shadow-[0_1px_2px_rgba(30,28,24,0.04)]"
+      >
+        <div class="font-['Space_Grotesk'] text-[18px] font-semibold tracking-[-0.01em] text-[#17161a]">
+          {Source.label(source.id())}
+        </div>
+      </div>
+    </div>
+
+    <div
+      :if={@sources == []}
+      data-role="migration-no-source"
+      class="rounded-[14px] border border-dashed border-[#e3e1da] bg-white px-4 py-[15px] text-[13px] text-[#7c7a75]"
+    >
+      {gettext("No source is installed yet. WordPress is the first one on its way.")}
+    </div>
+  </div>
+
+  <div class="rounded-[14px] border border-[#ecebe6] bg-white p-4 shadow-[0_1px_2px_rgba(30,28,24,0.04)]">
+    <.live_component
+      module={MishkaGervaz.Table.Web.Live}
+      id="migration-runs-table"
+      resource={MishkaCmsMigration.MigrationRun}
+      current_user={@current_user}
+      url_state={@url_state}
+    >
+      <:before_table>
+        <div class="mb-3 text-[15px] font-semibold text-[#17161a]">{gettext("Runs")}</div>
+      </:before_table>
+    </.live_component>
   </div>
 </div>
