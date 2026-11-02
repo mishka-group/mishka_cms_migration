@@ -17,9 +17,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   recorded, the item's entry says it failed, with why. A dry run records nothing and writes nothing:
   it reports the plan.
 
-  An item written with a piece of content no plugin converted, kept as escaped text, has its entry
-  and its record say so, naming the pieces: `"unconverted: acme/callout, gallery"`. A dry run asks
-  no plugin, so it names every piece the source left to convert.
+  An item written otherwise than the source has it has its entry and its record say so: its
+  target's note (`MishkaCmsMigration.Target`'s `note/1`), then the pieces of its content no plugin
+  converted, kept as escaped text, joined by `"; "`, as in
+  `"draft_from_pending; unconverted: acme/callout, gallery"`. A dry run asks no plugin, so it names
+  every piece the source left to convert.
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
@@ -38,7 +40,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   Settles `item` by `plan` and answers its entry in the report:
 
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
-      in a dry run, with the pieces of its content left unconverted as its reason;
+      in a dry run, with its target's note and the pieces of its content left unconverted as its
+      reason;
     * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason in an import; an item
       whose row could not be read has only its kind and, when the row named one, its source id;
     * `:duplicate` — the source listed its id before: reported, never recorded.
@@ -50,9 +53,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
     do: entry(state, item, outcome, reason)
 
-  def call(%{mode: :dry_run}, %Item{} = item, {outcome, _target, _record}),
+  def call(%{mode: :dry_run}, %Item{} = item, {outcome, target, _record}),
     do:
-      Report.entry(item.kind, item.source_id, item.title, outcome, item |> to_convert() |> note())
+      Report.entry(
+        item.kind,
+        item.source_id,
+        item.title,
+        outcome,
+        note(target, item, to_convert(item))
+      )
 
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
     state
@@ -82,7 +91,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     with {:ok, context} <- parented(state, source_item),
          {:ok, item, kept} <- convert(state, source_item),
          {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
-         note = note(kept),
+         note = note(target, item, kept),
          {:ok, written} <-
            Ash.transact([target.resource(), MigrationItem], fn ->
              store(state, {source_item, item}, {outcome, target, record}, context, note)
@@ -203,10 +212,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp to_convert(%Item{content: content}),
     do: for(%{html: nil, name: name} <- content || [], do: name)
 
-  defp note(names), do: names |> Enum.reject(&is_nil/1) |> Enum.uniq() |> unconverted()
+  defp note(target, item, unconverted),
+    do: [target.note(item), unconverted(unconverted)] |> Enum.reject(&is_nil/1) |> noted()
 
-  defp unconverted([]), do: nil
-  defp unconverted(names), do: Report.reason("unconverted: " <> Enum.join(names, ", "))
+  defp noted([]), do: nil
+  defp noted(notes), do: notes |> Enum.join("; ") |> Report.reason()
+
+  defp unconverted(names), do: names |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
+
+  defp names([]), do: nil
+  defp names(names), do: "unconverted: " <> Enum.join(names, ", ")
 
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()

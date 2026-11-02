@@ -5,11 +5,11 @@
 defmodule MishkaCmsMigration.ReportTest do
   @moduledoc """
   The report a run keeps: every item counted, by kind in the order met, and only the last entries
-  kept, so it stays small however large the site.
+  kept, so it stays small however large the site; and an entry's reason as the admin reads it.
   """
   use ExUnit.Case, async: true
 
-  alias MishkaCmsMigration.Report
+  alias MishkaCmsMigration.{MigrationRun, Report}
 
   defp add_many(report, kind, ids, outcome),
     do: Enum.reduce(ids, report, &Report.add(&2, Report.entry(kind, "#{&1}", nil, outcome, nil)))
@@ -35,5 +35,16 @@ defmodule MishkaCmsMigration.ReportTest do
       |> Report.done()
 
     assert [%{kind: "user", created: 2, failed: 1}, %{kind: "post", skipped: 1}] = report.kinds
+  end
+
+  test "an entry's reason reads in words, each of its parts, and a reason of the CMS as it is" do
+    assert MigrationRun.reason_label("draft_from_pending; unconverted: acme/callout, gallery") ==
+             "Pending review at the source, so a draft; Kept as text: acme/callout, gallery"
+
+    assert MigrationRun.reason_label("draft_from_password") ==
+             "Password-protected at the source, so a draft"
+
+    assert MigrationRun.reason_label("title: is required; slug: is required") ==
+             "title: is required; slug: is required"
   end
 end

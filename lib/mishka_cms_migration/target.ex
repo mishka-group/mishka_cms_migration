@@ -29,8 +29,9 @@ defmodule MishkaCmsMigration.Target do
 
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
-  the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0` and
-  `actions/0`; a target writes only `attrs/2`.
+  the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
+  `actions/0` and a `note/1` that says nothing; a target writes only `attrs/2`, and `note/1` when
+  it writes an item otherwise than the source has it.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -74,6 +75,17 @@ defmodule MishkaCmsMigration.Target do
   An item whose parent has no CMS record is not written; it is skipped as `"parent_missing"`
   (`MishkaCmsMigration.Workers.Helpers.Writer`).
 
+  ## What the report says
+
+  `note/1` is what the report says about an item the target writes otherwise than the source has
+  it, such as a post pending review that the CMS keeps as a draft: a short code the admin page puts
+  in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), or `nil`. It is the entry's reason
+  in a dry run and in an import, and the item's record keeps it, before the pieces of its content
+  no plugin converted (`MishkaCmsMigration.Report`).
+
+      def note(%{attrs: %{"status" => "pending"}}), do: "draft_from_pending"
+      def note(_item), do: nil
+
   ## Keeping an admin's edits
 
   A re-run reads the records earlier runs wrote, as the admin running it
@@ -115,6 +127,12 @@ defmodule MishkaCmsMigration.Target do
   @doc "The input of the create or update action for `item`."
   @callback attrs(Item.t(), context()) :: map()
 
+  @doc """
+  What the report says about `item` when it is written otherwise than the source has it, or `nil`
+  (see "What the report says"). `use` answers `nil`.
+  """
+  @callback note(Item.t()) :: String.t() | nil
+
   @doc false
   defmacro __using__(opts) do
     kind = Keyword.fetch!(opts, :kind)
@@ -144,6 +162,11 @@ defmodule MishkaCmsMigration.Target do
 
       @impl MishkaCmsMigration.Target
       def actions, do: %{create: unquote(create), update: unquote(update)}
+
+      @impl MishkaCmsMigration.Target
+      def note(_item), do: nil
+
+      defoverridable note: 1
     end
   end
 

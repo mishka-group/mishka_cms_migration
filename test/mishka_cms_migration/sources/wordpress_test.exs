@@ -21,7 +21,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
-  @written %{"category" => :created, "tag" => :created}
+  @written %{"category" => :created, "tag" => :created, "post" => :created}
   @recordings %{
     "user" => "users",
     "category" => "categories",
@@ -486,7 +486,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, page and post it found: terms to create in the Blog, the rest with no target yet" do
+    test "reports every user, term, page and post it found: terms and posts to create in the Blog, the rest with no target yet" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -510,8 +510,9 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                  )
       end
 
-      assert Enum.all?(
-               run.report.entries,
+      assert run.report.entries
+             |> Enum.reject(&(&1.kind == "post"))
+             |> Enum.all?(
                &({&1.outcome, &1.reason} in [{:created, nil}, {:skipped, "no_target"}])
              )
 

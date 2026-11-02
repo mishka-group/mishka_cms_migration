@@ -1440,32 +1440,38 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label(kind), do: String.capitalize(kind)
 
   @doc """
-  Why an item was skipped or failed, or what its write left unconverted (a
-  `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it. A plugin's own reason, and
-  what a source or the CMS answered, read as they are.
+  Why an item was skipped or failed, or what was written otherwise than the source has it (a
+  `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it, each of its parts (joined by
+  `"; "`) in words. A plugin's own reason, and what a source or the CMS answered, read as they are.
   """
   @spec reason_label(String.t()) :: String.t()
-  def reason_label("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
-  def reason_label("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
-  def reason_label("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+  def reason_label(reason), do: reason |> String.split("; ") |> Enum.map_join("; ", &said/1)
 
-  def reason_label("target_missing"),
-    do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+  defp said("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
+  defp said("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
+  defp said("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+  defp said("target_missing"), do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+  defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
+  defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
 
-  def reason_label("duplicate_in_source"),
-    do: dgettext("mishka_gervaz", "Listed twice by the source")
-
-  def reason_label("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
-
-  def reason_label("plugins_cannot_run"),
+  defp said("plugins_cannot_run"),
     do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
 
-  def reason_label("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
+  defp said("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
 
-  def reason_label("unconverted: " <> names),
+  defp said("draft_from_pending"),
+    do: dgettext("mishka_gervaz", "Pending review at the source, so a draft")
+
+  defp said("draft_from_private"),
+    do: dgettext("mishka_gervaz", "Private at the source, so a draft")
+
+  defp said("draft_from_password"),
+    do: dgettext("mishka_gervaz", "Password-protected at the source, so a draft")
+
+  defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
 
-  def reason_label(reason), do: reason
+  defp said(reason), do: reason
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

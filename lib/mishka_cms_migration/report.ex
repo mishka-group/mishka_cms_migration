@@ -22,9 +22,11 @@ defmodule MishkaCmsMigration.Report do
   would refuse (an address another source already took, a value its validations reject), reads as
   created or updated in the dry run and as skipped or failed in the import.
 
-  `reason` says why an item was skipped or failed, and, for an item created or updated, the pieces
-  of its content no plugin converted, kept as escaped text: `"unconverted: "` and their names
-  (`MishkaCmsMigration.Workers.Helpers.Writer`); `nil` when it has none:
+  `reason` says why an item was skipped or failed, and, for an item created or updated, what was
+  written otherwise than the source has it (`MishkaCmsMigration.Workers.Helpers.Writer`), `nil` when
+  nothing was: its target's note (`MishkaCmsMigration.Target`'s `note/1`, such as
+  `"draft_from_pending"`), then the pieces of its content no plugin converted, kept as escaped text
+  (`"unconverted: "` and their names), joined by `"; "`. For a skipped or failed item:
 
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.

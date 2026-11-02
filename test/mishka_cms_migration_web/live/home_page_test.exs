@@ -629,7 +629,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 20, "skipped" => 37}
+      assert outcomes(view) == %{"created" => 41, "skipped" => 16}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
 
       assert kinds(view) == %{
@@ -651,7 +651,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 20, "skipped" => 37}
+               %{"created" => 41, "skipped" => 16}
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
@@ -673,7 +673,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
 
-      for {kind, found} <- [{"category", 9}, {"tag", 11}] do
+      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"post", 21}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -682,7 +682,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
       end
 
-      for {kind, found} <- [{"user", 5}, {"page", 11}, {"post", 21}] do
+      for {kind, found} <- [{"user", 5}, {"page", 11}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -704,7 +704,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert detailed(view, "run-details-item", "data-source-id") == newest_posts
       assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post", 8)
-      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("skipped", 8)
+      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("created", 8)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-item"][data-source-id="34"] [data-role="run-details-item-reason"]|,
+               "Kept as text: unknown_plugin_shortcode, pullbox"
+             )
 
       assert detailed(view, "run-details-items-more", "data-count") == ["49"]
 
@@ -774,7 +780,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Imported"
              )
 
-      assert outcomes(view) == %{"created" => 20, "skipped" => 37}
+      assert outcomes(view) == %{"created" => 41, "skipped" => 16}
 
       assert has_element?(
                view,
@@ -782,9 +788,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 20, "skipped" => 37}
+               %{"created" => 41, "skipped" => 16}
 
-      for {kind, created} <- [{"category", 9}, {"tag", 11}] do
+      for {kind, created} <- [{"category", 9}, {"tag", 11}, {"post", 21}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -792,6 +798,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       end
 
       assert length(Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false)) == 11
+      assert length(Ash.read!(MishkaBlog.BlogPost, tenant: site.id, authorize?: false)) == 21
       refute has_element?(view, "#migration-runs-table #{action("import", run)}")
     end
   end

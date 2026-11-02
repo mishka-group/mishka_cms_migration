@@ -14,7 +14,11 @@ defmodule MishkaCmsMigrationTest do
 
     assert {MishkaCmsMigration.Application.sources(), MishkaCmsMigration.Application.targets()} ==
              {[MishkaCmsMigration.Sources.WordPress],
-              [MishkaCmsMigration.Targets.BlogCollection, MishkaCmsMigration.Targets.BlogTag]}
+              [
+                MishkaCmsMigration.Targets.BlogCollection,
+                MishkaCmsMigration.Targets.BlogTag,
+                MishkaCmsMigration.Targets.BlogPost
+              ]}
 
     for plugin <- MishkaCmsMigration.Application.plugins() do
       assert is_pid(Process.whereis(plugin))
