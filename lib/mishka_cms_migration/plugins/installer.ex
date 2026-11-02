@@ -20,7 +20,7 @@ defmodule MishkaCmsMigration.Plugins.Installer do
       extra: [
         %{
           label: gettext_noop("Migration"),
-          summary: gettext_noop("Move a site's content from WordPress and other CMSs"),
+          summary: gettext_noop("Move a site's content here from another CMS"),
           fields: []
         }
       ]

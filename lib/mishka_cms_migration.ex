@@ -5,8 +5,8 @@
 defmodule MishkaCmsMigration do
   @moduledoc """
   The migration extension's Ash domain. The extension moves a site from another CMS into a Mishka
-  CMS site: WordPress is the first source, and Joomla and others come later as plugins that reuse the
-  same mapping, dry run, import job and report.
+  CMS site. No source ships yet: WordPress is planned as the first, and Joomla and others come later
+  as plugins that reuse the same mapping, dry run, import job and report.
 
     * `MishkaCmsMigration.MigrationRun` — one move: its source, its choices, its life and its report.
     * `MishkaCmsMigration.MigrationItem` — what was written for each item of a source, so a re-run
@@ -14,7 +14,8 @@ defmodule MishkaCmsMigration do
 
   A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
   existing CMS action by a `MishkaCmsMigration.Target`, the jobs are `MishkaCmsMigration.Pipeline`'s,
-  and an import fires the events of `MishkaCmsMigration.Events`.
+  and an import fires the events of `MishkaCmsMigration.Events`. Installing the extension on a site
+  creates the permission names its runs are gated by (`MishkaCmsMigration.Provision`).
 
   ## Its functions
 
@@ -27,7 +28,6 @@ defmodule MishkaCmsMigration do
         )
 
       {:ok, run} = MishkaCmsMigration.start_dry_run(run, actor: admin, tenant: site.id)
-      # … the dry run reports …
       {:ok, run} = MishkaCmsMigration.start_import(run, actor: admin, tenant: site.id)
   """
   use Ash.Domain,

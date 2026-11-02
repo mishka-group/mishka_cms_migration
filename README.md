@@ -22,7 +22,7 @@
 
 ## 🔌 In a host
 
-The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Sources and targets are Mishka Installer plugins, supervised by the extension that ships them.
+The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
 
 ## 🧩 Part of Mishka CMS
 
@@ -30,10 +30,10 @@ Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS]
 
 ## 🚀 Getting started
 
-Add it from Hex:
+It is not on Hex yet. Until its first release, add it from GitHub:
 
 ```elixir
-{:mishka_cms_migration, "~> 0.0.1-alpha.1"}
+{:mishka_cms_migration, github: "mishka-group/mishka_cms_migration"}
 ```
 
 To work on it, clone it next to `mishka_cms_core`, `mishka_gervaz` and `mishka_installer`. `mix.exs` takes a sibling checkout over the Hex release when there is one. Then:

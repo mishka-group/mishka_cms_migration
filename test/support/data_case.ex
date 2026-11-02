@@ -18,6 +18,17 @@ defmodule MishkaCmsMigration.DataCase do
   — and this case adds this extension's fixtures (`MishkaCmsMigration.Test.Factory`), Oban's test
   helpers (`Oban.Testing`), a plugin for the length of a block (`with_plugin/3`) or of a test
   (`register_plugin!/2`), and the SQL a block ran (`queries_while/1`).
+
+  ## How the suite boots
+
+  The CMS's application supervisor owns the runtime around the core, so running this suite on its
+  own means starting it, and `test_helper.exs` does it with the core's harness,
+  `MishkaCmsCore.Test.Boot.start!/1`: it creates Oban's tables (they are not an Ash resource, so
+  `mix ash.codegen` never emits them), then starts the repo, Oban, the core's caches and runtime
+  compiler, AshAuthentication and the endpoint, the way a host starts them. The run starts once the
+  core's plugins and this extension's own are live, each having registered from its own
+  `handle_continue`. A test plugin a killed run left registered in `mishka_installer`'s Mnesia
+  (any module under `MishkaCmsMigration.Test.Plugins`) is swept first.
   """
 
   use ExUnit.CaseTemplate

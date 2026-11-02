@@ -15,8 +15,10 @@ defmodule MishkaCmsMigration.Options do
       old address; `"keep"` keeps the source's own addresses.
     * `:comments` — whether comments come too; `false` by default.
 
-  Any other key, or any other value, is refused. A choice is saved with the run and handed to every
-  target; each target acts on the choices that concern it.
+  Any other key, or any other value, is refused. The choices are saved with the run, every default
+  filled in, and handed to every target. No target reads them yet: the authors choice is read by the
+  author and post targets, pages by the page target, post addresses by the post and redirect
+  targets and comments by the comment target, as each kind's import comes.
   """
 
   use GuardedStruct

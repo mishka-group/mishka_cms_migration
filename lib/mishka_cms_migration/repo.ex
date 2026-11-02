@@ -10,12 +10,15 @@ defmodule MishkaCmsMigration.Repo do
 
   use AshPostgres.Repo, otp_app: :mishka_cms_migration
 
+  @doc "The oldest PostgreSQL the resources are written for."
   def min_pg_version do
     %Version{major: 16, minor: 9, patch: 0}
   end
 
-  # Don't open unnecessary transactions
-  # will default to `false` in 4.0
+  @doc """
+  `false`: an action opens no transaction it does not need, the default AshPostgres moves to in
+  its next major version.
+  """
   def prefer_transaction? do
     false
   end
