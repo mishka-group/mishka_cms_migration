@@ -165,6 +165,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
+  @type_address dgettext_noop("errors", "Type the site's address, such as https://example.com.")
   @busy dgettext_noop(
           "errors",
           "Another migration of this site is still waiting or running. Try again once it is done."
@@ -681,7 +682,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {TenantContext, require_master: false}
       change &MishkaCmsMigration.MigrationRun.take_secret/2
       change CheckConnection
-      validate present(:source_host), only_when_valid?: true
+      validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
@@ -693,7 +694,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
     create :master_create do
       accept [:site_id, :source, :source_host, :connection, :options]
-      allow_nil_input [:source_host]
+      allow_nil_input [:site_id, :source_host]
 
       argument :secret, :string do
         sensitive? true
@@ -705,7 +706,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate present(:site_id), message: @pick_site
       change &MishkaCmsMigration.MigrationRun.take_secret/2
       change CheckConnection
-      validate present(:source_host), only_when_valid?: true
+      validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
 
       change fn changeset, _context ->

@@ -146,6 +146,16 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                )
     end
 
+    test "asks for the address in words, not as a missing value, when none can be read", %{
+      site: site,
+      admin: admin
+    } do
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :source_host, message: message}]}} =
+               MishkaCmsMigration.create_run(%{source: "ghost"}, actor: admin, tenant: site.id)
+
+      assert message =~ "Type the site's address"
+    end
+
     test "needs a site to be created on", %{admin: admin} do
       assert {:error, %Ash.Error.Invalid{}} =
                MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
@@ -198,7 +208,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert Enum.any?(errors, &(&1.field == :connection))
     end
 
-    test "sent empty by a master, names the site and the address in words, and no host", %{
+    test "sent empty by a master, names the site once and the address in words, and no host", %{
       site: _site
     } do
       master = create_user_with_permissions!(["admin:dashboard:migration"])
@@ -212,7 +222,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
       assert :connection in fields
       refute :source_host in fields
-      assert Enum.find(errors, &(Map.get(&1, :field) == :site_id)).message =~ "Pick the site"
+      assert [site_error] = Enum.filter(errors, &(Map.get(&1, :field) == :site_id))
+      assert site_error.message =~ "Pick the site"
     end
 
     test "for a master, on the site the master names", %{site: site} do

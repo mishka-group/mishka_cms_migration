@@ -342,6 +342,18 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       refute html =~ "must be present"
       assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
     end
+
+    test "sent empty by a master, asks for the site once", %{conn: conn} do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      view = open!(conn, master)
+
+      new_import!(view)
+      html = submit!(view, %{"url" => "", "user" => ""}, "")
+
+      assert length(String.split(html, "Pick the site the content moves to.")) == 2
+      refute html =~ "is required"
+      refute html =~ "must be present"
+    end
   end
 
   describe "the runs table" do
