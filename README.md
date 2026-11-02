@@ -24,6 +24,12 @@
 
 The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`); it starts Oban with `AshOban.config/2` over its `ash_domains`, as Mishka CMS does, since the jobs are AshOban triggers on the run. Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
 
+## 🔁 How a migration runs
+
+An admin creates a run (the source, the host it reads from, how to connect, their choices), then asks for a dry run: a job walks the source and reports what an import would create, update and skip, writing nothing. Once it has reported, the admin asks for the import, which writes each item through the CMS's own actions as that admin and saves the report. A run ends `done`, `failed` (with the reason, after the job's last attempt) or `cancelled` (the admin stopped it; a running job stops at its next page). Running again is a new run, which updates what the source changed and keeps what an admin changed in the CMS.
+
+The dry run and the import are AshOban jobs on the `migration` queue, three attempts of an hour each. A site has one run dry running or importing at a time; the database refuses a second. [`MishkaCmsMigration.MigrationRun`](lib/mishka_cms_migration/resources/migration_run.ex) has the whole life of a run.
+
 ## 🔀 Several sources into one site
 
 A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and CMS records, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from.
@@ -66,7 +72,7 @@ It is not on Hex yet. Until its first release, add it from GitHub:
 {:mishka_cms_migration, github: "mishka-group/mishka_cms_migration"}
 ```
 
-To work on it, clone it next to `mishka_cms_core`, `mishka_gervaz` and `mishka_installer`. `mix.exs` takes a sibling checkout over the Hex release when there is one. Then:
+To work on it, clone it next to `mishka_cms_core`, `mishka_gervaz`, `mishka_installer` and `guarded_struct`. `mix.exs` takes a sibling checkout over the Hex release when there is one. Then:
 
 ```sh
 mix deps.get
