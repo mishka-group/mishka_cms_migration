@@ -42,6 +42,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A job whose run is
   gone, or is not waiting for it (it was cancelled meanwhile), is cancelled, and so is one whose
   run refuses its report.
+
+  A last attempt that never returns — Oban stops it at its `timeout/1`, or it crashes past every
+  rescue — fails its run too: `attach/0` listens to Oban's own `[:oban, :job, :exception]`
+  telemetry, and a migration job Oban discards fails its run with the reason and clears its secret.
+  Only a job lost with its node, which Oban's lifeline puts back without that event, leaves its run
+  where it was, for an admin to cancel.
   """
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
@@ -52,6 +58,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   @running %{dry_run: :dry_running, import: :importing}
   @max_pages 10_000
+  @handler "mishka-cms-migration-discarded-jobs"
+  @workers ["MishkaCmsMigration.Workers.DryRunWorker", "MishkaCmsMigration.Workers.ImportWorker"]
 
   @typedoc "Whether a job only reports, or writes."
   @type mode :: :dry_run | :import
@@ -67,11 +75,45 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   @doc """
   How long one attempt of either worker may run: an hour. Oban stops an attempt that runs longer and
   tries the job again; an import's next attempt skips what the last one wrote and recorded, so a
-  large site goes on where it stopped. A job stopped on its last attempt leaves its run where it
-  was, for an admin to cancel (`MishkaCmsMigration.MigrationRun`'s `:cancel`).
+  large site goes on where it stopped. A job stopped on its last attempt fails its run (`attach/0`).
   """
   @spec timeout(Oban.Job.t()) :: pos_integer()
   def timeout(%Oban.Job{}), do: :timer.hours(1)
+
+  @doc """
+  Attaches the handler that fails the run of a migration job Oban discards: one whose last attempt
+  timed out or crashed. `MishkaCmsMigration.Application` attaches it at boot; attaching again
+  replaces it.
+  """
+  @spec attach() :: :ok | {:error, :already_exists}
+  def attach do
+    :telemetry.detach(@handler)
+    :telemetry.attach(@handler, [:oban, :job, :exception], &__MODULE__.discarded/4, nil)
+  end
+
+  @doc false
+  def discarded(
+        _event,
+        _measurements,
+        %{job: %{worker: worker, args: args}, state: :discard} = meta,
+        _config
+      )
+      when worker in @workers do
+    case running(args, mode(worker)) do
+      {:ok, run} ->
+        MishkaCmsMigration.fail_run(run, Report.reason(meta[:reason]), authorize?: false)
+
+      {:error, _gone} ->
+        :ok
+    end
+
+    :ok
+  end
+
+  def discarded(_event, _measurements, _meta, _config), do: :ok
+
+  defp mode("MishkaCmsMigration.Workers.DryRunWorker"), do: :dry_run
+  defp mode("MishkaCmsMigration.Workers.ImportWorker"), do: :import
 
   @doc "Runs `job` of a run in `mode` and answers as an `Oban.Worker` does."
   @spec perform(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}

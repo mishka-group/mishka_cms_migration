@@ -15,6 +15,9 @@ defmodule MishkaCmsMigration.Application do
   the chains of the events deciding what is written, `MishkaCmsMigration.Events.BeforeImportGuard`
   and `MishkaCmsMigration.Events.ConvertGuard`.
 
+  At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
+  discards (`MishkaCmsMigration.Workers.Helpers.Pipeline.attach/0`).
+
   The migration jobs run on the host's Oban, on a `migration` queue the host declares. Each site has
   one migration job at a time, waiting or running (`MishkaCmsMigration.Workers.Helpers.Pipeline.unique/0`);
   the queue's limit is how many sites migrate at once across the whole installation. With
@@ -61,6 +64,7 @@ defmodule MishkaCmsMigration.Application do
 
   @impl true
   def start(_type, _args) do
+    MishkaCmsMigration.Workers.Helpers.Pipeline.attach()
     opts = [strategy: :one_for_one, name: MishkaCmsMigration.Supervisor]
     Supervisor.start_link(plugins(), opts)
   end

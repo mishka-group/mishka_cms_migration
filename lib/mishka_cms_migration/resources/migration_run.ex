@@ -47,9 +47,11 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   An admin ends a run that is not done with `:cancel`: its job, waiting or running, is cancelled
   (`MishkaCmsMigration.Resources.Changes.CancelJobs`), so the site can start another, and a job
-  that was already past that point finds the run no longer waiting for it and stops. It is also
-  how a run is ended whose job stopped without saying so, such as one Oban stopped on its last
-  attempt.
+  that was already past that point finds the run no longer waiting for it and stops; the job's
+  write and the record of each item share one transaction, so a job stopped there leaves either
+  both or neither. A job Oban stops on its last attempt, at its timeout, fails its run on its own
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline.attach/0`); `:cancel` is how an admin ends a run
+  whose job was lost with its node.
 
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.

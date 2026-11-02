@@ -338,6 +338,35 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert is_nil(run.connection_secret)
     end
 
+    test "whose last attempt Oban stops at its timeout fails the run and drops the secret", %{
+      site: site,
+      admin: admin
+    } do
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => @rows})
+        |> dry_run!(admin)
+        |> MishkaCmsMigration.start_import!(actor: admin, tenant: site.id)
+
+      job = %Oban.Job{
+        worker: "MishkaCmsMigration.Workers.ImportWorker",
+        args: %{"run_id" => run.id, "site_id" => site.id, "actor_id" => admin.id},
+        attempt: 3,
+        max_attempts: 3
+      }
+
+      :telemetry.execute([:oban, :job, :exception], %{duration: 0}, %{
+        job: job,
+        state: :discard,
+        kind: :error,
+        reason: Oban.TimeoutError.exception({ImportWorker, :timer.hours(1)})
+      })
+
+      run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      assert {run.status, run.connection_secret} == {:failed, nil}
+      assert run.error =~ "timed out"
+    end
+
     test "fails the run when listing breaks, and nothing is written", %{site: site, admin: admin} do
       run =
         site
