@@ -43,8 +43,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   A run that is no longer waiting for its job — an admin cancelled it — cancels the job: at its
   start, when AshOban's worker finds the run out of the trigger's `where`; at the first page whose
-  progress the run no longer takes; and when the run refuses the report
-  (`AshOban.Errors.CancelJob`, reason `:not_running`).
+  progress the run refuses for its status; and when it refuses the report for its status
+  (`AshOban.Errors.CancelJob`, reason `:not_running`). Any other error saving the progress or the
+  report fails the attempt, as an error of the walk does.
 
   An error from `connect/2` or `list/3`, a raise outside a single item, a secret that can no longer
   be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
@@ -58,6 +59,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   use Ash.Resource.ManualUpdate
 
+  alias Ash.Error.Changes.InvalidAttribute
   alias AshOban.Errors.CancelJob
   alias MishkaCmsMigration.{Events, MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
@@ -78,7 +80,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   def update(%Ash.Changeset{data: run}, opts, context) do
     run
     |> walked(opts[:mode], context)
-    |> settled(run, opts[:mode], context)
+    |> finished(run, opts[:mode], context)
+    |> answered()
   end
 
   defp walked(run, mode, context) do
@@ -89,13 +92,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp settled({:ok, report, extra}, run, mode, context),
+  defp finished({:ok, report, extra}, run, mode, context),
     do: finish(run, mode, Report.done(report), extra, context)
 
-  defp settled({:error, :not_running}, _run, _mode, _context),
-    do: {:error, CancelJob.exception(reason: :not_running)}
+  defp finished({:error, reason}, _run, _mode, _context), do: {:error, reason}
 
-  defp settled({:error, reason}, _run, _mode, _context), do: {:error, Report.reason(reason)}
+  defp answered({:ok, run}), do: {:ok, run}
+  defp answered({:error, :not_running}), do: {:error, CancelJob.exception(reason: :not_running)}
+  defp answered({:error, reason}), do: {:error, Report.reason(reason)}
 
   defp finish(run, :dry_run, report, extra, context),
     do: run |> MishkaCmsMigration.finish_dry_run(report, extra, scope: context) |> saved()
@@ -109,7 +113,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   end
 
   defp saved({:ok, run}), do: {:ok, run}
-  defp saved({:error, _refused}), do: {:error, CancelJob.exception(reason: :not_running)}
+
+  defp saved({:error, %Ash.Error.Invalid{errors: [%InvalidAttribute{field: :status} | _]}}),
+    do: {:error, :not_running}
+
+  defp saved({:error, error}), do: {:error, error}
 
   defp walk(run, mode, context) do
     with {:ok, options} <- Options.builder(run.options),
@@ -217,11 +225,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp progress(state, kind, _rows, counts) do
     state.run
     |> MishkaCmsMigration.record_progress(%{kind: kind, counts: counts}, scope: state.scope)
+    |> saved()
     |> progressed()
   end
 
   defp progressed({:ok, _run}), do: :ok
-  defp progressed({:error, _refused}), do: {:error, :not_running}
+  defp progressed(error), do: error
 
   defp source_context(state),
     do: %{

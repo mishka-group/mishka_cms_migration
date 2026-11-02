@@ -34,6 +34,23 @@ defmodule MishkaCmsMigration.PipelineTest do
     |> Ash.read!(tenant: site.id, authorize?: false)
   end
 
+  defp refuse_run_update!(condition, message) do
+    Repo.query!("""
+    CREATE FUNCTION refuse_run_update() RETURNS trigger AS $$
+    BEGIN
+      IF #{condition} THEN
+        RAISE EXCEPTION '#{message}';
+      END IF;
+      RETURN NEW;
+    END $$ LANGUAGE plpgsql
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER refuse_run_update BEFORE UPDATE ON mishka_cms_migration_runs
+    FOR EACH ROW EXECUTE FUNCTION refuse_run_update()
+    """)
+  end
+
   defp outcomes(run), do: Map.new(run.report.entries, &{&1.source_id, {&1.outcome, &1.reason}})
 
   @rows [
@@ -636,6 +653,68 @@ defmodule MishkaCmsMigration.PipelineTest do
   end
 
   describe "a job" do
+    @tag capture_log: true
+    test "whose finished report the database cannot save is tried again, and the retry finishes",
+         %{
+           site: site,
+           admin: admin
+         } do
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => @rows})
+        |> dry_run!(admin)
+        |> MishkaCmsMigration.start_import!(actor: admin, tenant: site.id)
+
+      [job] = assert_triggered(run, :run_import)
+
+      refuse_run_update!("NEW.status = 'done'", "the report could not be saved")
+
+      assert_raise Ash.Error.Invalid, ~r/the report could not be saved/, fn ->
+        perform_job(ImportWorker, job.args, attempt: 1)
+      end
+
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+               :importing
+
+      Repo.query!("DROP TRIGGER refuse_run_update ON mishka_cms_migration_runs")
+
+      assert {:ok, _run} = perform_job(ImportWorker, job.args, attempt: 2)
+
+      assert %{status: :done, report: %{counts: %{skipped: 3}}} =
+               MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+    end
+
+    @tag capture_log: true
+    test "whose progress the database cannot save is tried again, and its last attempt fails the run",
+         %{site: site, admin: admin} do
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => @rows})
+        |> dry_run!(admin)
+        |> MishkaCmsMigration.start_import!(actor: admin, tenant: site.id)
+
+      [job] = assert_triggered(run, :run_import)
+
+      refuse_run_update!(
+        "NEW.progress IS DISTINCT FROM OLD.progress",
+        "the progress could not be saved"
+      )
+
+      assert_raise Ash.Error.Invalid, ~r/the progress could not be saved/, fn ->
+        perform_job(ImportWorker, job.args, attempt: 1)
+      end
+
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+               :importing
+
+      assert :ok = perform_job(ImportWorker, job.args, attempt: 3)
+
+      assert %{status: :failed, reason: reason} =
+               MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+      assert reason =~ "the progress could not be saved"
+    end
+
     test "whose run is not waiting for it is cancelled and changes nothing", %{
       site: site,
       admin: admin
