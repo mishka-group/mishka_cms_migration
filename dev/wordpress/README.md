@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 # A real WordPress for the migration tests
 
 WordPress 7.1.4 and MariaDB in Docker, bound to this machine only, filled with realistic content and
-with Yoast SEO active. The extension's tests replay what this site really answers, so nothing in them is
-hand-written mock JSON.
+with Yoast SEO active. The extension's tests will replay (the WordPress source, #4) what this site really
+answers, so nothing in them is hand-written mock JSON.
 
 ```sh
 cd dev/wordpress

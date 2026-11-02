@@ -13,7 +13,7 @@
 
 ## 📖 What is Mishka CMS Migration?
 
-`mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects and site settings. Every row is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
+`mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects and site settings. Every record is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
 
 - [ ] WordPress
 - [ ] Joomla
@@ -26,7 +26,7 @@ The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` f
 
 ## 🔀 Several sources into one site
 
-A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and rows, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from.
+A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and CMS records, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from.
 
 ## 🗂️ Layout
 
@@ -35,14 +35,24 @@ lib/
 ├── mishka_cms_migration.ex           the Ash domain and its code interfaces
 └── mishka_cms_migration/
     ├── application.ex                the plugins the extension supervises
+    ├── repo.ex                       the Postgres repo when the extension runs on its own (the CMS's repo inside the CMS)
     ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
     ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
     ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished
     ├── report.ex                     what a dry run or an import did with each item
     ├── provision.ex                  installing the extension on a site: its permission names
     ├── resources/                    MigrationRun and MigrationItem, with their __changes and __validations
+    ├── workers.ex                    the jobs' shared Oban options and the handler that fails a run whose job Oban discarded
     └── workers/                      the dry-run and import jobs, and their __helpers: the job, the decision, the write
+test/
+├── mishka_cms_migration/             behaviour tests: runs, items, the walk, events, targets, provisioning
+├── support/                          the case, the factory, and plugins for the suite: a fake source, two targets, event probes
+└── fixtures/wordpress/               REST responses and WXR exports recorded from dev/wordpress
+dev/
+└── wordpress/                        a real WordPress in Docker, seeded with realistic content, and the script that records it
 ```
+
+`dev/wordpress/` runs WordPress and MariaDB in Docker on this machine, fills the site with the content a migration meets (every block, shortcodes, nested terms, media, threaded comments, menus, Yoast SEO) and records what it answers into `test/fixtures/wordpress/` (its `README.md` says how). Nothing replays the fixtures yet: the WordPress source (#4) will, so its tests run against what a real site says rather than hand-written JSON.
 
 ## 🧩 Part of Mishka CMS
 
@@ -63,6 +73,8 @@ mix deps.get
 MIX_ENV=test mix ash.codegen setup
 mix test
 ```
+
+There is no screen yet and no real source: the only source is the suite's fake one (`test/support/plugins/fake_source.ex`), so a run is tried through the tests, which create, dry-run and import runs over it.
 
 `mix ci` runs every check: `hex.audit`, compile with warnings as errors, format, credo, sobelow, `deps.audit`, dialyzer, ExDNA and the tests. The tests need PostgreSQL on `localhost` (user and password `postgres`, or `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_HOST`).
 
