@@ -18,8 +18,8 @@ defmodule MishkaCmsMigration.Provision do
   `"mishka_cms_migration"` with `install/2`'s report, appended to `reports`, and hands every other
   payload on untouched. Installing needs `admin:dashboard:runtime:site`; a site's admin installs it
   only on their own site. With no actor it runs only while the CMS itself is being installed.
-  `MishkaCmsMigration.Provision.Settings` registers the settings the installer records an install
-  in.
+
+  The extension registers no settings, so it has no tab on the Settings page.
   """
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -111,29 +111,4 @@ defmodule MishkaCmsMigration.Provision do
       skipped_pages: []
     }
   end
-end
-
-defmodule MishkaCmsMigration.Provision.Settings do
-  @moduledoc """
-  Registers the two per-site settings every installable extension carries, under the Migration tab
-  of the Settings page, through `settings:register`: `mishka_cms_migration.installed`, the version a
-  site was set up at, which the installer writes after an install, and
-  `mishka_cms_migration.active`, the switch that hides the extension from a site
-  (`MishkaCmsCore.Install.Extensions.settings/2`).
-  """
-
-  use MishkaInstaller.Event.Hook, event: "settings:register", initial: %{priority: 50}
-
-  alias MishkaCmsCore.Install.Extensions
-
-  @impl true
-  def call(%{definitions: definitions} = data),
-    do:
-      {:reply,
-       %{
-         data
-         | definitions: definitions ++ Extensions.settings(:mishka_cms_migration, "migration")
-       }}
-
-  def call(data), do: {:reply, data}
 end

@@ -10,10 +10,10 @@ defmodule MishkaCmsMigration.Application do
 
   The plugins are the sources (`sources/0`, each a plugin on `"migration:sources"`, see
   `MishkaCmsMigration.Source`) and the targets (`targets/0`, each on `"migration:targets"`, see
-  `MishkaCmsMigration.Target`) it ships; the two that make it installable on a site,
-  `MishkaCmsMigration.Provision` and `MishkaCmsMigration.Provision.Settings`; the two that open
-  the chains of the events deciding what is written, `MishkaCmsMigration.Events.BeforeImportGuard`
-  and `MishkaCmsMigration.Events.ConvertGuard`; and the admin page's sidebar entry,
+  `MishkaCmsMigration.Target`) it ships; the one that makes it installable on a site,
+  `MishkaCmsMigration.Provision`; the two that open the chains of the events deciding what is
+  written, `MishkaCmsMigration.Events.BeforeImportGuard` and
+  `MishkaCmsMigration.Events.ConvertGuard`; and the admin page's sidebar entry,
   `MishkaCmsMigrationWeb.SidebarMenu`.
 
   At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
@@ -36,10 +36,7 @@ defmodule MishkaCmsMigration.Application do
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
-  @provision_plugins [
-    MishkaCmsMigration.Provision,
-    MishkaCmsMigration.Provision.Settings
-  ]
+  @provision_plugins [MishkaCmsMigration.Provision]
 
   @guard_plugins [
     MishkaCmsMigration.Events.BeforeImportGuard,
