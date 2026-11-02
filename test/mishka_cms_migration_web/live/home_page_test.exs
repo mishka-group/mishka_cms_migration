@@ -108,16 +108,20 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     settled(view)
   end
 
-  defp outcomes(view) do
-    pills =
+  defp outcomes(view), do: counted(view, "run-outcome", "data-outcome")
+  defp kinds(view), do: counted(view, "run-kind", "data-kind")
+
+  # The Result cells' pills or chips of `role`, as `key` attribute to `data-count`.
+  defp counted(view, role, key) do
+    found =
       view
       |> render()
       |> LazyHTML.from_fragment()
-      |> LazyHTML.query(~s|[data-role="run-result"] [data-role="run-outcome"]|)
+      |> LazyHTML.query(~s|[data-role="run-result"] [data-role="#{role}"]|)
 
-    pills
-    |> LazyHTML.attribute("data-outcome")
-    |> Enum.zip(pills |> LazyHTML.attribute("data-count") |> Enum.map(&String.to_integer/1))
+    found
+    |> LazyHTML.attribute(key)
+    |> Enum.zip(found |> LazyHTML.attribute("data-count") |> Enum.map(&String.to_integer/1))
     |> Map.new()
   end
 
@@ -245,7 +249,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert has_element?(view, "#migration-runs-table", "old.example.com")
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
       assert outcomes(view) == %{"created" => 1}
-      assert has_element?(view, ~s|[data-role="run-result"][title*="1 created"]|)
+      assert kinds(view) == %{"redirect" => 1}
     end
 
     test "shows no other site's runs", %{conn: conn, site: site} do
@@ -273,6 +277,76 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       dry_run!(run, admin)
       settled(view)
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
+    end
+  end
+
+  describe "a run's Result while its job runs" do
+    setup %{site: site} do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      {:ok, admin: migration_admin!(site)}
+    end
+
+    defp walked!(run, kind, created) do
+      MishkaCmsMigration.record_progress!(
+        run,
+        %{kind: kind, counts: %{created: created, updated: 0, skipped: 0, failed: 0}},
+        tenant: run.site_id,
+        authorize?: false
+      )
+    end
+
+    defp start_dry_run!(run, admin),
+      do: MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: run.site_id)
+
+    test "shows how far the job is in place of the last report, of the items that report counted",
+         %{conn: conn, site: site, admin: admin} do
+      rows = for id <- 1..3, do: redirect_row(id, "/old-#{id}", "/new-#{id}")
+      run = site |> create_run!(admin, %{"redirect" => rows}) |> dry_run!(admin)
+      assert run.progress.kind == "redirect"
+
+      view = open!(conn, admin)
+      assert outcomes(view) == %{"created" => 3}
+
+      run = start_dry_run!(run, admin)
+      settled(view)
+
+      assert has_element?(view, ~s|[data-role="run-progress"][data-done="0"]|)
+      refute has_element?(view, ~s|[data-role="run-progress"][data-kind]|)
+      assert outcomes(view) == %{}
+      assert kinds(view) == %{}
+
+      walked!(run, "redirect", 2)
+      settled(view)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-progress"][data-kind="redirect"][data-done="2"][data-total="3"]|
+             )
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      refute has_element?(view, ~s|[data-role="run-progress"]|)
+      assert outcomes(view) == %{"created" => 3}
+    end
+
+    test "counts the items met so far, of no total, on a run's first dry run", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      run = site |> create_run!(admin, %{}) |> start_dry_run!(admin)
+      view = open!(conn, admin)
+
+      walked!(run, "redirect", 4)
+      settled(view)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-progress"][data-kind="redirect"][data-done="4"]|
+             )
+
+      refute has_element?(view, ~s|[data-role="run-progress"][data-total]|)
     end
   end
 
@@ -406,6 +480,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert row_action!(view, "dry_run", run) =~ "Dry run started."
       assert [_job] = assert_triggered(run, :run_dry_run)
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_running"]|)
+      assert has_element?(view, ~s|[data-role="run-progress"][data-done="0"]|)
       refute has_element?(view, "#migration-runs-table #{action("dry_run", run)}")
 
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
@@ -418,6 +493,16 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert outcomes(view) == %{"skipped" => 57}
+      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
+
+      assert kinds(view) == %{
+               "user" => 5,
+               "category" => 9,
+               "tag" => 11,
+               "page" => 11,
+               "post" => 21
+             }
+
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
 
       for {kind, label, found} <- [

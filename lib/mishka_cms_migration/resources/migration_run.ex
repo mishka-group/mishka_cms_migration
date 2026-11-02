@@ -53,7 +53,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   The job's action walks the source (`MishkaCmsMigration.Workers.Helpers.Pipeline`) and saves its
   `report` (`MishkaCmsMigration.Report`) through `:finish_dry_run` or `:finish_import` and how far
-  it is through `:record_progress`; after its last attempt fails, AshOban runs `:fail`, the
+  it is through `:record_progress`, whose `progress` each request empties for its new job; after
+  its last attempt fails, AshOban runs `:fail`, the
   triggers' `on_error`, which keeps the reason. Those six are the system's own: every actor is
   refused them, and only what AshOban runs, and what its job runs with its context, passes
   (`AshOban.Checks.AshObanInteraction`).
@@ -100,14 +101,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   The Migration page lists a site's runs, every site's for a master, as a Gervaz table laid out
   like the Pages table: the source with its icon (`source_icon/1`) and the run's short id, the
   address it is moved from with the source site's name under it, where the run is as a coloured pill
-  (`status_label/1`, `status_class/1`), what the last dry run or import did as a pill for each
-  outcome it counted (`result_outcomes/1`, `outcome_class/1`, with `result_summary/1` as their
-  tooltip), for a master the site, and when it started. Each column is as narrow as its cell can be
-  drawn without cutting it off, an address truncating with the whole of it as its tooltip, so the
-  table fits beside the admin's sidebar on a laptop screen without scrolling sideways. It filters
-  by status, source, for a master the site, and the days a run started in, and keeps them in the
-  address. The table follows the run's PubSub notifications, so a run moving on shows without a
-  reload.
+  (`status_label/1`, `status_class/1`), its result (`result_cell/1`), for a master the site, and
+  when it started. Each column is as narrow as its cell can be drawn without cutting it off, an
+  address truncating with the whole of it as its tooltip, and a result wrapping onto more lines,
+  so the table fits beside the admin's sidebar on a laptop screen without scrolling sideways. It
+  filters by status, source, for a master the site, and the days a run started in, and keeps them
+  in the address. The table follows the run's PubSub notifications, so a run moving on, and a
+  running job's progress, show without a reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
   one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
@@ -116,9 +116,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
   as its tooltip and accessible name. The Actions column is always as wide as the most a row shows,
   two 30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose
-  status changes its buttons never moves the other columns. A row expands to what its last dry run or import found, kind
-  by kind: the kind in words (`kind_label/1`), how many items the source listed, what was done with
-  them (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`).
+  status changes its buttons never moves the other columns. A row expands to what its last dry
+  run or import found, kind by kind: the kind in words (`kind_label/1`), how many items the source
+  listed, what was done with them (`result_summary/1`) and why the skipped ones were skipped
+  (`reason_label/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default: the
   site's address and user (`connection`), the secret, and for a master the site the content moves
@@ -367,47 +368,14 @@ defmodule MishkaCmsMigration.MigrationRun do
 
         column :result do
           static true
-          requires [:report]
+          requires [:status, :source, :report, :progress]
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
             width "minmax(130px,1.6fr)"
           end
 
-          render fn record ->
-            assigns = %{
-              summary: MishkaCmsMigration.MigrationRun.result_summary(record.report),
-              outcomes: MishkaCmsMigration.MigrationRun.result_outcomes(record.report),
-              reported?: is_map(record.report)
-            }
-
-            ~H"""
-            <div
-              data-role="run-result"
-              title={@reported? && @summary}
-              class="flex flex-wrap items-center gap-[4px]"
-            >
-              <span
-                :for={{outcome, count} <- @outcomes}
-                data-role="run-outcome"
-                data-outcome={outcome}
-                data-count={count}
-                class={[
-                  "inline-flex w-fit items-center rounded-[20px] px-[9px] py-[3px] text-[10px] font-bold whitespace-nowrap",
-                  MishkaCmsMigration.MigrationRun.outcome_class(outcome)
-                ]}
-              >
-                {MishkaCmsMigration.MigrationRun.outcome_count(outcome, count)}
-              </span>
-              <span
-                :if={@outcomes == []}
-                class="text-[12.5px] font-medium text-[#a8a5a0]"
-              >
-                {if @reported?, do: dgettext("mishka_gervaz", "Nothing to move"), else: @summary}
-              </span>
-            </div>
-            """
-          end
+          render fn record -> MishkaCmsMigration.MigrationRun.result_cell(record) end
         end
 
         column :site_info do
@@ -752,6 +720,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:pending, :dry_run]}
 
       change set_attribute(:status, :dry_running)
+      change set_attribute(:progress, nil)
       change {EnqueueJob, trigger: :run_dry_run}
 
       description "Queues a dry run: what an import would create, update and skip, writing nothing"
@@ -764,6 +733,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:dry_run]}
 
       change set_attribute(:status, :importing)
+      change set_attribute(:progress, nil)
       change {EnqueueJob, trigger: :run_import}
 
       description "Queues the import of a run whose dry run has reported"
@@ -1148,7 +1118,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   """
   @spec result_outcomes(map() | nil) :: [{atom(), pos_integer()}]
   def result_outcomes(%{counts: counts}) do
-    for outcome <- MishkaCmsMigration.Report.outcomes(),
+    for outcome <- @outcomes,
         count = Map.get(counts, outcome, 0),
         count > 0,
         do: {outcome, count}
@@ -1156,7 +1126,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   def result_outcomes(_no_report), do: []
 
-  @doc "One outcome's count in words, as its pill in the Result column reads: `\"3 created\"`."
+  @doc "One outcome's count in words, as a Result pill's tooltip begins: `\"3 created\"`."
   @spec outcome_count(atom(), non_neg_integer()) :: String.t()
   def outcome_count(outcome, count),
     do: "#{MishkaCmsCore.Localized.number(count)} #{outcome_label(outcome)}"
@@ -1168,10 +1138,274 @@ defmodule MishkaCmsMigration.MigrationRun do
   def outcome_class(:skipped), do: "bg-[#f2f1ec] text-[#8a877f]"
   def outcome_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
 
+  @doc """
+  The heroicon that stands for the items of `kind` in the admin's lists, such as
+  `"hero-document-text"` for `"post"`; a kind this extension does not name is a cube.
+  """
+  @spec kind_icon(String.t()) :: String.t()
+  def kind_icon("user"), do: "hero-user"
+  def kind_icon("category"), do: "hero-folder"
+  def kind_icon("tag"), do: "hero-tag"
+  def kind_icon("page"), do: "hero-document"
+  def kind_icon("post"), do: "hero-document-text"
+  def kind_icon(_other), do: "hero-cube"
+
+  @doc """
+  The Runs table's Result cell for `run`, drawn in the width its column gives it: its pills and
+  chips wrap onto more lines rather than widen the column.
+
+    * While the run is dry running or importing, how far its job is (`progress`): the kind it
+      walks, with its icon, the items met so far, of how many the run's last report
+      counted when it has one, and a thin bar of that share. Without a report the bar fills by the
+      kinds of the source walked so far. Before the job's first page it reads Starting.
+    * Otherwise, what its last report counted: a pill for each outcome counted more than none of,
+      in `MishkaCmsMigration.Report.outcomes/0` order (green created, blue updated, grey skipped,
+      red failed), each an icon and its count, its tooltip the count in words and, for skipped or
+      failed items, the reason most of them share (`reason_label/1`). Under them a grey chip for
+      each kind it met, the kind's icon (`kind_icon/1`) and how many the source listed, its
+      tooltip the kind in words (`kind_label/1`). "Nothing to move" when it counted nothing, and "—" before the first
+      dry run.
+
+  The data the page's tests read: `data-role="run-result"` on the cell, `"run-progress"` (with
+  `data-kind`, `data-done` and `data-total`), `"run-outcome"` (`data-outcome`, `data-count` and
+  `data-reason`, the shared reason as the report keeps it) and `"run-kind"` (`data-kind`,
+  `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
+  needs no `style` attribute.
+  """
+  @spec result_cell(map()) :: Phoenix.LiveView.Rendered.t()
+  def result_cell(run) do
+    assigns = result(run)
+
+    ~H"""
+    <div data-role="run-result" class="grid min-w-0 gap-[5px]">
+      <div
+        :if={@progress}
+        data-role="run-progress"
+        data-kind={@progress.kind}
+        data-done={@progress.done}
+        data-total={@progress.total}
+        title={@progress.title}
+        class="min-w-0"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-x-[6px] gap-y-px">
+          <span class="flex min-w-0 items-center gap-[4px] text-[10.5px] font-semibold text-[#4f4bcc]">
+            <MishkaCmsCore.CoreComponents.icon
+              :if={@progress.icon}
+              name={@progress.icon}
+              class="size-[11px] flex-none"
+            />
+            <span class="truncate">{@progress.label}</span>
+          </span>
+          <span class="font-['Space_Grotesk'] text-[10.5px] font-semibold text-[#8a877f]">
+            {@progress.count}
+          </span>
+        </div>
+        <div class="mt-[5px] h-[3px] overflow-hidden rounded-full bg-[#e9e8f7]">
+          <div class={[
+            "h-full rounded-full bg-[#5b57d6] motion-safe:transition-[width] motion-safe:duration-500",
+            @progress.width
+          ]}>
+          </div>
+        </div>
+      </div>
+      <div :if={@outcomes != []} class="flex flex-wrap gap-[4px]">
+        <span
+          :for={outcome <- @outcomes}
+          data-role="run-outcome"
+          data-outcome={outcome.outcome}
+          data-count={outcome.count}
+          data-reason={outcome.reason}
+          title={outcome.title}
+          class={[
+            "inline-flex items-center gap-[3px] rounded-[20px] px-[6px] py-[2px] text-[10px] font-bold whitespace-nowrap",
+            outcome.class
+          ]}
+        >
+          <MishkaCmsCore.CoreComponents.icon name={outcome.icon} class="size-[10px] flex-none" />
+          {outcome.number}<span class="sr-only">{"\u00a0" <> outcome.label}</span>
+        </span>
+      </div>
+      <div :if={@kinds != []} class="flex flex-wrap gap-[3px]">
+        <span
+          :for={kind <- @kinds}
+          data-role="run-kind"
+          data-kind={kind.kind}
+          data-count={kind.count}
+          title={kind.title}
+          class="inline-flex items-center gap-[2px] rounded-[6px] border border-[#ecebe6] px-[4px] py-px text-[10px] font-semibold whitespace-nowrap text-[#8a877f]"
+        >
+          <MishkaCmsCore.CoreComponents.icon name={kind.icon} class="size-[10px] flex-none" />
+          {kind.number}<span class="sr-only">{"\u00a0" <> kind.label}</span>
+        </span>
+      </div>
+      <span :if={@note} class="text-[12.5px] font-medium text-[#a8a5a0]">{@note}</span>
+    </div>
+    """
+  end
+
+  defp result(%{status: status} = run) when status in [:dry_running, :importing],
+    do: %{progress: progress(run), outcomes: [], kinds: [], note: nil}
+
+  defp result(%{report: %{kinds: kinds} = report}) do
+    outcomes =
+      for {outcome, count} <- result_outcomes(report),
+          do: outcome_pill(outcome, count, shared_reason(report, outcome))
+
+    chips =
+      for %{kind: kind} = kind_counts <- kinds,
+          count = items(kind_counts),
+          count > 0,
+          do: kind_chip(kind, count)
+
+    %{progress: nil, outcomes: outcomes, kinds: chips, note: nothing_to_move(outcomes)}
+  end
+
+  defp result(_no_report), do: %{progress: nil, outcomes: [], kinds: [], note: "—"}
+
+  defp outcome_pill(outcome, count, reason) do
+    %{
+      outcome: outcome,
+      count: count,
+      number: MishkaCmsCore.Localized.number(count),
+      label: outcome_label(outcome),
+      icon: outcome_icon(outcome),
+      class: outcome_class(outcome),
+      reason: reason,
+      title: outcome_title(outcome_count(outcome, count), reason)
+    }
+  end
+
+  defp kind_chip(kind, count) do
+    number = MishkaCmsCore.Localized.number(count)
+
+    %{
+      kind: kind,
+      count: count,
+      number: number,
+      label: kind_label(kind),
+      icon: kind_icon(kind),
+      title:
+        dgettext("mishka_gervaz", "%{kind}: %{count} found",
+          kind: kind_label(kind),
+          count: number
+        )
+    }
+  end
+
+  defp nothing_to_move([]), do: dgettext("mishka_gervaz", "Nothing to move")
+  defp nothing_to_move(_outcomes), do: nil
+
+  defp outcome_title(count, nil), do: count
+
+  defp outcome_title(count, reason),
+    do:
+      dgettext("mishka_gervaz", "%{count}: %{reason}",
+        count: count,
+        reason: reason |> reason_label() |> String.split_at(120) |> shortened()
+      )
+
+  defp shortened({text, ""}), do: text
+  defp shortened({text, _rest}), do: text <> "…"
+
+  defp shared_reason(%{entries: entries}, outcome) when outcome in [:skipped, :failed] do
+    entries
+    |> Enum.filter(&(&1.outcome == outcome and is_binary(&1.reason)))
+    |> Enum.frequencies_by(& &1.reason)
+    |> Enum.max_by(&elem(&1, 1), fn -> {nil, 0} end)
+    |> elem(0)
+  end
+
+  defp shared_reason(_report, _outcome), do: nil
+
+  defp progress(%{progress: %{kind: kind, counts: counts}} = run) do
+    done = items(counts)
+    total = run.report |> reported_items() |> at_least(done)
+
+    %{
+      kind: kind,
+      icon: kind_icon(kind),
+      label: walking(run.status, kind),
+      done: done,
+      total: total,
+      count: progress_count(done, total),
+      title: progress_title(done, total),
+      width: "w-[#{share(done, total, kind, run.source)}%]"
+    }
+  end
+
+  defp progress(_run_before_its_first_page) do
+    %{
+      kind: nil,
+      icon: nil,
+      label: dgettext("mishka_gervaz", "Starting"),
+      done: 0,
+      total: nil,
+      count: nil,
+      title: nil,
+      width: "w-[0%]"
+    }
+  end
+
+  defp walking(:dry_running, kind),
+    do: dgettext("mishka_gervaz", "Reading %{kind}", kind: kind_noun(kind))
+
+  defp walking(:importing, kind),
+    do: dgettext("mishka_gervaz", "Importing %{kind}", kind: kind_noun(kind))
+
+  defp progress_count(done, nil), do: MishkaCmsCore.Localized.number(done)
+
+  defp progress_count(done, total),
+    do: "#{MishkaCmsCore.Localized.number(done)}/#{MishkaCmsCore.Localized.number(total)}"
+
+  defp progress_title(done, nil),
+    do:
+      dgettext("mishka_gervaz", "%{done} items so far",
+        done: MishkaCmsCore.Localized.number(done)
+      )
+
+  defp progress_title(done, total),
+    do:
+      dgettext("mishka_gervaz", "%{done} of %{total} items",
+        done: MishkaCmsCore.Localized.number(done),
+        total: MishkaCmsCore.Localized.number(total)
+      )
+
+  defp share(done, total, _kind, _source) when is_integer(total), do: div(done * 100, total)
+
+  defp share(_done, nil, kind, source) do
+    with {:ok, module} <- MishkaCmsMigration.Source.fetch(source),
+         kinds = module.kinds(),
+         index when is_integer(index) <- Enum.find_index(kinds, &(&1 == kind)) do
+      div(index * 100, length(kinds))
+    else
+      _unknown -> 0
+    end
+  end
+
+  defp reported_items(%{counts: counts}), do: items(counts)
+  defp reported_items(_no_report), do: 0
+
+  defp at_least(0, _done), do: nil
+  defp at_least(total, done), do: max(total, done)
+
+  defp items(counts), do: counts |> Map.take(@outcomes) |> Map.values() |> Enum.sum()
+
+  defp outcome_icon(:created), do: "hero-plus"
+  defp outcome_icon(:updated), do: "hero-arrow-path"
+  defp outcome_icon(:skipped), do: "hero-minus"
+  defp outcome_icon(:failed), do: "hero-exclamation-triangle"
+
   defp outcome_label(:created), do: dgettext("mishka_gervaz", "created")
   defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
   defp outcome_label(:skipped), do: dgettext("mishka_gervaz", "skipped")
   defp outcome_label(:failed), do: dgettext("mishka_gervaz", "failed")
+
+  defp kind_noun("user"), do: dgettext("mishka_gervaz", "users")
+  defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
+  defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
+  defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
+  defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
+  defp kind_noun(kind), do: kind
 
   @doc """
   The items of `kind` as the admin reads them, such as `"Posts"` for `"post"`. A kind this
