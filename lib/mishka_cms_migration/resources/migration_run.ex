@@ -51,7 +51,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   that was already past that point finds the run no longer waiting for it and stops; the job's
   write and the record of each item share one transaction, so a job stopped there leaves either
   both or neither. A job Oban stops on its last attempt, at its timeout, fails its run on its own
-  (`MishkaCmsMigration.Workers.Helpers.Pipeline.attach/0`); `:cancel` is how an admin ends a run
+  (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run
   whose job was lost with its node.
 
   Running again means a new run; the items earlier runs wrote

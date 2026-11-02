@@ -430,6 +430,23 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert run.error =~ "timed out"
     end
 
+    @tag capture_log: true
+    test "a discarded job the handler cannot read leaves the handler attached", %{} do
+      job = %Oban.Job{worker: "MishkaCmsMigration.Workers.DryRunWorker", args: %{"run_id" => 1}}
+
+      :telemetry.execute([:oban, :job, :exception], %{duration: 0}, %{
+        job: job,
+        state: :discard,
+        kind: :error,
+        reason: :crashed
+      })
+
+      assert Enum.any?(
+               :telemetry.list_handlers([:oban, :job, :exception]),
+               &(&1.id == "mishka-cms-migration-discarded-jobs")
+             )
+    end
+
     test "fails the run when listing breaks, and nothing is written", %{site: site, admin: admin} do
       run =
         site
