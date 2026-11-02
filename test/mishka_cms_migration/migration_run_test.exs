@@ -30,7 +30,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert {run.status, run.site_id, run.user_id} == {:pending, site.id, admin.id}
       refute run.connection_secret == "app password"
       refute inspect(run) =~ "app password"
-      assert Secret.open(run.connection_secret) == "app password"
+      assert Secret.open(run.connection_secret) == {:ok, "app password"}
     end
 
     test "fills the admin's choices it was not given and refuses one it does not know", %{

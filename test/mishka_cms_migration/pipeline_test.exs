@@ -280,6 +280,41 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
   end
 
+  describe "the source's secret" do
+    test "none is handed to the source as none", %{site: site, admin: admin} do
+      connection = %{"public" => true, "items" => %{"redirect" => @rows}}
+      run = create_run!(site, admin, %{}, %{secret: nil, connection: connection})
+
+      assert is_nil(run.connection_secret)
+
+      assert %{status: :done, report: %{counts: %{create: 3}}} =
+               run |> dry_run!(admin) |> import!(admin)
+    end
+
+    test "one sealed under another key fails the run instead of connecting without it", %{
+      site: site,
+      admin: admin
+    } do
+      run = create_run!(site, admin, %{"redirect" => @rows})
+
+      rotated =
+        Phoenix.Token.encrypt(String.duplicate("a rotated key base ", 4), "salt", "letmein")
+
+      Repo.query!("UPDATE mishka_cms_migration_runs SET connection_secret = $1 WHERE id = $2", [
+        rotated,
+        Ecto.UUID.dump!(run.id)
+      ])
+
+      run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
+      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+
+      assert {:cancel, :unreadable_secret} = perform_job(DryRunWorker, args, attempt: 3)
+
+      run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      assert {run.status, run.error, run.connection_secret} == {:failed, "unreadable_secret", nil}
+    end
+  end
+
   describe "a source or a target that raises" do
     test "costs only the row a source cannot normalize", %{site: site, admin: admin} do
       run = migrate!(site, admin, %{"redirect" => ["not a row" | @rows]})

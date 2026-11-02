@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
 
       %{"items" => %{"redirect" => [%{"id" => 1, "from" => "/old", "to" => "/new"}], "note" => [...]}}
 
-  It signs in only with the secret `"letmein"`, lists two rows a page, and lists `"redirect"` and
+  It signs in only with the secret `"letmein"`, or with none when the connection says
+  `"public" => true`, lists two rows a page, and lists `"redirect"` and
   `"note"`, in that order. A row is normalized as:
 
     * `"id"` — the source id; `"title"`, `"modified"` — the item's title and modified time;
@@ -30,6 +31,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   def kinds, do: ["redirect", "note"]
 
   @impl MishkaCmsMigration.Source
+  def connect(%{"public" => true} = connection, nil), do: {:ok, connection}
   def connect(connection, "letmein"), do: {:ok, connection}
   def connect(_connection, _secret), do: {:error, :unauthorized}
 

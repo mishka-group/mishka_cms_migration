@@ -28,7 +28,8 @@ defmodule MishkaCmsMigration.Walker do
   def walk(run, mode, actor) do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
-         {:ok, conn} <- source.connect(run.connection, Secret.open(run.connection_secret)) do
+         {:ok, secret} <- Secret.open(run.connection_secret),
+         {:ok, conn} <- source.connect(run.connection, secret) do
       walk_kinds(%{
         run: run,
         mode: mode,
