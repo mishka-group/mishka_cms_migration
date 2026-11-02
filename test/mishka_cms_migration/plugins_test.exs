@@ -28,6 +28,36 @@ defmodule MishkaCmsMigration.PluginsTest do
     assert {:error, _unknown} = Source.fetch("fake")
   end
 
+  test "a stopped source is no longer installed, and a run of it is refused" do
+    register_plugin!(FakeSource, Source.event())
+    site = create_site!()
+    admin = migration_admin!(site)
+    assert FakeSource in Source.all()
+
+    {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, FakeSource, false)
+
+    refute FakeSource in Source.all()
+    assert {:error, :not_installed} = Source.fetch("fake")
+
+    assert {:error, %Ash.Error.Invalid{errors: [%{field: :source}]}} =
+             MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
+               actor: admin,
+               tenant: site.id
+             )
+  end
+
+  test "a stopped target writes nothing, and its kind is skipped as having no target" do
+    for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+    site = create_site!()
+    admin = migration_admin!(site)
+
+    {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, RedirectTarget, false)
+
+    assert {:error, :not_installed} = Target.fetch("redirect")
+    run = migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
+    assert [%{outcome: :skip, reason: "no_target"}] = run.report.entries
+  end
+
   test "a run whose source plugin is gone when its job runs fails with the reason" do
     site = create_site!()
     admin = migration_admin!(site)
@@ -41,10 +71,10 @@ defmodule MishkaCmsMigration.PluginsTest do
 
     args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
 
-    assert {:cancel, :unknown_provider} =
+    assert {:cancel, :not_installed} =
              perform_job(MishkaCmsMigration.Workers.DryRunWorker, args, attempt: 3)
 
-    assert %{status: :failed, error: "unknown_provider"} =
+    assert %{status: :failed, error: "not_installed"} =
              MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
   end
 end

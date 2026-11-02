@@ -29,10 +29,13 @@ defmodule MishkaCmsMigration.Source do
           do: {:ok, %{source_id: row["id"], title: row["title"], content: [%{html: row["html"]}]}}
       end
 
-  `use` adds the plugin half — the `"migration:sources"` registration, see
-  `MishkaCmsCore.ProviderRegistry` — and `id/0` and `label/0`. A source registers once it is
-  supervised: an extension that ships one lists the module among the children of its own
-  application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this extension's.
+  `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
+  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0` and
+  `label/0`. A source registers once it is supervised: an extension that ships one lists the module
+  among the children of its own application's supervisor, as
+  `MishkaCmsMigration.Application.plugins/0` lists this extension's. Which sources are installed is
+  read from mishka_installer's registry (`MishkaCmsMigration.Registry`), so a source an operator
+  stops in the installer is no longer offered and a run of it is refused.
 
   ## A run
 
@@ -47,7 +50,7 @@ defmodule MishkaCmsMigration.Source do
   the run; an error from `normalize/3` fails only that row, and the report says why.
   """
 
-  alias MishkaCmsCore.ProviderRegistry
+  alias MishkaCmsMigration.Registry
 
   @event "migration:sources"
 
@@ -92,11 +95,6 @@ defmodule MishkaCmsMigration.Source do
   @callback normalize(row :: term(), kind :: String.t(), context()) ::
               {:ok, map()} | {:error, term()}
 
-  @doc "Whether the source is offered on this installation. Every source is, unless it says not."
-  @callback offered?() :: boolean()
-
-  @optional_callbacks offered?: 0
-
   @doc false
   defmacro __using__(opts) do
     id = Keyword.fetch!(opts, :id)
@@ -104,11 +102,14 @@ defmodule MishkaCmsMigration.Source do
     priority = Keyword.get(opts, :priority, 50)
 
     quote do
-      use MishkaCmsCore.ProviderRegistry,
+      use MishkaInstaller.Event.Hook,
         event: "migration:sources",
-        priority: unquote(priority)
+        initial: %{priority: unquote(priority)}
 
       @behaviour MishkaCmsMigration.Source
+
+      @impl true
+      def call(state), do: {:reply, state}
 
       @impl MishkaCmsMigration.Source
       def id, do: unquote(id)
@@ -118,15 +119,18 @@ defmodule MishkaCmsMigration.Source do
     end
   end
 
-  @doc "The event a source plugin listens on."
+  @doc "The event a source plugin registers on."
   @spec event() :: String.t()
   def event, do: @event
 
-  @doc "Every registered source, the first of each id."
+  @doc """
+  Every installed source (`MishkaCmsMigration.Registry`), by priority, the first of each id: what a
+  screen offers to migrate from. The suite reads it, and the Import tab (issue #3) will.
+  """
   @spec all() :: [module()]
-  def all, do: ProviderRegistry.all(@event, __MODULE__)
+  def all, do: Registry.plugins(@event, __MODULE__)
 
-  @doc "The offered source registered under `id`."
-  @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :unknown_provider | :cannot_run}
-  def fetch(id), do: ProviderRegistry.fetch(@event, __MODULE__, id)
+  @doc "The installed source whose id is `id`."
+  @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
+  def fetch(id), do: Registry.fetch(@event, __MODULE__, id)
 end

@@ -21,7 +21,7 @@ defmodule MishkaCmsMigration.Progress do
   @spec topic(String.t()) :: String.t()
   def topic(run_id), do: "migration:run:#{run_id}"
 
-  @doc "Subscribes the caller to a run's progress."
+  @doc "Subscribes the caller to a run's progress. The suite does, and the Import tab (issue #3) will."
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(run_id), do: Phoenix.PubSub.subscribe(@pubsub, topic(run_id))
 

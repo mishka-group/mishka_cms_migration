@@ -27,13 +27,16 @@ defmodule MishkaCmsMigration.Target do
         end
       end
 
-  `:create` and `:update` default to the resource's `:create` and `:update`. `use` adds the plugin
-  half — the `"migration:targets"` registration, see `MishkaCmsCore.ProviderRegistry` — with `id/0`
-  (the kind), `resource/0` and `actions/0`; a target writes only `attrs/2`.
+  `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
+  a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
+  the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0` and
+  `actions/0`; a target writes only `attrs/2`.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
-  this extension's; no list here names it.
+  this extension's; no list here names it. Which target writes a kind is read from mishka_installer's
+  registry (`MishkaCmsMigration.Registry`): a target an operator stops in the installer writes
+  nothing, and its kind is skipped as `"no_target"`.
 
   ## What the resource needs
 
@@ -55,8 +58,7 @@ defmodule MishkaCmsMigration.Target do
   require Ash.Query
 
   alias Ash.Resource.Info
-  alias MishkaCmsCore.ProviderRegistry
-  alias MishkaCmsMigration.Item
+  alias MishkaCmsMigration.{Item, Registry}
 
   @event "migration:targets"
 
@@ -90,14 +92,17 @@ defmodule MishkaCmsMigration.Target do
     priority = Keyword.get(opts, :priority, 50)
 
     quote do
-      use MishkaCmsCore.ProviderRegistry,
+      use MishkaInstaller.Event.Hook,
         event: "migration:targets",
-        priority: unquote(priority)
+        initial: %{priority: unquote(priority)}
 
       @behaviour MishkaCmsMigration.Target
       @after_compile MishkaCmsMigration.Target
 
       require unquote(resource)
+
+      @impl true
+      def call(state), do: {:reply, state}
 
       @impl MishkaCmsMigration.Target
       def id, do: unquote(kind)
@@ -122,17 +127,13 @@ defmodule MishkaCmsMigration.Target do
     end
   end
 
-  @doc "The event a target plugin listens on."
+  @doc "The event a target plugin registers on."
   @spec event() :: String.t()
   def event, do: @event
 
-  @doc "Every registered target, the first of each kind."
-  @spec all() :: [module()]
-  def all, do: ProviderRegistry.all(@event, __MODULE__)
-
-  @doc "The target registered for `kind`."
-  @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :unknown_provider | :cannot_run}
-  def fetch(kind), do: ProviderRegistry.fetch(@event, __MODULE__, kind)
+  @doc "The installed target that writes `kind`."
+  @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
+  def fetch(kind), do: Registry.fetch(@event, __MODULE__, kind)
 
   @doc """
   The rows of `ids` the target's resource still holds on `site_id`, by id. Read through the
