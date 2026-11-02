@@ -105,6 +105,14 @@ defmodule MishkaCmsMigration.MigrationRun do
   started in, and keeps them in the address. The table follows the run's PubSub notifications, so a
   run moving on shows without a reload.
 
+  A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
+  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
+  admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
+  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`). A row expands
+  to what its last dry run or import found, kind by kind: the kind in words (`kind_label/1`), how
+  many items the source listed, what was done with them (`result_summary/1`) and why the skipped
+  ones were skipped (`reason_label/1`).
+
   A source's card opens the run's Gervaz form with the card's source as the form's default: the
   site's address and user (`connection`), the secret, and for a master the site the content moves
   to (`:master_create`). Its button, Check
@@ -456,6 +464,50 @@ defmodule MishkaCmsMigration.MigrationRun do
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Started") end
+          end
+        end
+      end
+
+      row_actions do
+        action :expand, type: :accordion
+
+        action :dry_run do
+          type :event
+          event "dry_run"
+          visible fn record, _state -> record.status == :pending end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Dry run") end
+            icon "hero-play"
+          end
+        end
+
+        action :dry_run_again do
+          type :event
+          event "dry_run"
+          visible fn record, _state -> record.status == :dry_run end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Run again") end
+            icon "hero-play"
+          end
+        end
+
+        action :cancel do
+          type :event
+          event "cancel"
+
+          confirm fn _record ->
+            dgettext("mishka_gervaz", "Cancel this run? It cannot be started again.")
+          end
+
+          visible fn record, _state ->
+            record.status in [:pending, :dry_running, :dry_run, :importing]
+          end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Cancel") end
+            icon "hero-x-mark"
           end
         end
       end
@@ -1063,6 +1115,39 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
   defp outcome_label(:skipped), do: dgettext("mishka_gervaz", "skipped")
   defp outcome_label(:failed), do: dgettext("mishka_gervaz", "failed")
+
+  @doc """
+  The items of `kind` as the admin reads them, such as `"Posts"` for `"post"`. A kind this
+  extension does not name, one a source plugin of its own lists, reads as itself, capitalized.
+  """
+  @spec kind_label(String.t()) :: String.t()
+  def kind_label("user"), do: dgettext("mishka_gervaz", "Users")
+  def kind_label("category"), do: dgettext("mishka_gervaz", "Categories")
+  def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
+  def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
+  def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
+  def kind_label(kind), do: String.capitalize(kind)
+
+  @doc """
+  Why an item was skipped or failed (a `MishkaCmsMigration.Report` entry's `reason`), as the admin
+  reads it. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  """
+  @spec reason_label(String.t()) :: String.t()
+  def reason_label("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
+  def reason_label("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
+  def reason_label("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+
+  def reason_label("target_missing"),
+    do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+
+  def reason_label("duplicate_in_source"),
+    do: dgettext("mishka_gervaz", "Listed twice by the source")
+
+  def reason_label("plugins_cannot_run"),
+    do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
+
+  def reason_label("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
+  def reason_label(reason), do: reason
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

@@ -5,10 +5,11 @@
 defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   @moduledoc """
   The migration's admin page and its sidebar entry: who may open the page, where the entry lands,
-  the card of each installed source, and the runs table, which shows a site's own runs and follows
-  them as they move on.
+  the card of each installed source, and the runs table, which shows a site's own runs, follows
+  them as they move on, offers the steps each status allows and, expanded, what a dry run found.
   """
   use MishkaCmsMigration.ConnCase, async: false
+  use AshOban.Test, repo: MishkaCmsMigration.Repo
 
   import Phoenix.LiveViewTest
   import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
@@ -83,6 +84,32 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     _state = :sys.get_state(view.pid)
     render(view)
   end
+
+  defp action(event, run), do: ~s|[phx-value-event="#{event}"][phx-value-values*="#{run.id}"]|
+
+  defp row_action!(view, event, run) do
+    view |> element("#migration-runs-table #{action(event, run)}") |> render_click()
+    settled(view)
+  end
+
+  defp crafted!(view, event, id) do
+    view
+    |> with_target("#migration-runs-table")
+    |> render_click("custom_event", %{"event" => event, "values" => Jason.encode!(%{"id" => id})})
+
+    settled(view)
+  end
+
+  defp expand!(view, run) do
+    view
+    |> element(~s|#migration-runs-table [phx-click="expand_row"][phx-value-id="#{run.id}"]|)
+    |> render_click()
+
+    settled(view)
+  end
+
+  defp status(run),
+    do: MishkaCmsMigration.get_run!(run.id, tenant: run.site_id, authorize?: false).status
 
   describe "the source cards" do
     test "show each installed source", %{conn: conn, site: site} do
@@ -331,6 +358,167 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(build_conn() |> on_host("localhost"), migration_admin!(site))
       refute has_element?(view, "#migration-runs-table-filter-site_id")
       refute has_element?(view, ~s|#migration-runs-table [phx-value-column="site_info"]|)
+    end
+  end
+
+  describe "a WordPress run's Dry run" do
+    setup do
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      :ok
+    end
+
+    test "queues the job, and once it is done shows what it found, kind by kind, without a reload",
+         %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+
+      run =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password"
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin)
+      expand!(view, run)
+      assert has_element?(view, ~s|[data-role="run-report-note"]|, "No dry run yet.")
+
+      assert row_action!(view, "dry_run", run) =~ "Dry run started."
+      assert [_job] = assert_triggered(run, :run_dry_run)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_running"]|)
+      refute has_element?(view, "#migration-runs-table #{action("dry_run", run)}")
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-status"][data-status="dry_run"]|,
+               "Dry run ready"
+             )
+
+      assert has_element?(view, ~s|[data-role="run-result"]|, "57 skipped")
+      assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
+
+      for {kind, label, found} <- [
+            {"user", "Users", 5},
+            {"category", "Categories", 9},
+            {"tag", "Tags", 11},
+            {"page", "Pages", 11},
+            {"post", "Posts", 21}
+          ] do
+        row = ~s|[data-role="run-report-kind"][data-kind="#{kind}"]|
+
+        assert has_element?(view, row, label)
+        assert has_element?(view, ~s|#{row} [data-role="run-report-found"]|, "#{found} found")
+
+        assert has_element?(
+                 view,
+                 ~s|#{row} [data-role="run-report-outcomes"]|,
+                 "#{found} skipped"
+               )
+
+        assert has_element?(
+                 view,
+                 ~s|#{row} [data-role="run-report-reason"]|,
+                 "Nothing imports these yet"
+               )
+      end
+
+      refute has_element?(view, ~s|[data-role="run-report-note"]|)
+    end
+  end
+
+  describe "a run's row actions" do
+    setup %{site: site} do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      {:ok, admin: migration_admin!(site)}
+    end
+
+    test "offer only the steps the run's status allows, and ask before a Cancel", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      pending = create_run!(site, admin, %{})
+      ready = site |> create_run!(admin, %{}) |> dry_run!(admin)
+      done = migrate!(site, admin, %{})
+
+      cancelled =
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.cancel_run!(actor: admin, tenant: site.id)
+
+      running =
+        site
+        |> create_run!(admin, %{})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      view = open!(conn, admin)
+
+      assert has_element?(view, action("dry_run", pending), "Dry run")
+      assert has_element?(view, action("dry_run", ready), "Run again")
+
+      for run <- [running, done, cancelled],
+          do: refute(has_element?(view, action("dry_run", run)))
+
+      for run <- [pending, ready, running],
+          do: assert(has_element?(view, "#{action("cancel", run)}[data-confirm]"))
+
+      for run <- [done, cancelled], do: refute(has_element?(view, action("cancel", run)))
+    end
+
+    test "a second dry run while one of the site's runs is running is refused in words, and Cancel frees the site",
+         %{conn: conn, site: site, admin: admin} do
+      first =
+        site
+        |> create_run!(admin, %{}, %{source_host: "first.example.com"})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      second = create_run!(site, admin, %{}, %{source_host: "second.example.com"})
+      view = open!(conn, admin)
+
+      assert row_action!(view, "dry_run", second) =~
+               "Another migration of this site is still waiting or running."
+
+      assert status(second) == :pending
+
+      assert row_action!(view, "cancel", first) =~ "Run cancelled."
+      assert status(first) == :cancelled
+      refute has_element?(view, action("cancel", first))
+
+      assert row_action!(view, "dry_run", second) =~ "Dry run started."
+      assert status(second) == :dry_running
+    end
+
+    test "a master starts and cancels a run of any site", %{conn: conn} do
+      other = create_site!()
+      run = create_run!(other, migration_admin!(other), %{})
+      view = open!(conn, create_user_with_permissions!(["admin:dashboard:migration"]))
+
+      assert row_action!(view, "dry_run", run) =~ "Dry run started."
+      assert status(run) == :dry_running
+
+      assert row_action!(view, "cancel", run) =~ "Run cancelled."
+      assert status(run) == :cancelled
+    end
+
+    test "a site admin cannot start or cancel another site's run by a crafted event", %{
+      conn: conn,
+      admin: admin
+    } do
+      other = create_site!()
+      theirs = create_run!(other, migration_admin!(other), %{})
+      view = open!(conn, admin)
+
+      assert crafted!(view, "dry_run", theirs.id) =~ "This record is no longer here."
+      assert crafted!(view, "cancel", theirs.id) =~ "This record is no longer here."
+      assert status(theirs) == :pending
     end
   end
 
