@@ -191,31 +191,31 @@ defmodule MishkaCmsMigration.MigrationRun do
       trigger :run_dry_run do
         action :run_dry_run
         where expr(status == :dry_running)
-        queue(:migration)
-        scheduler_cron(false)
-        lock_for_update?(false)
-        max_attempts(3)
+        queue :migration
+        scheduler_cron false
+        lock_for_update? false
+        max_attempts 3
         backoff :exponential
         timeout :timer.hours(1)
         on_error :fail
-        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
-        shared_context([:ash_oban?])
-        worker_module_name(MishkaCmsMigration.Workers.DryRunWorker)
+        actor_persister MishkaCmsMigration.Workers.Helpers.Actor
+        shared_context [:ash_oban?]
+        worker_module_name MishkaCmsMigration.Workers.DryRunWorker
       end
 
       trigger :run_import do
         action :run_import
         where expr(status == :importing)
-        queue(:migration)
-        scheduler_cron(false)
-        lock_for_update?(false)
-        max_attempts(3)
+        queue :migration
+        scheduler_cron false
+        lock_for_update? false
+        max_attempts 3
         backoff :exponential
         timeout :timer.hours(1)
         on_error :fail
-        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
-        shared_context([:ash_oban?])
-        worker_module_name(MishkaCmsMigration.Workers.ImportWorker)
+        actor_persister MishkaCmsMigration.Workers.Helpers.Actor
+        shared_context [:ash_oban?]
+        worker_module_name MishkaCmsMigration.Workers.ImportWorker
       end
     end
   end
