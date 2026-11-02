@@ -113,6 +113,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       new_import!(view)
       refute has_element?(view, ~s|#migration-run-form-modal [name="form[source]"]|)
+      refute has_element?(view, ~s|#migration-run-form-modal [name*="site_id"]|)
       submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "app password")
 
       assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
@@ -143,6 +144,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   end
 
   describe "the New import form" do
+    test "asks a master for the site, and a site admin never", %{conn: conn, site: site} do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      view = open!(conn, master)
+      new_import!(view)
+      assert has_element?(view, ~s|#migration-run-form-modal [name*="site_id"]|)
+
+      view = open!(build_conn() |> on_host("localhost"), migration_admin!(site))
+      new_import!(view)
+      refute has_element?(view, ~s|#migration-run-form-modal [name*="site_id"]|)
+    end
+
     test "sent empty, says in words what the address needs and saves nothing", %{
       conn: conn,
       site: site
