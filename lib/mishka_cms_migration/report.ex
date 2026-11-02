@@ -29,10 +29,15 @@ defmodule MishkaCmsMigration.Report do
       to convert, is not loaded.
     * for a failure, what the source or the CMS action answered.
 
-  `kinds` lists each kind in the order it was walked. `entries` are in the order the items were met.
+  `counts` and `kinds` count every item. `kinds` has a line for each kind that had at least one
+  item, in the order the kinds were walked; a kind the source listed nothing of has none.
+  `entries` are the last 1,000 items met (`max_entries/0`), in the order they were met, so a report
+  stays small however large the site: the items left out number the sum of `counts` less the
+  length of `entries`, and every item is still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
   @outcomes [:create, :update, :skip, :fail]
+  @max_entries 1_000
 
   @typedoc "What happened, or would happen, to an item."
   @type outcome :: :create | :update | :skip | :fail
@@ -47,32 +52,46 @@ defmodule MishkaCmsMigration.Report do
         }
 
   @type t :: %{
-          counts: %{outcome() => non_neg_integer()},
-          kinds: [map()],
-          entries: [entry()]
+          required(:counts) => %{outcome() => non_neg_integer()},
+          required(:kinds) => [map()],
+          required(:entries) => [entry()],
+          optional(:kept) => non_neg_integer()
         }
 
   @doc "The outcomes an entry may have."
   @spec outcomes() :: [outcome()]
   def outcomes, do: @outcomes
 
+  @doc "How many entries a report keeps: the last ones added."
+  @spec max_entries() :: pos_integer()
+  def max_entries, do: @max_entries
+
   @doc "A report with nothing in it."
   @spec new() :: t()
-  def new, do: %{counts: zero(), kinds: [], entries: []}
+  def new, do: %{counts: zero(), kinds: [], entries: [], kept: 0}
 
   @doc "`report` with `entry` added. Call `done/1` once every entry is in."
   @spec add(t(), entry()) :: t()
   def add(report, %{kind: kind, outcome: outcome} = entry) when outcome in @outcomes do
+    {entries, kept} = keep([entry | report.entries], report.kept + 1)
+
     %{
       counts: Map.update!(report.counts, outcome, &(&1 + 1)),
       kinds: count_kind(report.kinds, kind, outcome),
-      entries: [entry | report.entries]
+      entries: entries,
+      kept: kept
     }
   end
 
-  @doc "`report` with its entries in the order they were added."
+  @doc "`report` as it is saved: its last `max_entries/0` entries, in the order they were added."
   @spec done(t()) :: t()
-  def done(report), do: %{report | entries: Enum.reverse(report.entries)}
+  def done(report) do
+    %{
+      counts: report.counts,
+      kinds: report.kinds,
+      entries: report.entries |> Enum.take(@max_entries) |> Enum.reverse()
+    }
+  end
 
   @doc "One item's line: its kind, source id and title, its outcome and why."
   @spec entry(String.t(), String.t() | nil, String.t() | nil, outcome(), String.t() | nil) ::
@@ -103,6 +122,11 @@ defmodule MishkaCmsMigration.Report do
       index -> List.update_at(kinds, index, &Map.update!(&1, outcome, fn count -> count + 1 end))
     end
   end
+
+  defp keep(entries, kept) when kept > 2 * @max_entries,
+    do: {Enum.take(entries, @max_entries), @max_entries}
+
+  defp keep(entries, kept), do: {entries, kept}
 
   defp zero, do: Map.new(@outcomes, &{&1, 0})
 end

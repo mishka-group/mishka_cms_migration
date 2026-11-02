@@ -9,7 +9,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  alias MishkaCmsMigration.{Secret, Workers.DryRunWorker, Workers.ImportWorker}
+  alias MishkaCmsMigration.{Report, Secret, Workers.DryRunWorker, Workers.ImportWorker}
 
   setup do
     for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
@@ -157,7 +157,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
 
       for actor <- [admin, master] do
         assert {:error, %Ash.Error.Forbidden{}} =
-                 MishkaCmsMigration.finish_dry_run(run, MishkaCmsMigration.Report.new(),
+                 MishkaCmsMigration.finish_dry_run(run, Report.done(Report.new()),
                    actor: actor,
                    tenant: site.id
                  )
