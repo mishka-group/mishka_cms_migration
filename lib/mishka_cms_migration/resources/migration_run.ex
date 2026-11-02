@@ -102,8 +102,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   did and when it started. The table follows the run's PubSub notifications, so a run moving on
   shows without a reload.
 
-  A source's card opens the run's Gervaz form: the site's address and user (`connection`), the
-  secret, and for a master the site the content moves to (`:master_create`). Its button, Check
+  A source's card opens the run's Gervaz form with the card's source as the form's default: the
+  site's address and user (`connection`), the secret, and for a master the site the content moves
+  to (`:master_create`). Its button, Check
   connection, creates the run, which connects to the source first
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
   refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
@@ -389,10 +390,6 @@ defmodule MishkaCmsMigration.MigrationRun do
           end
         end
 
-        field :source, :hidden do
-          required true
-        end
-
         field :connection, :key_map do
           required true
 
@@ -407,7 +404,7 @@ defmodule MishkaCmsMigration.MigrationRun do
               name: :user,
               type: :text,
               label: dgettext_noop("mishka_gervaz", "User"),
-              placeholder: "admin"
+              placeholder: dgettext_noop("mishka_gervaz", "e.g. admin")
             ]
           ]
 
@@ -418,6 +415,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
         field :secret, :password do
           virtual true
+          required true
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Application password") end
@@ -436,7 +434,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       groups do
         group :connection do
-          fields [:site_id, :source, :connection, :secret]
+          fields [:site_id, :connection, :secret]
 
           ui do
             columns 1
@@ -507,7 +505,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       change CheckConnection
-      validate present([:source, :source_host])
+      validate present(:source)
+      validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
@@ -528,7 +527,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: true}
       change CheckConnection
-      validate present([:site_id, :source, :source_host])
+      validate present(:site_id)
+      validate present(:source)
+      validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
 
       change fn changeset, _context ->

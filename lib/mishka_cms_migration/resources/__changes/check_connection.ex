@@ -19,7 +19,7 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
 
       create :create do
         change MishkaCmsMigration.Resources.Changes.CheckConnection
-        validate present([:source, :source_host])
+        validate present(:source_host), only_when_valid?: true
         change &MishkaCmsMigration.MigrationRun.seal_secret/2
       end
 
@@ -46,7 +46,7 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
     unauthorized:
       dgettext_noop(
         "errors",
-        "%{source} did not accept this user and password. If they are right, the host may be dropping the Authorization header."
+        "%{source} did not accept this user and application password. If both are right, ask your host to let the Authorization header through."
       )
   }
 

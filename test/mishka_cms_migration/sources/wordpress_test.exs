@@ -59,12 +59,25 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
     end
 
-    test "is refused without a user or a password, before asking the site" do
+    test "is refused without a user or a password, without signing in" do
       stub!()
 
-      assert WordPress.connect(@connection, nil) == {:error, :unauthorized}
-      assert WordPress.connect(Map.delete(@connection, "user"), "pw") == {:error, :unauthorized}
-      refute_received {:wordpress_request, _conn}
+      for {connection, secret} <- [
+            {@connection, nil},
+            {@connection, ""},
+            {Map.delete(@connection, "user"), "pw"},
+            {%{@connection | "user" => ""}, "pw"}
+          ] do
+        assert WordPress.connect(connection, secret) == {:error, :unauthorized}
+        refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/users/me"}}
+      end
+    end
+
+    test "says what is wrong with the address before asking for a password" do
+      stub!(%{"/wp-json/" => :unreachable})
+
+      assert WordPress.connect(%{"url" => "ftp://example.com"}, nil) == {:error, :invalid_address}
+      assert WordPress.connect(%{"url" => "http://localhost:1"}, nil) == {:error, :unreachable}
     end
 
     test "says no WordPress answers where the address has no REST API" do
@@ -88,6 +101,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
 
       assert WordPress.connect(%{}, "pw") == {:error, :invalid_address}
+      assert WordPress.connect(%{"url" => 8089}, "pw") == {:error, :invalid_address}
       refute_received {:wordpress_request, _conn}
     end
   end

@@ -133,7 +133,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                )
 
       assert MishkaGervaz.Errors.translate_error(error.message, error.vars) =~
-               "Fake did not accept this user and password"
+               "Fake did not accept this user and application password"
 
       assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
     end

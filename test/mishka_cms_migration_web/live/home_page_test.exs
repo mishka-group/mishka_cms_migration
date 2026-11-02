@@ -59,6 +59,12 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     view
   end
 
+  defp new_import!(view) do
+    view
+    |> element(~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
+    |> render_click()
+  end
+
   defp submit!(view, connection, secret) do
     view
     |> form(~s|#migration-run-form-modal form|, %{
@@ -105,10 +111,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       admin = migration_admin!(site)
       view = open!(conn, admin)
 
-      view
-      |> element(~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
-      |> render_click()
-
+      new_import!(view)
+      refute has_element?(view, ~s|#migration-run-form-modal [name="form[source]"]|)
       submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "app password")
 
       assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
@@ -130,13 +134,27 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       admin = migration_admin!(site)
       view = open!(conn, admin)
 
-      view
-      |> element(~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
-      |> render_click()
-
+      new_import!(view)
       html = submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "wrong")
 
-      assert html =~ "WordPress did not accept this user and password"
+      assert html =~ "WordPress did not accept this user and application password"
+      assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+  end
+
+  describe "the New import form" do
+    test "sent empty, says in words what the address needs and saves nothing", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      new_import!(view)
+      html = submit!(view, %{"url" => "", "user" => ""}, "")
+
+      assert html =~ "Type the site&#39;s address, such as https://example.com."
+      refute html =~ "must be present"
       assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
     end
   end

@@ -14,16 +14,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       %{"url" => "https://example.com", "user" => "admin"}
 
   `connect/2` first reads the REST index (`/wp-json/`), which tells it a WordPress answers at the
-  address, then signs in (`/wp-json/wp/v2/users/me?context=edit`). It refuses with one of the
-  reasons `MishkaCmsMigration.Source` names:
+  address, then signs in (`/wp-json/wp/v2/users/me?context=edit`). It checks in that order, so the
+  reason it gives is the first thing that is wrong. It refuses with one of the reasons
+  `MishkaCmsMigration.Source` names:
 
     * `:invalid_address` — the address is not an `http` or `https` address with a host;
     * `:unreachable` — nothing answered at the address;
     * `:no_site` — something answered, but not a WordPress REST API: another kind of site, or a
       WordPress whose REST API a plugin turned off;
-    * `:unauthorized` — WordPress did not sign the user in. It answers a wrong password, an
-      unknown user and a request whose `Authorization` header the host dropped the same way
-      (`rest_not_logged_in`), so these cannot be told apart.
+    * `:unauthorized` — no user or no password was given, or WordPress did not sign the user in.
+      It answers a wrong password, an unknown user and a request whose `Authorization` header the
+      host dropped the same way (`rest_not_logged_in`), so these cannot be told apart.
 
   `extra/1` keeps the site's name, its home address and timezone, and who signed in.
 
@@ -44,18 +45,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def kinds, do: []
 
   @impl MishkaCmsMigration.Source
-  def connect(%{"url" => url, "user" => user}, secret)
-      when is_binary(url) and is_binary(user) and is_binary(secret) do
-    with {:ok, base} <- base_url(url),
-         req = request(base, user, secret),
+  def connect(connection, secret) do
+    with {:ok, base} <- connection |> Map.get("url") |> base_url(),
+         req = request(base),
          {:ok, index} <- index(req),
-         {:ok, signed_in} <- signed_in(req) do
-      {:ok, %{req: req, index: index, user: signed_in}}
+         {:ok, req} <- signed(req, Map.get(connection, "user"), secret),
+         {:ok, user} <- signed_in(req) do
+      {:ok, %{req: req, index: index, user: user}}
     end
   end
-
-  def connect(%{"url" => url}, _secret) when is_binary(url), do: {:error, :unauthorized}
-  def connect(_connection, _secret), do: {:error, :invalid_address}
 
   @impl MishkaCmsMigration.Source
   def extra(%{index: index, user: user}) do
@@ -73,9 +71,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @impl MishkaCmsMigration.Source
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
 
-  defp base_url(url) do
-    url |> String.trim() |> URI.parse() |> base()
-  end
+  defp base_url(url) when is_binary(url), do: url |> String.trim() |> URI.parse() |> base()
+  defp base_url(_url), do: {:error, :invalid_address}
 
   defp base(%URI{scheme: scheme, host: host} = uri)
        when scheme in ["http", "https"] and is_binary(host) and host != "",
@@ -90,11 +87,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp base(_uri), do: {:error, :invalid_address}
 
-  defp request(base, user, secret) do
-    [base_url: base <> "/wp-json", auth: {:basic, "#{user}:#{secret}"}, retry: false]
+  defp request(base) do
+    [base_url: base <> "/wp-json", retry: false]
     |> Req.new()
     |> Req.merge(req_options())
   end
+
+  defp signed(req, user, secret)
+       when is_binary(user) and user != "" and is_binary(secret) and secret != "",
+       do: {:ok, Req.merge(req, auth: {:basic, "#{user}:#{secret}"})}
+
+  defp signed(_req, _user, _secret), do: {:error, :unauthorized}
 
   defp index(req), do: req |> Req.get(url: "/") |> index_answer()
 
