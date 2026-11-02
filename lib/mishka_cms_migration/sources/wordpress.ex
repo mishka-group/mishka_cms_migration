@@ -13,6 +13,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
       %{"url" => "https://example.com", "user" => "admin"}
 
+  The New import form asks for them (`form_fields/0`): the Address (`"url"`), the User (`"user"`)
+  and the Application password (`:secret`, masked, which the run keeps only sealed), each required.
+
   `connect/2` first reads the REST index (`/wp-json/`), which tells it a WordPress answers at the
   address, then signs in (`/wp-json/wp/v2/users/me?context=edit`). It checks in that order, so the
   reason it gives is the first thing that is wrong. It refuses with one of the reasons
@@ -81,8 +84,32 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   """
 
   use MishkaCmsMigration.Source, id: "wordpress", label: "WordPress"
+  use Gettext, backend: MishkaCmsCore.Gettext
 
   @kinds ["user", "category", "tag", "page", "post"]
+
+  @form_fields [
+    [
+      name: :url,
+      type: :text,
+      label: dgettext_noop("mishka_gervaz", "Address"),
+      placeholder: "https://example.com",
+      required: true
+    ],
+    [
+      name: :user,
+      type: :text,
+      label: dgettext_noop("mishka_gervaz", "User"),
+      placeholder: dgettext_noop("mishka_gervaz", "e.g. admin"),
+      required: true
+    ],
+    [
+      name: :secret,
+      type: :password,
+      label: dgettext_noop("mishka_gervaz", "Application password"),
+      required: true
+    ]
+  ]
 
   @routes %{
     "user" => {"/wp/v2/users", []},
@@ -108,6 +135,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   @impl MishkaCmsMigration.Source
   def kinds, do: @kinds
+
+  @impl MishkaCmsMigration.Source
+  def form_fields, do: @form_fields
 
   @impl MishkaCmsMigration.Source
   def connect(connection, secret) do

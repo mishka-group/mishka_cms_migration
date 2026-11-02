@@ -18,10 +18,12 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Sources.WordPress
+  alias MishkaCmsMigration.Test.Plugins.TokenSource
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
   alias MishkaCmsMigrationWeb.SidebarMenu
 
   @page "/admin/dashboard/migration"
+  @wordpress_inputs [{"url", "text"}, {"user", "text"}, {"secret", "password"}]
 
   setup %{conn: conn} do
     site = create_site!(name: "localhost", host: "localhost", master: true)
@@ -60,19 +62,45 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     view
   end
 
-  defp new_import!(view) do
+  defp new_import!(view, source \\ "wordpress") do
     view
-    |> element(~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
+    |> element(~s|[data-source="#{source}"] [data-role="migration-new-run"]|)
     |> render_click()
   end
 
+  # Sends the form as an admin fills it in: the connection's keys, and the secret typed into the
+  # connection's password key.
   defp submit!(view, connection, secret) do
     view
     |> form(~s|#migration-run-form-modal form|, %{
-      "form" => %{"connection" => connection, "secret" => secret}
+      "form" => %{"connection" => Map.put(connection, "secret", secret)}
     })
     |> render_submit()
   end
+
+  # The connection keys the form draws, in order, each as `{key, input type}`.
+  defp connection_inputs(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(~s|#migration-run-form-modal input[name^="form[connection]["]|)
+    |> Enum.map(fn input ->
+      [name] = LazyHTML.attribute(input, "name")
+      [type] = LazyHTML.attribute(input, "type")
+      {name |> String.trim_leading("form[connection][") |> String.trim_trailing("]"), type}
+    end)
+  end
+
+  defp secret_input_value(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(~s|#migration-run-form-modal input[name="form[connection][secret]"]|)
+    |> LazyHTML.attribute("value")
+  end
+
+  defp stored(run),
+    do: MishkaCmsMigration.get_run!(run.id, tenant: run.site_id, authorize?: false)
 
   defp filter!(view, params) do
     view |> form("#migration-runs-table_migration_runs-filter", params) |> render_change()
@@ -139,8 +167,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     |> LazyHTML.query(~s|#{scope} [data-role="#{role}"]|)
   end
 
-  defp status(run),
-    do: MishkaCmsMigration.get_run!(run.id, tenant: run.site_id, authorize?: false).status
+  defp status(run), do: stored(run).status
 
   describe "the source cards" do
     test "show each installed source", %{conn: conn, site: site} do
@@ -184,11 +211,25 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert {run.source, run.source_host, run.status, run.extra["name"]} ==
                {"wordpress", "localhost:8089", :pending, "Mishka Test Blog"}
 
+      assert stored(run).connection == %{"url" => "http://localhost:8089", "user" => "admin"}
       assert MigrationRun.open_secret(run) == {:ok, "app password"}
       assert settled(view) =~ "Connected to Mishka Test Blog."
       assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress")
       assert has_element?(view, "#migration-runs-table", "Mishka Test Blog")
       assert has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
+    end
+
+    test "asks WordPress's address, user and application password, the password masked", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      assert connection_inputs(view) == @wordpress_inputs
+
+      for label <- ["Address", "User", "Application password"],
+          do: assert(has_element?(view, "#migration-run-form-modal label", label))
     end
 
     test "keeps the form open with the reason, and saves nothing, when WordPress refuses", %{
@@ -200,10 +241,78 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
 
       new_import!(view)
-      html = submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "wrong")
+
+      html =
+        submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "typed-pass-9f3")
 
       assert html =~ "WordPress did not accept this user and application password"
+      refute html =~ "typed-pass-9f3"
+      assert secret_input_value(view) in [[], [""]]
       assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+  end
+
+  describe "each source's New import" do
+    setup do
+      register_plugin!(TokenSource, MishkaCmsMigration.Source.event())
+      :ok
+    end
+
+    test "asks for that source's own connection keys, each time the form starts over", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+
+      new_import!(view)
+      assert connection_inputs(view) == @wordpress_inputs
+
+      new_import!(view, "token")
+
+      assert connection_inputs(view) == [
+               {"url", "text"},
+               {"workspace", "text"},
+               {"secret", "password"}
+             ]
+
+      assert has_element?(view, "#migration-run-form-modal label", "API token")
+      refute has_element?(view, "#migration-run-form-modal label", "Application password")
+
+      new_import!(view)
+      assert connection_inputs(view) == @wordpress_inputs
+    end
+
+    test "creates a run of that source with its own keys, its token kept only sealed", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      new_import!(view)
+      new_import!(view, "token")
+
+      submit!(
+        view,
+        %{"url" => "https://notes.example.com", "workspace" => "Team notes"},
+        "t0ken"
+      )
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+
+      assert {run.source, run.source_host, run.extra["name"]} ==
+               {"token", "notes.example.com", "Team notes"}
+
+      assert stored(run).connection == %{
+               "url" => "https://notes.example.com",
+               "workspace" => "Team notes"
+             }
+
+      assert MigrationRun.open_secret(run) == {:ok, "t0ken"}
+      assert settled(view) =~ "Connected to Team notes."
+
+      new_import!(view)
+      assert connection_inputs(view) == @wordpress_inputs
     end
   end
 

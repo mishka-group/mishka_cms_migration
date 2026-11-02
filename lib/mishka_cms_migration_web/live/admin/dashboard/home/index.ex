@@ -9,8 +9,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   `MishkaCmsMigration.MigrationRun` for its columns and row actions). The table follows the runs'
   PubSub notifications, which this page hands on to it.
 
-  A card's New import opens the run's Gervaz form for that source in a modal. Its Check connection
-  creates the run once the source answers; the modal then closes and the run shows in the table.
+  A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
+  form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
+  Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
+  secret as a masked password input. Its Check connection creates the run once the source answers;
+  the modal then closes and the run shows in the table.
 
   ## A run's row
 

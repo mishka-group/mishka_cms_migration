@@ -76,7 +76,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   ## The source's secret
 
   The secret a source signs in with (such as a WordPress application password) is the `:create`
-  action's `secret` argument. Only its sealed form is kept, in `connection_secret`, sealed the way
+  action's `secret` argument. The New import form types it under the connection's `"secret"` key
+  (`c:MishkaCmsMigration.Source.form_fields/0`); `take_secret/2` moves it from there into the
+  argument before the run connects, so `connection` never holds it, and a `secret` argument a
+  caller gives as well wins. Only its sealed form is kept, in `connection_secret`, sealed the way
   `MishkaCmsCore.Settings` seals a `:secret` setting: `Phoenix.Token.encrypt/4` with the endpoint's
   `secret_key_base`, under a salt of this extension's own. The argument is dropped once sealed. The
   sealed secret is kept from the run's creation until it ends — done, failed or cancelled — and is
@@ -121,9 +124,14 @@ defmodule MishkaCmsMigration.MigrationRun do
   listed, what was done with them (`result_summary/1`) and why the skipped ones were skipped
   (`reason_label/1`).
 
-  A source's card opens the run's Gervaz form with the card's source as the form's default: the
-  site's address and user (`connection`), the secret, and for a master the site the content moves
-  to (`:master_create`). Its button, Check
+  A source's card opens the run's Gervaz form with the card's source as the form's default. Its
+  Connection is a `:key_map` whose keys the source names
+  (`MishkaCmsMigration.Source.form_fields/1`), read each time the form is drawn and its params are
+  read, so each source's New import asks for its own: WordPress's address, user and application
+  password, and a plugin's source what its `form_fields/0` names. The secret's key is a masked
+  password input that never shows what was typed. The field's description says where WordPress
+  makes an application password, as a Gervaz key carries no description of its own. For a master
+  the form asks for the site the content moves to as well (`:master_create`). Its button, Check
   connection, creates the run, which connects to the source first
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
   refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
@@ -563,49 +571,24 @@ defmodule MishkaCmsMigration.MigrationRun do
 
         field :connection, :key_map do
           required true
-
-          options [
-            [
-              name: :url,
-              type: :text,
-              label: dgettext_noop("mishka_gervaz", "Address"),
-              placeholder: "https://example.com"
-            ],
-            [
-              name: :user,
-              type: :text,
-              label: dgettext_noop("mishka_gervaz", "User"),
-              placeholder: dgettext_noop("mishka_gervaz", "e.g. admin")
-            ]
-          ]
+          options fn state -> MishkaCmsMigration.Source.form_fields(state) end
 
           ui do
-            label fn -> dgettext("mishka_gervaz", "WordPress site") end
-          end
-        end
-
-        field :secret, :password do
-          virtual true
-          required true
-
-          ui do
-            label fn -> dgettext("mishka_gervaz", "Application password") end
+            label fn -> dgettext("mishka_gervaz", "Connection") end
 
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Made in WordPress under Users, Profile, Application Passwords. It is kept sealed until the run ends."
+                "A WordPress application password is made under Users, Profile, Application Passwords. The password is kept sealed until the run ends."
               )
             end
-
-            autocomplete "off"
           end
         end
       end
 
       groups do
         group :connection do
-          fields [:site_id, :connection, :secret]
+          fields [:site_id, :connection]
 
           ui do
             columns 1
@@ -676,6 +659,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: false}
+      change &MishkaCmsMigration.MigrationRun.take_secret/2
       change CheckConnection
       validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
@@ -699,6 +683,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: true}
       validate present(:site_id), message: @pick_site
+      change &MishkaCmsMigration.MigrationRun.take_secret/2
       change CheckConnection
       validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
@@ -1051,6 +1036,18 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: @endpoint |> Phoenix.Token.decrypt(@secret_salt, sealed, max_age: :infinity) |> opened()
 
   def open_secret(_run), do: {:ok, nil}
+
+  @doc """
+  Takes the secret out of a new run's `connection`: what a form typed under its `"secret"` key (or
+  `:secret`, from a caller of its own) becomes the action's `secret` argument, which
+  `seal_secret/2` keeps only sealed, and the key is dropped, so `connection` never holds the
+  secret. A `secret` argument the caller gave wins over the key; a blank key is dropped alone.
+  `:create` and `:master_create` run it before they connect
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`).
+  """
+  @spec take_secret(Ash.Changeset.t(), map()) :: Ash.Changeset.t()
+  def take_secret(changeset, _context),
+    do: changeset |> Ash.Changeset.get_attribute(:connection) |> secret_taken(changeset)
 
   @doc false
   def seal_secret(changeset, _context) do
@@ -1453,6 +1450,28 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp opened({:ok, secret}) when is_binary(secret), do: {:ok, secret}
   defp opened(_unreadable), do: {:error, :unreadable_secret}
+
+  defp secret_taken(%{} = connection, changeset)
+       when is_map_key(connection, "secret") or is_map_key(connection, :secret) do
+    typed = Map.get(connection, "secret", Map.get(connection, :secret))
+
+    changeset
+    |> Ash.Changeset.force_change_attribute(
+      :connection,
+      Map.drop(connection, ["secret", :secret])
+    )
+    |> secret_argument(Ash.Changeset.get_argument(changeset, :secret), typed)
+  end
+
+  defp secret_taken(_no_secret, changeset), do: changeset
+
+  defp secret_argument(changeset, given, _typed) when is_binary(given) and given != "",
+    do: changeset
+
+  defp secret_argument(changeset, _none, typed) when is_binary(typed) and typed != "",
+    do: Ash.Changeset.set_argument(changeset, :secret, typed)
+
+  defp secret_argument(changeset, _none, _blank), do: changeset
 
   defp sealed(changeset, secret) when is_binary(secret) and secret != "",
     do:

@@ -36,6 +36,47 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert MigrationRun.open_secret(run) == {:ok, "letmein"}
     end
 
+    test "keeps a secret typed into its connection only sealed, never in the connection", %{
+      site: site,
+      admin: admin
+    } do
+      for connection <- [
+            %{"items" => %{}, "secret" => "letmein"},
+            %{items: %{}, secret: "letmein"}
+          ] do
+        run = create_run!(site, admin, %{}, %{connection: connection, secret: nil})
+        stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+        assert stored.connection == %{"items" => %{}}
+        assert MigrationRun.open_secret(stored) == {:ok, "letmein"}
+        refute inspect(stored) =~ "letmein"
+      end
+    end
+
+    test "takes the secret argument over one typed into its connection", %{
+      site: site,
+      admin: admin
+    } do
+      typed = %{"items" => %{}, "secret" => "typed"}
+      run = create_run!(site, admin, %{}, %{connection: typed, secret: "letmein"})
+      stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+      assert stored.connection == %{"items" => %{}}
+      assert MigrationRun.open_secret(stored) == {:ok, "letmein"}
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :connection}]}} =
+               MishkaCmsMigration.create_run(
+                 %{
+                   source: "fake",
+                   source_host: "old.example.com",
+                   connection: %{"items" => %{}, "secret" => "letmein"},
+                   secret: "wrong"
+                 },
+                 actor: admin,
+                 tenant: site.id
+               )
+    end
+
     test "never broadcasts its secret or its connection", %{site: site, admin: admin} do
       :ok = MishkaCmsMigration.TestEndpoint.subscribe("migration_run:#{site.id}:created")
       run = create_run!(site, admin, rows(), %{secret: "letmein"})

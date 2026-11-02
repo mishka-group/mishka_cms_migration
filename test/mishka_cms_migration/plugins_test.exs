@@ -28,6 +28,18 @@ defmodule MishkaCmsMigration.PluginsTest do
     assert {:error, _unknown} = Source.fetch("fake")
   end
 
+  test "a source's connection form asks for its own keys, an address and a secret by default" do
+    register_plugin!(FakeSource, Source.event())
+    names = &Enum.map(Source.form_fields(&1), fn key -> key[:name] end)
+
+    assert names.("fake") == [:url, :secret]
+    assert names.(%{defaults: %{source: "wordpress"}}) == [:url, :user, :secret]
+    assert Enum.find(Source.form_fields("wordpress"), &(&1[:name] == :secret))[:type] == :password
+
+    for unknown <- ["ghost", %{defaults: %{source: "ghost"}}, %{defaults: nil}, nil],
+        do: assert(Source.form_fields(unknown) == [])
+  end
+
   test "a stopped source is no longer installed, and a run of it is refused" do
     register_plugin!(FakeSource, Source.event())
     site = create_site!()
