@@ -9,7 +9,15 @@ defmodule MishkaCmsMigration.MigrationRunTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  alias MishkaCmsMigration.{Report, Secret, Workers.DryRunWorker, Workers.ImportWorker}
+  alias MishkaCmsMigration.{
+    MigrationRun,
+    Report,
+    Secret,
+    Workers.DryRunWorker,
+    Workers.ImportWorker
+  }
+
+  alias MishkaCmsMigration.MigrationRun.Options
 
   setup do
     for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
@@ -33,25 +41,32 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert Secret.open(run.connection_secret) == {:ok, "app password"}
     end
 
-    test "fills the admin's choices it was not given and refuses one it does not know", %{
-      site: site,
-      admin: admin
-    } do
+    test "keeps the admin's choices as made, reads the others as their defaults, refuses an unknown one",
+         %{site: site, admin: admin} do
       run = create_run!(site, admin, rows(), %{options: %{pages: "publish"}})
+      stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).options
 
-      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).options == %{
-               "authors" => "connect",
-               "pages" => "publish",
-               "post_address" => "blog",
-               "comments" => false
-             }
+      assert stored == %{"pages" => "publish"}
 
-      assert {:error, %Ash.Error.Invalid{errors: [%{field: :pages, path: [:options]}]}} =
-               MishkaCmsMigration.create_run(
-                 %{source: "fake", source_host: "old.example.com", options: %{pages: "maybe"}},
-                 actor: admin,
-                 tenant: site.id
-               )
+      assert {:ok,
+              %Options{
+                authors: "connect",
+                pages: "publish",
+                post_address: "blog",
+                comments: false
+              }} =
+               Options.builder(stored)
+
+      for options <- [%{pages: "maybe"}, %{mode: "x"}] do
+        assert {:error, _refused} =
+                 MishkaCmsMigration.create_run(
+                   %{source: "fake", source_host: "old.example.com", options: options},
+                   actor: admin,
+                   tenant: site.id
+                 )
+      end
+
+      assert [_only_the_first] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
     end
 
     test "cleans the source host and refuses one that is not a host", %{site: site, admin: admin} do
@@ -66,19 +81,9 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                )
     end
 
-    test "refuses a source that is not installed, and an option it does not know", %{
-      site: site,
-      admin: admin
-    } do
+    test "refuses a source that is not installed", %{site: site, admin: admin} do
       assert {:error, %Ash.Error.Invalid{errors: [%{field: :source}]}} =
                MishkaCmsMigration.create_run(%{source: "ghost", source_host: "old.example.com"},
-                 actor: admin,
-                 tenant: site.id
-               )
-
-      assert {:error, %Ash.Error.Invalid{errors: [%{field: :mode, path: [:options]}]}} =
-               MishkaCmsMigration.create_run(
-                 %{source: "fake", source_host: "old.example.com", options: %{mode: "x"}},
                  actor: admin,
                  tenant: site.id
                )

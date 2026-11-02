@@ -6,8 +6,27 @@ defmodule MishkaCmsMigration.MigrationRun do
   @moduledoc """
   One move of a site's content from another CMS: which source it reads (`source`, a
   `MishkaCmsMigration.Source` id), which host it reads from (`source_host`), how it connects
-  (`connection`, and the secret sealed in `connection_secret`), what the admin chose
-  (`options`, `MishkaCmsMigration.Options`) and how far it got.
+  (`connection`, and the secret sealed in `connection_secret`), what the admin chose (`options`)
+  and how far it got.
+
+  ## The admin's choices
+
+  `options` is checked by the resource's own guardedstruct (`options` is a `sub_field`), which
+  refuses a key or a value it does not know, and is stored as chosen. A job reads it through
+  `MishkaCmsMigration.MigrationRun.Options.builder/1`, the module the `sub_field` generates, which
+  fills in each choice left out with its default, and hands the result to every target:
+
+    * `:authors` — `"connect"` (the default) ties each source author to an existing user, matched by
+      email; `"create"` makes a user and a blog author for each.
+    * `:pages` — `"draft"` (the default) brings pages in as drafts; `"publish"` puts them live at
+      their old addresses.
+    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>` with a 301 from each
+      old address; `"keep"` keeps the source's own addresses.
+    * `:comments` — whether comments come too; `false` by default.
+
+  No target reads them yet: the authors choice is read by the author and post targets, pages by the
+  page target, post addresses by the post and redirect targets and comments by the comment target,
+  as each kind's import comes.
 
   ## Its life
 
@@ -55,7 +74,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{BuildStruct, CancelJobs, EnqueueJob, SealSecret}
+  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob, SealSecret}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
@@ -89,6 +108,22 @@ defmodule MishkaCmsMigration.MigrationRun do
         "sanitize(trim, downcase) validate(string, not_empty, max_len=255, regex=^[a-z0-9.-]+(:[0-9]+)?$)"
 
     field :connection, :map, derives: "validate(map)"
+
+    sub_field :options, :map, authorized_fields: true do
+      field :authors, :string,
+        default: "connect",
+        derives: "sanitize(trim) validate(enum=String[connect::create])"
+
+      field :pages, :string,
+        default: "draft",
+        derives: "sanitize(trim) validate(enum=String[draft::publish])"
+
+      field :post_address, :string,
+        default: "blog",
+        derives: "sanitize(trim) validate(enum=String[blog::keep])"
+
+      field :comments, :boolean, default: false, derives: "validate(boolean)"
+    end
   end
 
   actions do
@@ -110,7 +145,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
       change set_attribute(:user_id, actor(:id))
-      change {BuildStruct, attribute: :options, struct: MishkaCmsMigration.Options}
       change {SealSecret, argument: :secret, attribute: :connection_secret}
 
       description "Creates a run on the tenant's site, started by the actor"
@@ -256,7 +290,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       allow_nil? false
       public? true
       default %{}
-      description "What the admin chose for this run (MishkaCmsMigration.Options)"
+      description "What the admin chose for this run (MishkaCmsMigration.MigrationRun.Options)"
     end
 
     attribute :status, :atom do

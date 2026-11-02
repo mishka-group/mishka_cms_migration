@@ -23,7 +23,8 @@ defmodule MishkaCmsMigration.Walker do
   and with `{:too_many_pages, kind}` after 10,000 pages of one kind.
   """
 
-  alias MishkaCmsMigration.{Decision, Item, Options, Progress, Report, Secret, Source, Writer}
+  alias MishkaCmsMigration.{Decision, Item, Progress, Report, Secret, Source, Writer}
+  alias MishkaCmsMigration.MigrationRun.Options
 
   @max_pages 10_000
 

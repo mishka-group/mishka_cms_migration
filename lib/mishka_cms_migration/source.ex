@@ -65,7 +65,7 @@ defmodule MishkaCmsMigration.Source do
           site_id: String.t(),
           run_id: String.t(),
           source_host: String.t(),
-          options: MishkaCmsMigration.Options.t()
+          options: map()
         }
 
   @doc "The source's id, stored on a run."

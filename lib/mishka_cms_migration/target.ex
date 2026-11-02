@@ -68,7 +68,7 @@ defmodule MishkaCmsMigration.Target do
           site_id: String.t(),
           run_id: String.t(),
           source_host: String.t(),
-          options: MishkaCmsMigration.Options.t()
+          options: map()
         }
 
   @doc "The kind of item this target writes, such as `\"post\"`."
