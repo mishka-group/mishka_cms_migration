@@ -24,6 +24,10 @@
 
 The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it; none ships yet.
 
+## 🔀 Several sources into one site
+
+A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and rows, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from.
+
 ## 🗂️ Layout
 
 ```

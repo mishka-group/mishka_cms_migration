@@ -444,6 +444,63 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
   end
 
+  describe "several sources into one site" do
+    defp migrate_host!(site, admin, host, rows) do
+      site
+      |> create_run!(admin, %{"redirect" => rows}, %{source_host: host})
+      |> dry_run!(admin)
+      |> import!(admin)
+    end
+
+    defp to_of(site, from), do: Enum.find(redirects(site), &(&1.from_path == from)).to
+
+    test "keep their own items and rows, the same id from two hosts being two", %{
+      site: site,
+      admin: admin
+    } do
+      a = migrate_host!(site, admin, "old-a.example.com", [redirect_row(1, "/a-one", "/a")])
+      b = migrate_host!(site, admin, "old-b.example.com", [redirect_row(1, "/b-one", "/b")])
+
+      assert {a.created_count, b.created_count} == {1, 1}
+
+      assert [{"old-a.example.com", "1"}, {"old-b.example.com", "1"}] =
+               site |> items() |> Enum.map(&{&1.source_host, &1.source_id}) |> Enum.sort()
+
+      assert Enum.map(redirects(site), & &1.from_path) == ["/a-one", "/b-one"]
+
+      assert ["old-a.example.com", "old-b.example.com"] =
+               MishkaCmsMigration.MigrationRun
+               |> Ash.read!(actor: admin, tenant: site.id)
+               |> Enum.map(& &1.source_host)
+               |> Enum.sort()
+    end
+
+    test "re-run one host and update only its own rows", %{site: site, admin: admin} do
+      migrate_host!(site, admin, "old-a.example.com", [redirect_row(1, "/a-one", "/a")])
+      b = migrate_host!(site, admin, "old-b.example.com", [redirect_row(1, "/b-one", "/b")])
+
+      again = migrate_host!(site, admin, "old-a.example.com", [redirect_row(1, "/a-one", "/a2")])
+
+      assert %{"1" => {:updated, nil}} = outcomes(again)
+      assert {to_of(site, "/a-one"), to_of(site, "/b-one")} == {"/a2", "/b"}
+      assert %{run_id: run_id} = Enum.find(items(site), &(&1.source_host == "old-b.example.com"))
+      assert run_id == b.id
+    end
+
+    test "never overwrite each other: the second to claim an address is refused with why", %{
+      site: site,
+      admin: admin
+    } do
+      migrate_host!(site, admin, "old-a.example.com", [redirect_row(1, "/shared", "/from-a")])
+      b = migrate_host!(site, admin, "old-b.example.com", [redirect_row(7, "/shared", "/from-b")])
+
+      assert %{"7" => {:failed, reason}} = outcomes(b)
+      assert reason =~ "already redirects that address"
+      assert to_of(site, "/shared") == "/from-a"
+      assert [_one] = redirects(site)
+    end
+  end
+
   describe "the source's secret" do
     test "none is handed to the source as none", %{site: site, admin: admin} do
       connection = %{"public" => true, "items" => %{"redirect" => @rows}}

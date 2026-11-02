@@ -14,6 +14,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   it when the source has not changed it, and never overwrites one an admin changed in the CMS since
   (`MishkaCmsMigration.Workers.Helpers.Decision`).
 
+  The source host is part of it so several sources can move into one site: two hosts' items never
+  meet, the same id on both is two items, and re-running one host touches only its own. When two
+  sources ask the CMS for the same thing (the same address, say), the target's action refuses the
+  second and that item is recorded as failed with the CMS's reason; the first is never
+  overwritten.
+
   Written by the import job alone (`authorize?: false`), as upserts on that identity: `:record`
   after a row was written, `:record_outcome` after an item was skipped or failed, which keeps what
   the last write recorded. Read by whoever may read the site's runs

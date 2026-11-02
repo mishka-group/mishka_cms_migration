@@ -5,7 +5,8 @@
 defmodule MishkaCmsMigration.MigrationRun do
   @moduledoc """
   One move of a site's content from another CMS: which source it reads (`source`, a
-  `MishkaCmsMigration.Source` id), which host it reads from (`source_host`), how it connects
+  `MishkaCmsMigration.Source` id), which host it reads from (`source_host`, so a site may take
+  content from several sources, each run showing its own), how it connects
   (`connection`, and the secret sealed in `connection_secret`), what the admin chose (`options`)
   and how far it got.
 
