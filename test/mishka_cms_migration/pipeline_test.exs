@@ -12,6 +12,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   alias MishkaCmsCore.Runtime.Redirect
   alias MishkaCmsMigration.{MigrationItem, Progress}
+  alias MishkaCmsMigration.Test.Plugins.FakeSource
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   setup do
@@ -65,6 +66,18 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert_receive {:migration_progress,
                       %{run_id: ^run_id, mode: :dry_run, kind: "redirect", counts: %{create: 3}}}
+    end
+
+    test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
+      items = %{
+        "note" => [%{"id" => 9}],
+        "redirect" => [%{"id" => 1, "from" => "/a", "to" => "/b"}]
+      }
+
+      run = site |> create_run!(admin, items) |> dry_run!(admin)
+
+      assert Enum.map(run.report.kinds, & &1.kind) == FakeSource.kinds()
+      assert Enum.map(run.report.entries, & &1.kind) == FakeSource.kinds()
     end
 
     test "skips a kind no target writes and fails a row the source cannot read", %{

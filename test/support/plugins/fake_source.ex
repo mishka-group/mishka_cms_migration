@@ -51,14 +51,6 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   end
 
   @impl MishkaCmsMigration.Source
-  def fetch(conn, kind, source_id) do
-    case Enum.find(get_in(conn, ["items", kind]) || [], &(to_string(&1["id"]) == source_id)) do
-      nil -> {:error, :not_found}
-      row -> {:ok, row}
-    end
-  end
-
-  @impl MishkaCmsMigration.Source
   def normalize(%{"unreadable" => true}, _kind, _context), do: {:error, :unreadable}
 
   def normalize(row, _kind, _context) do

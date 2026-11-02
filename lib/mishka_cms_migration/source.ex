@@ -5,8 +5,9 @@
 defmodule MishkaCmsMigration.Source do
   @moduledoc """
   A CMS a site is moved from: one module that is a `mishka_installer` plugin on the
-  `"migration:sources"` event and implements the callbacks below. WordPress is the first; Joomla and
-  others come the same way and reuse the mapping, the dry run, the import job and the report.
+  `"migration:sources"` event and implements the callbacks below. WordPress is planned as the
+  first; Joomla and others come the same way and reuse the mapping, the dry run, the import job and
+  the report.
 
       defmodule MyExtension.Sources.Ghost do
         use MishkaCmsMigration.Source, id: "ghost", label: "Ghost"
@@ -24,28 +25,26 @@ defmodule MishkaCmsMigration.Source do
         end
 
         @impl true
-        def fetch(req, kind, id), do: ...
-
-        @impl true
         def normalize(row, "post", _context),
           do: {:ok, %{source_id: row["id"], title: row["title"], content: [%{html: row["html"]}]}}
       end
 
-  Supervise the module in the extension's application, like any other plugin (`plugins/0`). `use`
-  adds the plugin half — the `"migration:sources"` registration, see
-  `MishkaCmsCore.ProviderRegistry` — and `id/0` and `label/0`.
+  `use` adds the plugin half — the `"migration:sources"` registration, see
+  `MishkaCmsCore.ProviderRegistry` — and `id/0` and `label/0`. A source registers once it is
+  supervised: an extension that ships one lists the module among the children of its own
+  application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this extension's.
 
   ## A run
 
-  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`). The walk
+  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`); a run of a
+  source that is not installed is refused when it is created. The walk
   (`MishkaCmsMigration.Walker`) asks `connect/2` once, with the run's `connection` map and its
-  secret opened (`MishkaCmsMigration.Secret`), then walks `kinds/0` in order — a kind another kind
-  points at comes first, so authors come before posts — and pages through each with `list/3` until
-  it answers no cursor. Each listed row goes through `normalize/3` and
-  `MishkaCmsMigration.Item.build/1`. An error from `connect/2` or `list/3` fails the run; an error
-  from `normalize/3` fails only that row, and the report says why.
-
-  `fetch/3` reads one item again by its id, for trying one item again without walking the source.
+  secret opened (`MishkaCmsMigration.Secret`), then walks `kinds/0` in the order the source gives
+  them, and pages through each with `list/3` until it answers no cursor. The walk does not sort the
+  kinds: a source lists them in the order they must be imported, a kind before any kind that points
+  at it, so authors come before the posts that name them. Each listed row goes through
+  `normalize/3` and `MishkaCmsMigration.Item.build/1`. An error from `connect/2` or `list/3` fails
+  the run; an error from `normalize/3` fails only that row, and the report says why.
   """
 
   alias MishkaCmsCore.ProviderRegistry
@@ -72,7 +71,10 @@ defmodule MishkaCmsMigration.Source do
   @doc "The source's name, as a `gettext_noop/1` msgid."
   @callback label() :: String.t()
 
-  @doc "The kinds of item this source lists, in the order they are imported."
+  @doc """
+  The kinds of item this source lists, in the order they are imported: a kind before any kind that
+  points at it.
+  """
   @callback kinds() :: [String.t()]
 
   @doc "Connects with a run's `connection` map and its opened secret (`nil` when it has none)."
@@ -82,10 +84,6 @@ defmodule MishkaCmsMigration.Source do
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
               {:ok, [term()], cursor()} | {:error, term()}
-
-  @doc "One item of `kind` by its id on the source."
-  @callback fetch(conn(), kind :: String.t(), source_id :: String.t()) ::
-              {:ok, term()} | {:error, term()}
 
   @doc """
   A listed row as the map `MishkaCmsMigration.Item.build/1` takes, without `:kind`, which the
