@@ -101,11 +101,18 @@ defmodule MishkaCmsMigration.Report do
     do: %{kind: kind, source_id: source_id, title: title, outcome: outcome, reason: reason}
 
   @doc """
-  The words an entry or a failed run keeps for why: an exception's message, a string as it is, an
-  atom's name, guarded_struct's errors as `field: message` pairs, anything else inspected. At most
-  1000 characters.
+  The words an entry or a failed run keeps for why, at most 1000 characters: for an Ash error, each
+  of its errors as `field: message`, translated with its values filled in
+  (`MishkaGervaz.Errors.translate_error/2`, as the core's screens say them), and `"forbidden"` for
+  a refusal by a policy; any other exception's message; a string as it is; an atom's name;
+  guarded_struct's errors as `field: message` pairs; anything else inspected.
   """
   @spec reason(term()) :: String.t()
+  def reason(%Ash.Error.Forbidden{}), do: "forbidden"
+
+  def reason(%{__exception__: true, errors: [_ | _] = errors}),
+    do: errors |> Enum.map_join("; ", &said/1) |> short()
+
   def reason(%{__exception__: true} = error), do: error |> Exception.message() |> short()
   def reason(reason) when is_binary(reason), do: short(reason)
   def reason(reason) when is_atom(reason), do: Atom.to_string(reason)
@@ -114,6 +121,15 @@ defmodule MishkaCmsMigration.Report do
     do: errors |> Enum.map_join("; ", &"#{&1[:field]}: #{&1.message}") |> short()
 
   def reason(reason), do: reason |> inspect() |> short()
+
+  defp said(%{field: field, message: message} = error)
+       when is_atom(field) and not is_nil(field) and is_binary(message),
+       do: "#{field}: #{MishkaGervaz.Errors.translate_error(message, Map.get(error, :vars))}"
+
+  defp said(%{message: message} = error) when is_binary(message),
+    do: MishkaGervaz.Errors.translate_error(message, Map.get(error, :vars))
+
+  defp said(error), do: Exception.message(error)
 
   defp short(text), do: String.slice(text, 0, 1000)
 

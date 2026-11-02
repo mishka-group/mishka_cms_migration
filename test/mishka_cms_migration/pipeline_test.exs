@@ -205,7 +205,8 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert run.status == :done
       assert run.report.counts == %{created: 2, updated: 0, skipped: 0, failed: 1}
       assert %{"1" => {:failed, reason}} = outcomes(run)
-      assert byte_size(reason) > 0
+      assert reason =~ ": "
+      refute reason =~ "Error returned from"
 
       assert %{outcome: :failed, target_id: nil, reason: ^reason} =
                Enum.find(items(site), &(&1.source_id == "1"))
@@ -302,7 +303,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert run.report.counts == %{created: 0, updated: 0, skipped: 0, failed: 3}
       assert redirects(site) == []
-      assert Enum.all?(items(site), &(&1.outcome == :failed))
+      assert Enum.all?(items(site), &({&1.outcome, &1.reason} == {:failed, "forbidden"}))
     end
 
     test "a failed item is created on the next run once the CMS accepts it", %{
