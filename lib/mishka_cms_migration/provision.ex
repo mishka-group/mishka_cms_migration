@@ -79,9 +79,7 @@ defmodule MishkaCmsMigration.Provision do
     end
   end
 
-  defp refusal(_site_id, nil) do
-    if Install.installed?(), do: missing_message(@required)
-  end
+  defp refusal(_site_id, nil), do: wizard_refusal(Install.installed?())
 
   defp refusal(site_id, %{site_id: own}) when is_binary(own) and own != site_id,
     do: gettext("A site's admin sets the migration up on their own site only.")
@@ -94,6 +92,9 @@ defmodule MishkaCmsMigration.Provision do
       names -> missing_message(names)
     end
   end
+
+  defp wizard_refusal(true), do: missing_message(@required)
+  defp wizard_refusal(false), do: nil
 
   defp missing_message(names),
     do:

@@ -276,12 +276,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp built({:ok, item}, _attrs), do: {:ok, item}
   defp built({:error, errors}, attrs), do: {:error, source_id(attrs), errors}
 
-  defp source_id(attrs) do
-    case Map.get(attrs, :source_id, Map.get(attrs, "source_id")) do
-      id when is_binary(id) or is_integer(id) -> to_string(id)
-      _none -> nil
-    end
-  end
+  defp source_id(%{source_id: id}) when is_binary(id) or is_integer(id), do: to_string(id)
+  defp source_id(%{"source_id" => id}) when is_binary(id) or is_integer(id), do: to_string(id)
+  defp source_id(_attrs), do: nil
 
   defp handle(state, _kind, plans, {:ok, item}),
     do: Writer.call(state, item, Map.fetch!(plans, item.source_id))

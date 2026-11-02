@@ -91,7 +91,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         content_hash: Item.hash(item),
         target_resource: inspect(target.resource()),
         target_id: record.id,
-        target_updated_at: Map.get(record, :updated_at),
+        target_updated_at: record.updated_at,
         outcome: outcome,
         reason: nil,
         extra: item.extra
