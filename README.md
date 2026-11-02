@@ -7,7 +7,7 @@
 
 **A migration extension for [Mishka CMS](https://mishka.tools/cms): move a WordPress site, and later Joomla and other CMSs, into it.**
 
-[Mishka CMS](https://mishka.tools/cms) · [Plan](https://github.com/mishka-group/mishka_cms_migration/issues/1) · [Hire us](https://mishka.tools/hire-us)
+[Mishka CMS](https://mishka.tools/cms) · [Hire us](https://mishka.tools/hire-us)
 
 </div>
 
@@ -15,13 +15,14 @@
 
 `mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects and site settings. Every row is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
 
-WordPress is the first source. Joomla and others come later as plugins that reuse the same mapping, dry run, import job and report.
-
-This release is the project setup: the package, its checks and its test harness. There is no import feature yet. The plan and its steps are in [issue #1](https://github.com/mishka-group/mishka_cms_migration/issues/1).
+- [ ] WordPress
+- [ ] Joomla
+- [ ] Drupal
+- [ ] Ghost
 
 ## 🧩 Part of Mishka CMS
 
-Mishka CMS Migration is an extension of [Mishka CMS](https://mishka.tools/cms), an open source real-time CMS. It runs on [mishka_cms_core](https://github.com/mishka-group/mishka_cms_core), the engine, inside the [mishka_cms](https://github.com/mishka-group/mishka_cms) application, and it is built like [mishka_blog](https://github.com/mishka-group/mishka_blog) and [mishka_document](https://github.com/mishka-group/mishka_document): Ash resources, Mishka Installer plugins, mishka_gervaz admin screens and Oban jobs.
+Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS](https://mishka.tools/cms), built like [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) and [Mishka Document: Versioned Docs Engine](https://mishka.tools/cms/extensions/documentation): Ash resources, Mishka Installer plugins, mishka_gervaz admin screens and Oban jobs.
 
 ## 🚀 Getting started
 
