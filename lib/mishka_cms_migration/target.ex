@@ -30,8 +30,8 @@ defmodule MishkaCmsMigration.Target do
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
-  `actions/0`, a `note/1` that says nothing and an `existing/2` that finds nothing; a target writes
-  only `attrs/2`, `note/1` when it writes an item otherwise than the source has it, and
+  `actions/0`, a `note/2` that says nothing and an `existing/2` that finds nothing; a target writes
+  only `attrs/2`, `note/2` when it writes an item otherwise than the source has it, and
   `existing/2` when the CMS may already hold some of its items.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
@@ -109,14 +109,16 @@ defmodule MishkaCmsMigration.Target do
 
   ## What the report says
 
-  `note/1` is what the report says about an item the target writes otherwise than the source has
+  `note/2` is what the report says about an item the target writes otherwise than the source has
   it, such as a post pending review that the CMS keeps as a draft: a short code the admin page puts
-  in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), or `nil`. It is the entry's reason
-  in a dry run and in an import, and the item's record keeps it, before the pieces of its content
-  no plugin converted (`MishkaCmsMigration.Report`).
+  in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), several joined by `"; "`, or `nil`.
+  It is handed the context `attrs/2` gets, whose `mode` says whether the run is a `:dry_run`, which
+  writes nothing, or an `:import`; in a dry run no parent is looked up. It is the entry's reason in
+  a dry run and in an import, and the item's record keeps it, before the pieces of its content no
+  plugin converted (`MishkaCmsMigration.Report`).
 
-      def note(%{attrs: %{"status" => "pending"}}), do: "draft_from_pending"
-      def note(_item), do: nil
+      def note(%{attrs: %{"status" => "pending"}}, _context), do: "draft_from_pending"
+      def note(_item, _context), do: nil
 
   ## Keeping an admin's edits
 
@@ -135,11 +137,12 @@ defmodule MishkaCmsMigration.Target do
   @timestamp_types [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
 
   @typedoc """
-  What `attrs/2` is told: who writes, on which site, from which run, with which choices, the CMS
-  record of the item's parent (see "An item's parent") and the record an update writes over (see
-  "A create and an update").
+  What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
+  from which run, with which choices, the CMS record of the item's parent (see "An item's parent")
+  and the record an update writes over (see "A create and an update").
   """
   @type context :: %{
+          mode: :dry_run | :import,
           actor: map(),
           site_id: String.t(),
           run_id: String.t(),
@@ -168,7 +171,7 @@ defmodule MishkaCmsMigration.Target do
   What the report says about `item` when it is written otherwise than the source has it, or `nil`
   (see "What the report says"). `use` answers `nil`.
   """
-  @callback note(Item.t()) :: String.t() | nil
+  @callback note(Item.t(), context()) :: String.t() | nil
 
   @doc """
   What the CMS already holds of `items`, a page of items no run has written yet, by source id; an
@@ -207,12 +210,12 @@ defmodule MishkaCmsMigration.Target do
       def actions, do: %{create: unquote(create), update: unquote(update)}
 
       @impl MishkaCmsMigration.Target
-      def note(_item), do: nil
+      def note(_item, _context), do: nil
 
       @impl MishkaCmsMigration.Target
       def existing(_items, _context), do: %{}
 
-      defoverridable note: 1, existing: 2
+      defoverridable note: 2, existing: 2
     end
   end
 

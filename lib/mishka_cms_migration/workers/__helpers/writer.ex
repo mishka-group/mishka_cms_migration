@@ -18,7 +18,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   it reports the plan.
 
   An item written otherwise than the source has it has its entry and its record say so: its
-  target's note (`MishkaCmsMigration.Target`'s `note/1`), then the pieces of its content no plugin
+  target's note (`MishkaCmsMigration.Target`'s `note/2`), then the pieces of its content no plugin
   converted, kept as escaped text, joined by `"; "`, as in
   `"draft_from_pending; unconverted: acme/callout, gallery"`. A dry run asks no plugin, so it names
   every piece the source left to convert.
@@ -69,14 +69,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> entered(item, :skipped, "connected")
   end
 
-  def call(%{mode: :dry_run}, %Item{} = item, {outcome, target, _record}),
+  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record}),
     do:
       Report.entry(
         item.kind,
         item.source_id,
         item.title,
         outcome,
-        note(target, item, to_convert(item))
+        note(target, item, %{state.context | record: record}, to_convert(item))
       )
 
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
@@ -104,10 +104,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     do: Report.entry(item.kind, item.source_id, item.title, :failed, Report.reason(error))
 
   defp written(state, source_item, target, outcome, record) do
-    with {:ok, context} <- parented(state, source_item),
+    with {:ok, context} <- parented(state, source_item, record),
          {:ok, item, kept} <- convert(state, source_item),
          {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
-         note = note(target, item, kept),
+         note = note(target, item, context, kept),
          {:ok, written} <-
            Ash.transact([target.resource(), MigrationItem], fn ->
              store(state, {source_item, item}, {outcome, target, record}, context, note)
@@ -130,19 +130,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp stored({:ok, _item}), do: :ok
   defp stored({:error, error}), do: {:error, error}
 
-  defp parented(state, %Item{parent: nil}), do: {:ok, target_context(state, nil)}
+  defp parented(state, %Item{parent: nil}, record),
+    do: {:ok, target_context(state, nil, record)}
 
-  defp parented(state, %Item{kind: kind, parent: parent}) do
+  defp parented(state, %Item{kind: kind, parent: parent}, record) do
     state.run.source_host
     |> MishkaCmsMigration.items_by_sources(kind, [parent], scope: state.scope)
-    |> parent_record(state)
+    |> parent_record(state, record)
   end
 
-  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, state) when is_binary(id),
-    do: {:ok, target_context(state, id)}
+  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, state, record) when is_binary(id),
+    do: {:ok, target_context(state, id, record)}
 
-  defp parent_record({:ok, _items}, _state), do: {:skipped, "parent_missing"}
-  defp parent_record({:error, error}, _state), do: {:error, error}
+  defp parent_record({:ok, _items}, _state, _record), do: {:skipped, "parent_missing"}
+  defp parent_record({:error, error}, _state, _record), do: {:error, error}
 
   defp write(target, item, nil, context) do
     target.resource()
@@ -152,11 +153,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp write(target, item, record, context) do
     record
-    |> Ash.Changeset.for_update(
-      target.actions().update,
-      target.attrs(item, %{context | record: record}),
-      as(context)
-    )
+    |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
     |> Ash.update()
   end
 
@@ -235,8 +232,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp to_convert(%Item{content: content}),
     do: for(%{html: nil, name: name} <- content || [], do: name)
 
-  defp note(target, item, unconverted),
-    do: [target.note(item), unconverted(unconverted)] |> Enum.reject(&is_nil/1) |> noted()
+  defp note(target, item, context, unconverted),
+    do:
+      [target.note(item, context), unconverted(unconverted)]
+      |> Enum.reject(&is_nil/1)
+      |> noted()
 
   defp noted([]), do: nil
   defp noted(notes), do: notes |> Enum.join("; ") |> Report.reason()
@@ -249,5 +249,6 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp target_context(state, parent_id), do: %{state.context | parent_id: parent_id}
+  defp target_context(state, parent_id, record),
+    do: %{state.context | parent_id: parent_id, record: record}
 end

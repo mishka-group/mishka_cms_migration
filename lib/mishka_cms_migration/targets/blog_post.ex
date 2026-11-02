@@ -27,8 +27,16 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     The Blog has no post pending review, private or behind a password, so `"pending"`, `"private"`
     and a post with a `"password"` (in its `extra`) are drafts, and the report says so for each
-    (`note/1`: `"draft_from_pending"`, `"draft_from_private"`, `"draft_from_password"`), in the dry
+    (`note/2`: `"draft_from_pending"`, `"draft_from_private"`, `"draft_from_password"`), in the dry
     run too. When the post is created is when it is imported: the Blog's create sets it.
+
+    ## Its author
+
+    Its `"author"` is the blogger the same run, or an earlier one, wrote or connected for that user
+    (`MishkaCmsMigration.Targets.BlogBlogger`), read from the item it was recorded as, and becomes
+    the post's one author (its `blogger_ids`). An author with no blogger, one skipped for having no
+    user of the site or never listed, leaves the post with none, and the import's report says so
+    (`"author_missing"`); a dry run, which writes no blogger, does not.
 
     ## Categories and tags
 
@@ -39,10 +47,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     ## Left for later
 
-    A post is written with no author: the Blog asks for none, and WordPress users become bloggers
-    with mishka_cms_migration#6. Its featured image (`"featured_media"`) and the images and
-    internal links in its content keep their WordPress addresses until the media and the links are
-    moved (mishka_cms_migration#7, #9).
+    Its featured image (`"featured_media"`) and the images and internal links in its content keep
+    their WordPress addresses until the media and the links are moved (mishka_cms_migration#7,
+    #9).
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
@@ -72,12 +79,17 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         featured: item.attrs["sticky"] == true,
         language: Languages.primary(context.site_id),
         collection_ids: written(context, "category", item.attrs["categories"]),
-        tag_ids: written(context, "tag", item.attrs["tags"])
+        tag_ids: written(context, "tag", item.attrs["tags"]),
+        blogger_ids: written(context, "user", item.attrs["author"])
       })
     end
 
     @impl MishkaCmsMigration.Target
-    def note(item), do: item |> status() |> drafted()
+    def note(item, context) do
+      [item |> status() |> drafted(), authored(item, context)]
+      |> Enum.reject(&is_nil/1)
+      |> noted()
+    end
 
     defp status(%Item{extra: %{"password" => password}})
          when is_binary(password) and password != "",
@@ -95,6 +107,15 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     defp drafted(status) when status in @drafted, do: "draft_from_" <> status
     defp drafted(_status), do: nil
+
+    defp authored(_item, %{mode: :dry_run}), do: nil
+    defp authored(item, context), do: context |> written("user", item.attrs["author"]) |> author()
+
+    defp author([]), do: "author_missing"
+    defp author(_bloggers), do: nil
+
+    defp noted([]), do: nil
+    defp noted(notes), do: Enum.join(notes, "; ")
 
     defp date(gmt) when is_binary(gmt),
       do: gmt |> NaiveDateTime.from_iso8601!() |> DateTime.from_naive!("Etc/UTC")

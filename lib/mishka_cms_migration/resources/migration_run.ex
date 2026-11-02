@@ -1456,6 +1456,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
   defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
 
+  defp said("author_missing"),
+    do: dgettext("mishka_gervaz", "Its author was not imported, so it has none")
+
   defp said("connected"),
     do: dgettext("mishka_gervaz", "Already in the CMS, so linked and kept as it is")
 

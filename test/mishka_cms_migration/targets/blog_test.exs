@@ -68,7 +68,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   defp posts(site),
     do:
       BlogPost
-      |> Ash.read!(tenant: site.id, authorize?: false, load: [:tenant_collections, :tenant_tags])
+      |> Ash.read!(
+        tenant: site.id,
+        authorize?: false,
+        load: [:tenant_collections, :tenant_tags, :tenant_bloggers]
+      )
       |> Map.new(&{&1.title, &1})
 
   defp content(post), do: LazyHTML.from_fragment(post.content)
@@ -452,6 +456,78 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     end
   end
 
+  describe "a post's author" do
+    setup %{site: site}, do: %{admin: migration_admin!(site, @people)}
+
+    test "an import makes each post's author its blogger, and says which posts have none", %{
+      site: site,
+      admin: admin
+    } do
+      create_user!(email: @editor, site_id: site.id)
+      run = imported!(site, admin)
+      editor = bloggers(site)["shahryar"]
+      posts = posts(site)
+      outcomes = outcomes(run, "post")
+
+      for %{"id" => id, "author" => author, "title" => %{"raw" => title}} <- recorded("posts") do
+        {:created, reason} = outcomes[to_string(id)]
+        authors = Enum.map(posts[title].tenant_bloggers, & &1.id)
+
+        if author == 2 do
+          assert authors == [editor.id]
+          refute to_string(reason) =~ "author_missing"
+        else
+          assert authors == []
+          assert reason =~ "author_missing"
+        end
+      end
+    end
+
+    test "a post whose author was linked to the user's own blogger names that blogger", %{
+      site: site,
+      admin: admin
+    } do
+      editor = create_user!(email: @editor, site_id: site.id)
+
+      own =
+        Blogger
+        |> Ash.Changeset.for_create(
+          :create,
+          %{user_id: editor.id, display_name: "Shahryar, in the CMS", slug: "mine"},
+          actor: admin,
+          tenant: site.id
+        )
+        |> Ash.create!()
+
+      imported!(site, admin)
+
+      assert Enum.map(posts(site)["Release 1.0 announcement"].tenant_bloggers, & &1.id) == [
+               own.id
+             ]
+    end
+
+    test "under create, every post names its author's blogger", %{site: site, admin: admin} do
+      run = imported!(site, admin, %{authors: "create"})
+      bloggers = Map.new(bloggers(site), fn {_slug, blogger} -> {blogger.id, blogger.slug} end)
+      slugs = Map.new(recorded("users"), &{&1["id"], &1["slug"]})
+      posts = posts(site)
+
+      for %{"author" => author, "title" => %{"raw" => title}} <- recorded("posts"),
+          do: assert(Enum.map(posts[title].tenant_bloggers, &bloggers[&1.id]) == [slugs[author]])
+
+      refute Enum.any?(run.report.entries, &(&1.reason && &1.reason =~ "author_missing"))
+    end
+
+    test "a dry run says nothing of authors, since it writes no blogger", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      refute Enum.any?(run.report.entries, &(&1.reason && &1.reason =~ "author_missing"))
+    end
+  end
+
   describe "posts" do
     test "a dry run reports every post as one to create, says which become drafts and what is left as text, and writes nothing",
          %{site: site, admin: admin} do
@@ -505,9 +581,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
           do: assert(%{status: :draft, published_at: nil} = posts[title])
 
       assert %{
-               "40" => {:created, "draft_from_pending"},
-               "41" => {:created, "draft_from_private"},
-               "42" => {:created, "draft_from_password"}
+               "40" => {:created, "draft_from_pending; author_missing"},
+               "41" => {:created, "draft_from_private; author_missing"},
+               "42" => {:created, "draft_from_password; author_missing"}
              } =
                outcomes(run, "post")
 
@@ -603,7 +679,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin)
       html = content(posts(site)["Unknown and dynamic blocks"])
 
-      assert %{"53" => {:created, "unconverted: acme/callout, core/latest-posts"}} =
+      assert %{"53" => {:created, "author_missing; unconverted: acme/callout, core/latest-posts"}} =
                outcomes(run, "post")
 
       assert LazyHTML.text(html) =~
@@ -629,7 +705,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "Heads up"
              ]
 
-      assert %{"53" => {:created, "unconverted: core/latest-posts"}} = outcomes(run, "post")
+      assert %{"53" => {:created, "author_missing; unconverted: core/latest-posts"}} =
+               outcomes(run, "post")
     end
 
     test "a second run skips every post WordPress did not change, and keeps one an admin edited",

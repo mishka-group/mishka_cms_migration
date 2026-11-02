@@ -141,7 +141,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              source: source,
              conn: conn,
              options: options,
-             context: target_context(run, context.actor, options)
+             context: target_context(run, mode, context.actor, options)
            }) do
       {:ok, report, extra}
     end
@@ -276,8 +276,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp progressed({:ok, _run}), do: :ok
   defp progressed(error), do: error
 
-  defp target_context(run, actor, options),
+  defp target_context(run, mode, actor, options),
     do: %{
+      mode: mode,
       actor: actor,
       site_id: run.site_id,
       run_id: run.id,
