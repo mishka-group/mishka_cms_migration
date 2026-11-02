@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.TestLayouts do
   tags and theme attributes. None of that is this library's to own, so the harness provides the
   minimum a LiveView needs to mount: a document, a csrf token, and somewhere to put the page.
 
-  `MishkaCmsCore.Layouts` (in `lib/`) is the *app* layout, which is this library's and is used as-is.
+  `MishkaCmsCore.Layouts` (in `lib/`) is the *app* layout, which is this library's and is used
+  as-is.
   """
 
   use Phoenix.Component

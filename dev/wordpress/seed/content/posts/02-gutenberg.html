@@ -1,0 +1,168 @@
+---
+type: post
+slug: gutenberg-all-core-blocks
+status: publish
+date: 2026-01-12 10:00:00
+author: nadia
+title: Every core block in one post
+categories: wordpress,tutorials
+tags: Gutenberg,WordPress
+thumb: cover
+attach: diagram,photo,guide,sample
+excerpt: A post that uses the core blocks the importer has to understand.
+yoast_title: Every WordPress core block in one post
+yoast_desc: Paragraph, heading, list, quote, table, code, image, gallery, cover, media and text, columns, buttons, embed, file and more.
+yoast_focuskw: core blocks
+yoast_og_image: diagram
+yoast_canonical: http://localhost:8089/2026/01/gutenberg-all-core-blocks/
+yoast_primary_cat: wordpress
+---
+<!-- wp:paragraph -->
+<p>This post uses the core blocks an importer meets most. A paragraph has <strong>bold</strong>, <em>italic</em>, <a href="{{post:welcome-to-the-mishka-test-blog}}">an internal link</a>, <code>inline code</code>, <mark>highlighted text</mark>, <s>strikethrough</s> and a line<br>break.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading -->
+<h2 class="wp-block-heading">A level two heading</h2>
+<!-- /wp:heading -->
+
+<!-- wp:heading {"level":3} -->
+<h3 class="wp-block-heading">A level three heading</h3>
+<!-- /wp:heading -->
+
+<!-- wp:list -->
+<ul class="wp-block-list"><!-- wp:list-item -->
+<li>First item</li>
+<!-- /wp:list-item -->
+
+<!-- wp:list-item -->
+<li>Second item, with a nested list<!-- wp:list -->
+<ul class="wp-block-list"><!-- wp:list-item -->
+<li>Nested one</li>
+<!-- /wp:list-item -->
+
+<!-- wp:list-item -->
+<li>Nested two</li>
+<!-- /wp:list-item --></ul>
+<!-- /wp:list --></li>
+<!-- /wp:list-item --></ul>
+<!-- /wp:list -->
+
+<!-- wp:list {"ordered":true} -->
+<ol class="wp-block-list"><!-- wp:list-item -->
+<li>Step one</li>
+<!-- /wp:list-item -->
+
+<!-- wp:list-item -->
+<li>Step two</li>
+<!-- /wp:list-item --></ol>
+<!-- /wp:list -->
+
+<!-- wp:quote -->
+<blockquote class="wp-block-quote"><!-- wp:paragraph -->
+<p>Content is the part of a site that outlives its theme.</p>
+<!-- /wp:paragraph --><cite>A migration proverb</cite></blockquote>
+<!-- /wp:quote -->
+
+<!-- wp:pullquote -->
+<figure class="wp-block-pullquote"><blockquote><p>Move the words, keep the addresses.</p><cite>Redirect rule number one</cite></blockquote></figure>
+<!-- /wp:pullquote -->
+
+<!-- wp:table -->
+<figure class="wp-block-table"><table class="has-fixed-layout"><thead><tr><th>Block</th><th>Becomes</th></tr></thead><tbody><tr><td>core/paragraph</td><td>text</td></tr><tr><td>core/table</td><td>table</td></tr></tbody></table><figcaption class="wp-element-caption">A table with a caption</figcaption></figure>
+<!-- /wp:table -->
+
+<!-- wp:code -->
+<pre class="wp-block-code"><code>defmodule Hello do
+  def world, do: "Hello &lt;World&gt; &amp; friends"
+end</code></pre>
+<!-- /wp:code -->
+
+<!-- wp:preformatted -->
+<pre class="wp-block-preformatted">Preformatted text
+    keeps   its spacing
+and its line breaks.</pre>
+<!-- /wp:preformatted -->
+
+<!-- wp:image {"id":{{id:photo}},"sizeSlug":"large","linkDestination":"media"} -->
+<figure class="wp-block-image size-large"><a href="{{url:photo}}"><img src="{{url:photo}}" alt="A pink and peach gradient with the text WebP photo" class="wp-image-{{id:photo}}"/></a><figcaption class="wp-element-caption">An image linked to its file, with a caption</figcaption></figure>
+<!-- /wp:image -->
+
+<!-- wp:gallery {"linkTo":"none"} -->
+<figure class="wp-block-gallery has-nested-images columns-default is-cropped"><!-- wp:image {"id":{{id:gallery-1}},"sizeSlug":"large","linkDestination":"none"} -->
+<figure class="wp-block-image size-large"><img src="{{url:gallery-1}}" alt="A green gradient with the text Gallery 1" class="wp-image-{{id:gallery-1}}"/></figure>
+<!-- /wp:image -->
+
+<!-- wp:image {"id":{{id:gallery-2}},"sizeSlug":"large","linkDestination":"none"} -->
+<figure class="wp-block-image size-large"><img src="{{url:gallery-2}}" alt="A red and orange gradient with the text Gallery 2" class="wp-image-{{id:gallery-2}}"/></figure>
+<!-- /wp:image -->
+
+<!-- wp:image {"id":{{id:gallery-3}},"sizeSlug":"large","linkDestination":"none"} -->
+<figure class="wp-block-image size-large"><img src="{{url:gallery-3}}" alt="A blue and violet gradient with the text Gallery 3" class="wp-image-{{id:gallery-3}}"/></figure>
+<!-- /wp:image --></figure>
+<!-- /wp:gallery -->
+
+<!-- wp:cover {"url":"{{url:cover}}","id":{{id:cover}},"dimRatio":40,"minHeight":260} -->
+<div class="wp-block-cover" style="min-height:260px"><span aria-hidden="true" class="wp-block-cover__background has-background-dim-40 has-background-dim"></span><img class="wp-block-cover__image-background wp-image-{{id:cover}}" alt="A purple to orange gradient used as a cover background" src="{{url:cover}}" data-object-fit="cover"/><div class="wp-block-cover__inner-container"><!-- wp:paragraph {"align":"center","fontSize":"large"} -->
+<p class="has-text-align-center has-large-font-size">Text on a cover block</p>
+<!-- /wp:paragraph --></div></div>
+<!-- /wp:cover -->
+
+<!-- wp:media-text {"mediaId":{{id:photo}},"mediaLink":"{{page:photo}}","mediaType":"image"} -->
+<div class="wp-block-media-text is-stacked-on-mobile"><figure class="wp-block-media-text__media"><img src="{{url:photo}}" alt="A pink and peach gradient with the text WebP photo" class="wp-image-{{id:photo}} size-full"/></figure><div class="wp-block-media-text__content"><!-- wp:paragraph {"placeholder":"Content..."} -->
+<p>Text beside an image: the media-text block holds one media item and inner blocks.</p>
+<!-- /wp:paragraph --></div></div>
+<!-- /wp:media-text -->
+
+<!-- wp:columns -->
+<div class="wp-block-columns"><!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph -->
+<p>Left column.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column -->
+
+<!-- wp:column -->
+<div class="wp-block-column"><!-- wp:paragraph -->
+<p>Right column.</p>
+<!-- /wp:paragraph --></div>
+<!-- /wp:column --></div>
+<!-- /wp:columns -->
+
+<!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:paragraph -->
+<p>A group wraps other blocks.</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:buttons -->
+<div class="wp-block-buttons"><!-- wp:button -->
+<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="{{post:classic-editor-with-shortcodes}}">Read the classic post</a></div>
+<!-- /wp:button -->
+
+<!-- wp:button {"className":"is-style-outline"} -->
+<div class="wp-block-button is-style-outline"><a class="wp-block-button__link wp-element-button" href="https://elixir-lang.org/" target="_blank" rel="noreferrer noopener">Elixir</a></div>
+<!-- /wp:button --></div>
+<!-- /wp:buttons --></div>
+<!-- /wp:group -->
+
+<!-- wp:separator -->
+<hr class="wp-block-separator has-alpha-channel-opacity"/>
+<!-- /wp:separator -->
+
+<!-- wp:embed {"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw","type":"video","providerNameSlug":"youtube","responsive":true,"className":"wp-embed-aspect-16-9 wp-has-aspect-ratio"} -->
+<figure class="wp-block-embed is-type-video is-provider-youtube wp-block-embed-youtube wp-embed-aspect-16-9 wp-has-aspect-ratio"><div class="wp-block-embed__wrapper">
+https://www.youtube.com/watch?v=jNQXAC9IVRw
+</div></figure>
+<!-- /wp:embed -->
+
+<!-- wp:file {"id":{{id:guide}},"href":"{{url:guide}}"} -->
+<div class="wp-block-file"><a id="wp-block-file--media-guide" href="{{url:guide}}">Migration guide (PDF)</a><a href="{{url:guide}}" class="wp-block-file__button wp-element-button" download aria-describedby="wp-block-file--media-guide">Download</a></div>
+<!-- /wp:file -->
+
+<!-- wp:video {"id":{{id:sample}}} -->
+<figure class="wp-block-video"><video controls src="{{url:sample}}"></video></figure>
+<!-- /wp:video -->
+
+<!-- wp:html -->
+<div class="custom-widget" data-widget="demo"><strong>Custom HTML</strong> with <em>inline</em> markup and an <a href="https://example.test/">external link</a>.</div>
+<!-- /wp:html -->
+
+<!-- wp:block {"ref":{{postid:newsletter-cta}}} /-->

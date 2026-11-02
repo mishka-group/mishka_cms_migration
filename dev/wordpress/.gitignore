@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# The application password and the admin login that seed.sh generates. Local only.
+.env.local

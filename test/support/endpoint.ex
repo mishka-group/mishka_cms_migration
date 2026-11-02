@@ -13,13 +13,15 @@ defmodule MishkaCmsMigration.TestEndpoint do
   Everything the CMS's real endpoint carries and this one does not — static assets and the
   production admin pipeline — is machinery a test of this extension never touches.
 
+  The admin LiveViews mount over a session, so the endpoint keeps one in a cookie for the browser
+  pipeline to fetch.
+
   Test-only: Mix does not compile a path dependency's `test/support`, so the CMS never sees this
   module, and `mix.exs` keeps `test` out of the hex `files:` list.
   """
 
   use Phoenix.Endpoint, otp_app: :mishka_cms_migration
 
-  # The admin LiveViews mount over a session, so the browser pipeline needs one to fetch.
   @session_options [
     store: :cookie,
     key: "_mishka_cms_migration_test_key",

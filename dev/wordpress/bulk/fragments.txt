@@ -1,0 +1,117 @@
+h|en|Why this matters
+h|en|What we tried first
+h|en|The short version
+h|en|Setting it up
+h|en|Common mistakes
+h|en|What changed after the switch
+h|en|Our checklist
+h|en|A step-by-step example
+h|en|Numbers from the first month
+h|en|Trade-offs we accepted
+h|en|When not to do this
+h|en|Lessons learned
+h|en|Before you start
+h|en|The result
+h|en|Questions readers asked
+h|en|Where to go next
+h|en|A note on performance
+h|en|Testing the change
+h|en|Rollback plan
+h|en|Background
+h|en|The plan in three steps
+h|en|What we would do differently
+h|fa|چرا این موضوع مهم است
+h|fa|گام اول: آماده‌سازی
+h|fa|اشتباه‌های رایج
+h|fa|نتیجه کار
+h|ar|لماذا يهمنا هذا الأمر
+h|ar|خطوات التنفيذ
+h|de|Warum das wichtig ist
+h|de|Schritt für Schritt
+li|elixir|Keep the context boundary small and explicit
+li|elixir|Write one test for each error the function can return
+li|elixir|Prefer Ecto.Multi over nested case statements
+li|elixir|Log the request id with every warning
+li|elixir|Set a timeout on every external call
+li|elixir|Use tagged tuples for expected failures
+li|wordpress|Back up the database and the uploads folder first
+li|wordpress|Test the change on a staging copy
+li|wordpress|Update plugins one at a time
+li|wordpress|Check the redirects after the switch
+li|wordpress|Remove plugins nobody uses
+li|wordpress|Write alt text for every image in the article
+li|webdev|Measure before you change anything
+li|webdev|Serve static assets with long cache headers
+li|webdev|Keep secrets out of the repository
+li|webdev|Add a health check endpoint
+li|webdev|Compress text responses with Brotli or gzip
+li|design|Pick one accent colour for primary actions
+li|design|Use at least 4.5 to 1 contrast for body text
+li|design|Keep line length between sixty and seventy characters
+li|design|Test forms with a keyboard and a phone
+li|business|Write the scope before you write the estimate
+li|business|Send invoices on the same day each month
+li|business|Keep one owner for each recurring task
+li|business|Review the goals every week, not every quarter
+li|travel|Carry a copy of your passport and insurance
+li|travel|Keep one day without a plan
+li|travel|Learn five polite phrases in the local language
+li|travel|Check the train timetable the day before
+li|food|Taste and season at the end, not only at the start
+li|food|Let meat rest before you slice it
+li|food|Soak dried beans overnight for an even cook
+li|food|Store fresh herbs wrapped in a damp towel
+li|news|Read the changelog before updating
+li|news|Report bugs with the steps to reproduce
+li|news|Tell us which version you are running
+li|news|Check the status page during an outage
+li|en|Start with the smallest change that answers the question
+li|en|Write down the decision and the date
+li|en|Ask someone to read the draft out loud
+li|en|Keep a short list of open questions
+li|en|Review the numbers with the team every month
+li|fa|از آسان‌ترین مرحله شروع کنید
+li|fa|تغییرات را روی نسخه آزمایشی امتحان کنید
+li|ar|ابدأ بأصغر تغيير ممكن
+li|de|Testen Sie die Änderung zuerst auf einer Kopie
+q|en|Content is the part of a site that outlives its theme.|A migration proverb
+q|en|Measure first, then decide what to fix.|Our operations lead
+q|en|Make the boring parts reliable and the exciting parts fast.|From our team retro
+q|en|The best backup is the one you have restored.|Our runbook
+q|en|A good error message says what happened and what to do next.|Design review notes
+q|en|Small teams win by writing things down.|Remote work handbook
+q|en|Every redirect you forget is a visitor you lose.|Migration checklist
+q|en|Simple code is code people can change on a Monday morning.|Engineering principles
+q|en|If the page cannot be read without a mouse, it is not finished.|Accessibility review
+q|en|Clear prices build more trust than clever ones.|Pricing notes
+q|fa|هر نوشته خوب، خواننده‌اش را به فکر وامی‌دارد.|یادداشت تحریریه
+q|fa|سادگی، بزرگ‌ترین امتیاز یک سایت است.|از دفترچه طراحی ما
+q|ar|الوضوح هو أول شروط الجودة.|من مبادئ الفريق
+q|de|Gute Software ist langweilig im Betrieb.|Aus unseren Betriebsnotizen
+code|elixir|defmodule Shop.Orders do\n  alias Shop.Repo\n  alias Ecto.Multi\n\n  def place(attrs) do\n    Multi.new()\n    |> Multi.insert(:order, Order.changeset(%Order{}, attrs))\n    |> Multi.run(:charge, &charge_card/2)\n    |> Repo.transaction()\n  end\nend
+code|elixir|def handle_info({:tick, at}, socket) do\n  {:noreply, assign(socket, :now, at)}\nend
+code|elixir|case Repo.get(User, id) do\n  %User{} = user -> {:ok, user}\n  nil -> {:error, :not_found}\nend
+code|elixir|test "retries once on timeout" do\n  assert {:ok, _} = Client.fetch(:slow_url, retries: 1)\nend
+code|php|<?php\nadd_action( 'init', function () {\n    register_post_meta( 'post', 'reading_time', array(\n        'show_in_rest' => true,\n        'single'       => true,\n        'type'         => 'integer',\n    ) );\n} );
+code|php|$posts = get_posts( array( 'numberposts' => 5, 'category_name' => 'news' ) );\nforeach ( $posts as $post ) {\n    echo esc_html( get_the_title( $post ) ), "\\n";\n}
+code|js|const res = await fetch('/wp-json/wp/v2/posts?per_page=10&_embed');\nconst total = Number(res.headers.get('X-WP-Total'));\nconsole.log(`${total} posts`);
+code|js|document.querySelectorAll('img[loading="lazy"]').forEach((img) => {\n  img.decoding = 'async';\n});
+code|css|:root {\n  --accent: #c2410c;\n  --text: #1f2937;\n  --measure: 68ch;\n}\n\nbody {\n  line-height: 1.6;\n  max-width: var(--measure);\n}
+code|css|.card img {\n  aspect-ratio: 16 / 9;\n  object-fit: cover;\n}
+code|shell|wp --user=admin db export backup.sql\ntar -czf uploads.tgz wp-content/uploads\nwp --user=admin cache flush
+code|shell|docker compose up -d --wait\ndocker compose run --rm -T wp-cli wp --user=admin post list --format=count
+code|sql|SELECT option_name, LENGTH(option_value) AS size\nFROM wp_options\nWHERE autoload = 'yes'\nORDER BY size DESC\nLIMIT 10;
+code|nginx|limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;\n\nserver {\n    location /api/ {\n        limit_req zone=api burst=20 nodelay;\n        proxy_pass http://app;\n    }\n}
+cap|en|A quick look at the setup on the first day
+cap|en|The team during the spring workshop
+cap|en|Early sketches, before the grid was fixed
+cap|en|The dashboard after the first release
+cap|en|Lunch at the new office, the first week
+cap|en|Notes from the migration review
+cap|en|The chart from the monthly report
+cap|en|A detail from the kitchen, shot in daylight
+cap|en|The final layout on a phone
+cap|fa|نمای کلی از کارگاه آموزشی
+cap|fa|اولین نسخه طراحی شده
+cap|ar|صورة من ورشة العمل الأولى
+cap|de|Die Teamrunde im Frühjahr

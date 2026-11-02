@@ -10,13 +10,26 @@ defmodule MishkaCmsMigration.DataCase do
   The core's `MishkaCmsCore.DataCase` with this extension's helpers on top. The sandbox is the
   core's (`MishkaCmsCore.DataCase.setup_sandbox/1`): each test gets its own sandboxed connection and
   everything it writes is rolled back at the end; `async: false` (the default here) shares that
-  connection with any process the test spawns, and puts the site cache and the runtime modules back as
-  the test found them.
+  connection with any process the test spawns, and puts the site cache and the runtime modules back
+  as the test found them.
 
   The helpers come from the core too — `errors_on/1` and the rest of `MishkaCmsCore.DataCase`, the
-  sites, users and runtime records of `MishkaCmsCore.Test.Factory`, `MishkaCmsCore.Test.VersionHelpers`
-  — and this case adds a plugin for the length of a block (`with_plugin/3`) and the SQL a block ran
-  (`queries_while/1`).
+  sites, users and runtime records of `MishkaCmsCore.Test.Factory`,
+  `MishkaCmsCore.Test.VersionHelpers` — and this case adds this extension's fixtures
+  (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
+  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), and the SQL a
+  block ran (`queries_while/1`).
+
+  ## How the suite boots
+
+  The CMS's application supervisor owns the runtime around the core, so running this suite on its
+  own means starting it, and `test_helper.exs` does it with the core's harness,
+  `MishkaCmsCore.Test.Boot.start!/1`: it creates Oban's tables (they are not an Ash resource, so
+  `mix ash.codegen` never emits them), then starts the repo, Oban, the core's caches and runtime
+  compiler, AshAuthentication and the endpoint, the way a host starts them. The run starts once the
+  core's plugins and this extension's own are live, each having registered from its own
+  `handle_continue`. A test plugin a killed run left registered in `mishka_installer`'s Mnesia
+  (any module under `MishkaCmsMigration.Test.Plugins`) is swept first.
   """
 
   use ExUnit.CaseTemplate
@@ -32,6 +45,9 @@ defmodule MishkaCmsMigration.DataCase do
       import MishkaCmsCore.Test.Factory
       import MishkaCmsCore.Test.VersionHelpers
       import MishkaCmsMigration.DataCase
+      import MishkaCmsMigration.Test.Factory
+
+      use AshOban.Test, repo: MishkaCmsMigration.Repo
     end
   end
 
@@ -47,6 +63,27 @@ defmodule MishkaCmsMigration.DataCase do
       with_plugin(MyPlugin, "migration:item:before_import", fn -> ... end)
   """
   def with_plugin(module, event, fun) do
+    register(module, event)
+
+    try do
+      fun.()
+    after
+      MishkaInstaller.Event.Event.unregister(:name, module, false)
+    end
+  end
+
+  @doc """
+  Registers and starts `module` as the plugin for `event` for the rest of the test, and unregisters
+  it when the test exits.
+
+      setup do: register_plugin!(MyPlugin, "migration:import:finished")
+  """
+  def register_plugin!(module, event) do
+    register(module, event)
+    on_exit(fn -> MishkaInstaller.Event.Event.unregister(:name, module, false) end)
+  end
+
+  defp register(module, event) do
     {:ok, _registered} =
       MishkaInstaller.Event.Event.write(%{
         name: module,
@@ -56,12 +93,6 @@ defmodule MishkaCmsMigration.DataCase do
       })
 
     :ok = MishkaInstaller.Event.EventHandler.do_compile(event, :start, false)
-
-    try do
-      fun.()
-    after
-      MishkaInstaller.Event.Event.unregister(:name, module, false)
-    end
   end
 
   @doc """

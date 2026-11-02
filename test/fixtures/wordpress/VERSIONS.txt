@@ -1,0 +1,11 @@
+Recorded: 2026-11-02T06:22:49Z from http://localhost:8089
+WordPress: 7.1.4  (image wordpress:7.1.4-php8.4-apache)
+PHP: 8.4.27
+Database: 11.8.9  (image mariadb:11.8.9)
+WP-CLI: 2.12.0  (image wordpress:cli-2.12.0-php8.4)
+Theme: twentytwentyfive 1.5
+Plugins:
+  akismet inactive 5.7.2
+  wordpress-seo active 28.8
+Site: timezone Asia/Tehran, permalinks /%year%/%monthnum%/%postname%/
+Application passwords need WP_ENVIRONMENT_TYPE=local on plain HTTP; in production they need HTTPS.
