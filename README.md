@@ -20,6 +20,10 @@
 - [ ] Drupal
 - [ ] Ghost
 
+## 🔌 In a host
+
+The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`). Sources and targets are Mishka Installer plugins, supervised by the extension that ships them.
+
 ## 🧩 Part of Mishka CMS
 
 Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS](https://mishka.tools/cms), built like [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) and [Mishka Document: Versioned Docs Engine](https://mishka.tools/cms/extensions/documentation): Ash resources, Mishka Installer plugins, mishka_gervaz admin screens and Oban jobs.
