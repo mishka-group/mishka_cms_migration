@@ -4,21 +4,21 @@
 
 defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   @moduledoc """
-  What a `migration` job does with its run (`MishkaCmsMigration.Workers.DryRunWorker`,
-  `MishkaCmsMigration.Workers.ImportWorker`): find the run waiting for it and who asked, walk the
-  run's source, and save what came of it on the run.
+  What a `migration` job does with its run (`call/2`, for `MishkaCmsMigration.Workers.DryRunWorker`
+  and `MishkaCmsMigration.Workers.ImportWorker`): find the run waiting for it and who asked, walk
+  the run's source, and save what came of it on the run.
 
   ## The walk
 
   The job connects once with the run's connection and its opened secret
-  (`MishkaCmsMigration.MigrationRun.open_secret/1`), walks the kinds in the order the source's
-  `kinds/0` gives them, and pages through each with `list/3` until the source answers no cursor.
-  Each row is normalized into an item (`MishkaCmsMigration.Source.Item`), decided
-  (`MishkaCmsMigration.Workers.Helpers.Decision`) and, in an import, written
-  (`MishkaCmsMigration.Workers.Helpers.Writer`). After each page with rows the job saves how far it is on the
-  run (`MishkaCmsMigration.MigrationRun`'s `:record_progress`, `progress`: the kind and the counts
-  so far), and the run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`. A
-  run that no longer takes its progress — an admin cancelled it — stops the walk after that page.
+  (`MishkaCmsMigration.MigrationRun.open_secret/1`) and reads the source's facts (`extra/1`), then
+  walks the kinds in the order the source's `kinds/0` gives them, and pages through each with
+  `list/3` until the source answers no cursor. Each row is normalized into an item
+  (`MishkaCmsMigration.Source.Item`), decided (`MishkaCmsMigration.Workers.Helpers.Decision`) and
+  settled (`MishkaCmsMigration.Workers.Helpers.Writer`): written in an import, reported in a dry
+  run. After each page with rows the job saves how far it is on the run
+  (`MishkaCmsMigration.MigrationRun`'s `:record_progress`: the kind and the counts so far), and the
+  run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`.
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
@@ -28,22 +28,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   ## Dry run and import
 
   A dry run decides and reports; it writes nothing and fires no event. An import writes each item
-  as the admin who pressed Import, and once every kind is walked its report is saved on the run and
-  handed to `migration:import:finished` (`MishkaCmsMigration.Events`).
+  as the admin who pressed Import, and once every kind is walked its report and the source's facts
+  are saved on the run and the report is handed to `migration:import:finished`
+  (`MishkaCmsMigration.Events`).
 
-  ## When the walk fails
+  ## When the job stops
+
+  A run that is no longer waiting for its job — an admin cancelled it — cancels the job: at its
+  start, at the first page whose progress the run no longer takes, and when the run refuses the
+  report. A job whose run is gone is cancelled too.
 
   An error from `connect/2` or `list/3`, a raise outside a single row, a secret that can no longer
   be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
   a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
   kind — fails the job. Oban tries it again, and the last attempt fails the run with the reason
-  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A job whose run is
-  gone, or is not waiting for it (it was cancelled meanwhile), is cancelled, and so is one whose
-  run refuses its report.
-
-  A last attempt that never returns — Oban stops it at its timeout, or it crashes past every
-  rescue — fails its run through Oban's own telemetry
-  (`MishkaCmsMigration.Workers.Helpers.Discarded`).
+  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A last attempt that
+  never returns — Oban stops it at its timeout, or it crashes past every rescue — fails its run
+  through Oban's own telemetry (`MishkaCmsMigration.Workers.Helpers.Discarded`).
   """
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
@@ -61,28 +62,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   @doc "Runs `job` of a run in `mode` and answers as an `Oban.Worker` does."
   @spec call(Oban.Job.t(), mode()) :: :ok | {:error, term()} | {:cancel, term()}
   def call(%Oban.Job{args: args} = job, mode) do
-    case running(args, mode) do
-      {:ok, run} -> settle(run, mode, job)
-      {:error, reason} -> {:cancel, reason}
+    with {:ok, run} <- running(args, mode) do
+      run |> walked(mode, args) |> settled(run, mode, job)
     end
   end
 
   defp running(%{"run_id" => run_id, "site_id" => site_id}, mode) do
-    status = Map.fetch!(@running, mode)
-
-    case MishkaCmsMigration.get_run(run_id, tenant: site_id, authorize?: false) do
-      {:ok, %{status: ^status} = run} -> {:ok, run}
-      {:ok, _run} -> {:error, :not_running}
-      {:error, _error} -> {:error, :run_not_found}
-    end
+    run_id
+    |> MishkaCmsMigration.get_run(tenant: site_id, authorize?: false)
+    |> waiting(Map.fetch!(@running, mode))
   end
 
-  defp settle(run, mode, job) do
-    case walked(run, mode, job.args) do
-      {:ok, report, extra, actor} -> finish(run, mode, Report.done(report), extra, actor)
-      {:error, reason} -> retry_or_fail(run, reason, job.attempt >= job.max_attempts)
-    end
-  end
+  defp waiting({:ok, %{status: status} = run}, status), do: {:ok, run}
+  defp waiting({:ok, _run}, _status), do: {:cancel, :not_running}
+  defp waiting({:error, _error}, _status), do: {:cancel, :run_not_found}
 
   defp walked(run, mode, args) do
     with {:ok, actor} <- actor(args),
@@ -95,41 +88,45 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp actor(%{"actor_id" => id}) when is_binary(id) do
-    case Ash.get(MishkaCmsCore.Accounts.User, id, authorize?: false) do
-      {:ok, user} -> {:ok, AccessPermissions.with_permissions(user)}
-      {:error, _error} -> {:error, :actor_not_found}
-    end
-  end
+  defp settled({:ok, report, extra, actor}, run, mode, _job),
+    do: finish(run, mode, Report.done(report), extra, actor)
 
-  defp actor(_args), do: {:error, :actor_not_found}
+  defp settled({:error, :not_running}, _run, _mode, _job), do: {:cancel, :not_running}
 
-  defp finish(run, :dry_run, report, extra, _actor) do
-    case MishkaCmsMigration.finish_dry_run(run, report, extra, authorize?: false) do
-      {:ok, _run} -> :ok
-      {:error, error} -> {:cancel, error}
-    end
-  end
-
-  defp finish(run, :import, report, extra, actor) do
-    case MishkaCmsMigration.finish_import(run, report, extra, authorize?: false) do
-      {:ok, run} -> Events.finished(report, run, actor)
-      {:error, error} -> {:cancel, error}
-    end
-  end
-
-  defp retry_or_fail(run, reason, true) do
+  defp settled({:error, reason}, run, _mode, %{attempt: attempt, max_attempts: attempt}) do
     MishkaCmsMigration.fail_run(run, Report.reason(reason), authorize?: false)
     {:cancel, reason}
   end
 
-  defp retry_or_fail(_run, reason, false), do: {:error, reason}
+  defp settled({:error, reason}, _run, _mode, _job), do: {:error, reason}
+
+  defp actor(%{"actor_id" => id}) when is_binary(id),
+    do: MishkaCmsCore.Accounts.User |> Ash.get(id, authorize?: false) |> found_actor()
+
+  defp actor(_args), do: {:error, :actor_not_found}
+
+  defp found_actor({:ok, user}), do: {:ok, AccessPermissions.with_permissions(user)}
+  defp found_actor({:error, _error}), do: {:error, :actor_not_found}
+
+  defp finish(run, :dry_run, report, extra, _actor),
+    do: run |> MishkaCmsMigration.finish_dry_run(report, extra, authorize?: false) |> saved()
+
+  defp finish(run, :import, report, extra, actor) do
+    with {:ok, run} <-
+           run |> MishkaCmsMigration.finish_import(report, extra, authorize?: false) |> saved() do
+      Events.finished(report, run, actor)
+    end
+  end
+
+  defp saved({:ok, run}), do: {:ok, run}
+  defp saved({:error, _refused}), do: {:cancel, :not_running}
 
   defp walk(run, mode, actor) do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- source.connect(run.connection, secret),
+         extra = source.extra(conn),
          {:ok, report} <-
            walk_kinds(%{
              run: run,
@@ -139,117 +136,101 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              conn: conn,
              options: options
            }) do
-      {:ok, report, extra(source, conn)}
+      {:ok, report, extra}
     end
   end
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
-      walk = %{kind: kind, cursor: nil, cursors: %{}, ids: %{}, pages: 0}
-
-      case walk_kind(state, walk, report) do
-        {:ok, report} -> {:cont, {:ok, report}}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
+      walk = %{kind: kind, cursor: nil, cursors: %{}, source_ids: %{}, pages: 0}
+      state |> walk_kind(walk, report) |> walked_kind()
     end)
   end
+
+  defp walked_kind({:ok, report}), do: {:cont, {:ok, report}}
+  defp walked_kind({:error, reason}), do: {:halt, {:error, reason}}
 
   defp walk_kind(_state, %{pages: @max_pages, kind: kind}, _report),
     do: {:error, {:too_many_pages, kind}}
 
   defp walk_kind(state, walk, report) do
-    case state.source.list(state.conn, walk.kind, walk.cursor) do
-      {:ok, rows, next} ->
-        {report, ids} = page(state, walk, rows, report)
-
-        with :ok <- progress(state, walk.kind, rows, report.counts) do
-          walk_on(state, %{walk | ids: ids, pages: walk.pages + 1}, next, report)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, rows, next} <- state.source.list(state.conn, walk.kind, walk.cursor),
+         {report, source_ids} = page(state, walk, rows, report),
+         :ok <- progress(state, walk.kind, rows, report.counts) do
+      walk_on(state, %{walk | source_ids: source_ids, pages: walk.pages + 1}, next, report)
     end
   end
 
   defp walk_on(_state, _walk, nil, report), do: {:ok, report}
 
-  defp walk_on(state, walk, next, report) do
-    case Map.has_key?(walk.cursors, next) do
-      true ->
-        {:error, {:cursor_repeated, walk.kind}}
+  defp walk_on(_state, %{cursors: cursors, kind: kind}, next, _report)
+       when is_map_key(cursors, next),
+       do: {:error, {:cursor_repeated, kind}}
 
-      false ->
-        walk_kind(
-          state,
-          %{walk | cursor: next, cursors: Map.put(walk.cursors, next, true)},
-          report
-        )
-    end
-  end
+  defp walk_on(state, walk, next, report),
+    do:
+      walk_kind(state, %{walk | cursor: next, cursors: Map.put(walk.cursors, next, true)}, report)
 
   defp page(state, walk, rows, report) do
-    {built, ids} =
+    {built, source_ids} =
       rows
       |> Enum.map(&build(state, walk.kind, &1))
-      |> Enum.map_reduce(walk.ids, &once/2)
+      |> Enum.map_reduce(walk.source_ids, &once/2)
 
     plans = Decision.call(state, walk.kind, for({:ok, item} <- built, do: item))
 
-    {Enum.reduce(built, report, &Report.add(&2, handle(state, walk.kind, plans, &1))), ids}
+    {Enum.reduce(built, report, &Report.add(&2, settle(state, plans, &1))), source_ids}
   end
 
-  defp once({:ok, item} = row, ids) do
-    case Map.has_key?(ids, item.source_id) do
-      true -> {{:duplicate, item}, ids}
-      false -> {row, Map.put(ids, item.source_id, true)}
-    end
-  end
+  defp once({:ok, %Item{source_id: source_id} = item}, source_ids)
+       when is_map_key(source_ids, source_id),
+       do: {{:duplicate, item}, source_ids}
 
-  defp once(row, ids), do: {row, ids}
+  defp once({:ok, item}, source_ids), do: {{:ok, item}, Map.put(source_ids, item.source_id, true)}
+  defp once(failed, source_ids), do: {failed, source_ids}
 
   defp build(state, kind, row) do
-    case state.source.normalize(row, kind, source_context(state)) do
-      {:ok, attrs} -> attrs |> Map.put(:kind, kind) |> Item.build() |> built(attrs)
-      {:error, reason} -> {:error, nil, reason}
-    end
+    row
+    |> state.source.normalize(kind, source_context(state))
+    |> built(kind)
   rescue
-    error -> {:error, nil, error}
+    error -> {:failed, %Item{kind: kind, source_id: nil}, error}
   catch
-    :exit, reason -> {:error, nil, {:exit, reason}}
+    :exit, reason -> {:failed, %Item{kind: kind, source_id: nil}, {:exit, reason}}
   end
 
-  defp built({:ok, item}, _attrs), do: {:ok, item}
-  defp built({:error, errors}, attrs), do: {:error, source_id(attrs), errors}
+  defp built({:ok, attrs}, kind),
+    do: attrs |> Map.put(:kind, kind) |> Item.build() |> item_built(kind, attrs)
+
+  defp built({:error, reason}, kind), do: {:failed, %Item{kind: kind, source_id: nil}, reason}
+
+  defp item_built({:ok, item}, _kind, _attrs), do: {:ok, item}
+
+  defp item_built({:error, errors}, kind, attrs),
+    do: {:failed, %Item{kind: kind, source_id: source_id(attrs)}, errors}
 
   defp source_id(%{source_id: id}) when is_binary(id) or is_integer(id), do: to_string(id)
   defp source_id(%{"source_id" => id}) when is_binary(id) or is_integer(id), do: to_string(id)
   defp source_id(_attrs), do: nil
 
-  defp handle(state, _kind, plans, {:ok, item}),
+  defp settle(state, plans, {:ok, item}),
     do: Writer.call(state, item, Map.fetch!(plans, item.source_id))
 
-  defp handle(state, _kind, _plans, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
+  defp settle(state, _plans, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
 
-  defp handle(state, kind, _plans, {:error, source_id, reason}),
-    do: Writer.call(state, {kind, source_id}, {:failed, Report.reason(reason)})
-
-  defp extra(source, conn) do
-    case function_exported?(source, :extra, 1) do
-      true -> source.extra(conn)
-      false -> %{}
-    end
-  end
+  defp settle(state, _plans, {:failed, item, reason}),
+    do: Writer.call(state, item, {:failed, Report.reason(reason)})
 
   defp progress(_state, _kind, [], _counts), do: :ok
 
   defp progress(state, kind, _rows, counts) do
-    case MishkaCmsMigration.record_progress(state.run, %{kind: kind, counts: counts},
-           authorize?: false
-         ) do
-      {:ok, _run} -> :ok
-      {:error, _refused} -> {:error, :not_running}
-    end
+    state.run
+    |> MishkaCmsMigration.record_progress(%{kind: kind, counts: counts}, authorize?: false)
+    |> progressed()
   end
+
+  defp progressed({:ok, _run}), do: :ok
+  defp progressed({:error, _refused}), do: {:error, :not_running}
 
   defp source_context(state),
     do: %{

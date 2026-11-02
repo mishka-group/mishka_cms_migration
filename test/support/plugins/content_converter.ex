@@ -9,15 +9,16 @@ defmodule MishkaCmsMigration.Test.Plugins.ContentConverter do
   every other piece unconverted.
 
   Every payload it is handed, and its `meta`, is sent as `{:convert, payload, meta}` to the process
-  registered as `:__migration_probe__`, when there is one.
+  registered as `:__migration_probe__`, when there is one (`MishkaCmsMigration.Test.Plugins.Probe`).
   """
 
   use MishkaInstaller.Event.Hook, event: "migration:content:convert"
 
+  alias MishkaCmsMigration.Test.Plugins.Probe
+
   @impl true
   def call(payload, meta) do
-    if probe = Process.whereis(:__migration_probe__), do: send(probe, {:convert, payload, meta})
-
+    Probe.call({:convert, payload, meta})
     {:reply, convert(payload)}
   end
 

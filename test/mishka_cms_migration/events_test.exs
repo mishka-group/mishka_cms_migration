@@ -54,7 +54,6 @@ defmodule MishkaCmsMigration.EventsTest do
                source: "fake",
                source_host: "old.example.com",
                outcome: :created,
-               decision: :import,
                reason: nil,
                asked: true,
                item: %Item{kind: "redirect", source_id: "1"}
@@ -89,8 +88,7 @@ defmodule MishkaCmsMigration.EventsTest do
       assert is_nil(redirect(site, "/skipped")) and is_nil(redirect(site, "/taken"))
       assert redirect(site, "/changed").to == "/renamed"
       assert %{outcome: :skipped, reason: "held back", target_id: nil} = item(site, "1")
-      assert %{outcome: :skipped, reason: reason} = item(site, "2")
-      assert byte_size(reason) > 0
+      assert %{outcome: :skipped, reason: "taken by the gate"} = item(site, "2")
     end
 
     @tag capture_log: true

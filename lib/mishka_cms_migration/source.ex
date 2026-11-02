@@ -19,9 +19,9 @@ defmodule MishkaCmsMigration.Source do
         def connect(%{"url" => url}, key), do: {:ok, Req.new(base_url: url, params: [key: key])}
 
         @impl true
-        def list(req, kind, page) do
+        def list(req, kind, cursor) do
           ...
-          {:ok, rows, next_page_or_nil}
+          {:ok, rows, next_cursor_or_nil}
         end
 
         @impl true
@@ -30,8 +30,8 @@ defmodule MishkaCmsMigration.Source do
       end
 
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
-  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0` and
-  `label/0`. A source registers once it is supervised: an extension that ships one lists the module
+  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`
+  and an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself. A source registers once it is supervised: an extension that ships one lists the module
   among the children of its own application's supervisor, as
   `MishkaCmsMigration.Application.plugins/0` lists this extension's. Which sources are installed is
   read from mishka_installer's own registry (`installed/2`), so a source an operator stops in the
@@ -47,7 +47,7 @@ defmodule MishkaCmsMigration.Source do
   kinds: a source lists them in the order they must be imported, a kind before any kind that points
   at it, so authors come before the posts that name them. Each listed row goes through
   `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails
-  the run; an error from `normalize/3` fails only that row, and the report says why.
+  the run; an error from `normalize/3` fails only that item, and the report says why.
   """
 
   alias MishkaInstaller.Event.Event
@@ -90,8 +90,8 @@ defmodule MishkaCmsMigration.Source do
 
   @doc """
   Facts about the source a run keeps in its `extra` (`MishkaCmsMigration.MigrationRun`), such as a
-  WordPress site's version and plugins, read once the job has connected. Optional; a source that
-  does not say has none.
+  WordPress site's version and plugins. The job asks right after `connect/2`, before it walks a
+  kind, and the run keeps the answer when it finishes. `use` answers `%{}`.
   """
   @callback extra(conn()) :: map()
 
@@ -101,8 +101,6 @@ defmodule MishkaCmsMigration.Source do
   """
   @callback normalize(row :: term(), kind :: String.t(), context()) ::
               {:ok, map()} | {:error, term()}
-
-  @optional_callbacks extra: 1
 
   @doc false
   defmacro __using__(opts) do
@@ -125,6 +123,11 @@ defmodule MishkaCmsMigration.Source do
 
       @impl MishkaCmsMigration.Source
       def label, do: unquote(label)
+
+      @impl MishkaCmsMigration.Source
+      def extra(_conn), do: %{}
+
+      defoverridable extra: 1
     end
   end
 
@@ -134,7 +137,7 @@ defmodule MishkaCmsMigration.Source do
 
   @doc """
   Every installed source (`installed/2`), by priority, the first of each id: what a screen offers
-  to migrate from. The suite reads it, and the Import tab (issue #3) will.
+  to migrate from.
   """
   @spec all() :: [module()]
   def all, do: installed(@event, __MODULE__)
@@ -164,14 +167,13 @@ defmodule MishkaCmsMigration.Source do
   @doc "The one plugin of `installed/2` whose `id/0` is `id`; `{:error, :not_installed}` for none."
   @spec installed(String.t(), module(), String.t() | nil) ::
           {:ok, module()} | {:error, :not_installed}
-  def installed(event, behaviour, id) when is_binary(id) do
-    case Enum.find(installed(event, behaviour), &(&1.id() == id)) do
-      nil -> {:error, :not_installed}
-      plugin -> {:ok, plugin}
-    end
-  end
+  def installed(event, behaviour, id) when is_binary(id),
+    do: event |> installed(behaviour) |> Enum.find(&(&1.id() == id)) |> found()
 
   def installed(_event, _behaviour, _id), do: {:error, :not_installed}
+
+  defp found(nil), do: {:error, :not_installed}
+  defp found(plugin), do: {:ok, plugin}
 
   defp implements?(module, behaviour) do
     Code.ensure_loaded?(module) and behaviour in behaviours(module) and
@@ -192,7 +194,7 @@ defmodule MishkaCmsMigration.Source.Item do
   `build/1` turns into this struct; the walk puts `:kind` in, so a source never names it.
 
   It lives with the source behaviour because it is the source's answer, held only while a job
-  runs. What is kept of it afterwards is `MishkaCmsMigration.MigrationItem`: the CMS row it was
+  runs. What is kept of it afterwards is `MishkaCmsMigration.MigrationItem`: the CMS record it was
   written to, its hash and what the last run did with it, not its content.
 
     * `:kind` — what the item is, such as `"post"`, `"page"` or `"user"`. A target is chosen by it
@@ -206,8 +208,8 @@ defmodule MishkaCmsMigration.Source.Item do
     * `:attrs` — everything else the target needs, as the source names it. Its keys are never
       turned into atoms.
     * `:extra` — every field of the row the CMS has no home for (a WordPress post's custom fields,
-      ACF fields, another plugin's meta), as key and value. It is kept on the item's record
-      (`MishkaCmsMigration.MigrationItem`'s `extra`), and a target whose resource has an `extra` of
+      ACF fields, another plugin's meta), as key and value. It is kept on the item's
+      `MishkaCmsMigration.MigrationItem` (its `extra`), and a target whose resource has an `extra` of
       its own may copy it there (`MishkaCmsMigration.Target`). Its keys are never turned into
       atoms.
     * `:content` — the item's body as a list of pieces, in order. A piece the source converted

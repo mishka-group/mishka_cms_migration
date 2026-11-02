@@ -6,16 +6,16 @@ defmodule MishkaCmsMigration.Test.Plugins.FinishedProbe do
   @moduledoc """
   A plugin on `migration:import:finished` for the suite. It sends every payload it is handed, and
   its `meta`, as `{:import_finished, payload, meta}` to the process registered as
-  `:__migration_probe__`, when there is one.
+  `:__migration_probe__`, when there is one (`MishkaCmsMigration.Test.Plugins.Probe`).
   """
 
   use MishkaInstaller.Event.Hook, event: "migration:import:finished"
 
+  alias MishkaCmsMigration.Test.Plugins.Probe
+
   @impl true
   def call(payload, meta) do
-    if probe = Process.whereis(:__migration_probe__),
-      do: send(probe, {:import_finished, payload, meta})
-
+    Probe.call({:import_finished, payload, meta})
     {:reply, payload}
   end
 end

@@ -236,7 +236,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
 
     update :fail do
-      accept [:error]
+      accept [:reason]
 
       validate {Status, from: [:dry_running, :importing]}
 
@@ -384,7 +384,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       description "How far the running job is: the kind it walks and the counts so far"
     end
 
-    attribute :error, :string do
+    attribute :reason, :string do
       allow_nil? true
       public? true
       constraints max_length: 2000
@@ -452,31 +452,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   `{:error, :unreadable_secret}` when it was sealed under another `secret_key_base`.
   """
   @spec open_secret(map()) :: {:ok, String.t() | nil} | {:error, :unreadable_secret}
-  def open_secret(%{connection_secret: sealed}) when is_binary(sealed) and sealed != "" do
-    case Phoenix.Token.decrypt(@endpoint, @secret_salt, sealed, max_age: :infinity) do
-      {:ok, secret} when is_binary(secret) -> {:ok, secret}
-      _unreadable -> {:error, :unreadable_secret}
-    end
-  end
+  def open_secret(%{connection_secret: sealed}) when is_binary(sealed) and sealed != "",
+    do: @endpoint |> Phoenix.Token.decrypt(@secret_salt, sealed, max_age: :infinity) |> opened()
 
   def open_secret(_run), do: {:ok, nil}
 
   @doc false
   def seal_secret(changeset, _context) do
     secret = Ash.Changeset.get_argument(changeset, :secret)
-    changeset = Ash.Changeset.delete_argument(changeset, :secret)
-
-    case secret do
-      secret when is_binary(secret) and secret != "" ->
-        Ash.Changeset.force_change_attribute(
-          changeset,
-          :connection_secret,
-          Phoenix.Token.encrypt(@endpoint, @secret_salt, secret)
-        )
-
-      _none ->
-        changeset
-    end
+    changeset |> Ash.Changeset.delete_argument(:secret) |> sealed(secret)
   end
 
   @doc """
@@ -487,4 +471,17 @@ defmodule MishkaCmsMigration.MigrationRun do
   @spec broadcast(Ash.Notifier.Notification.t()) :: Ash.Notifier.Notification.t()
   def broadcast(%Ash.Notifier.Notification{data: run} = notification),
     do: %{notification | data: %{run | connection: %{}, connection_secret: nil}, changeset: nil}
+
+  defp opened({:ok, secret}) when is_binary(secret), do: {:ok, secret}
+  defp opened(_unreadable), do: {:error, :unreadable_secret}
+
+  defp sealed(changeset, secret) when is_binary(secret) and secret != "",
+    do:
+      Ash.Changeset.force_change_attribute(
+        changeset,
+        :connection_secret,
+        Phoenix.Token.encrypt(@endpoint, @secret_salt, secret)
+      )
+
+  defp sealed(changeset, _none), do: changeset
 end

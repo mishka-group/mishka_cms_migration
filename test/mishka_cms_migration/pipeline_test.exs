@@ -11,8 +11,8 @@ defmodule MishkaCmsMigration.PipelineTest do
   use MishkaCmsMigration.DataCase, async: false
 
   alias MishkaCmsCore.Runtime.Redirect
-  alias MishkaCmsMigration.MigrationItem
-  alias MishkaCmsMigration.Test.Plugins.{FakeSource, PageTarget}
+  alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.Test.Plugins.{FakeSource, ItemGate, PageTarget}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   setup do
@@ -397,7 +397,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert {:cancel, :unauthorized} = perform_job(DryRunWorker, args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
-      assert {run.status, run.error} == {:failed, "unauthorized"}
+      assert {run.status, run.reason} == {:failed, "unauthorized"}
       assert is_nil(run.connection_secret)
     end
 
@@ -427,7 +427,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert {run.status, run.connection_secret} == {:failed, nil}
-      assert run.error =~ "timed out"
+      assert run.reason =~ "timed out"
     end
 
     @tag capture_log: true
@@ -549,7 +549,9 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert {:cancel, :unreadable_secret} = perform_job(DryRunWorker, args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
-      assert {run.status, run.error, run.connection_secret} == {:failed, "unreadable_secret", nil}
+
+      assert {run.status, run.reason, run.connection_secret} ==
+               {:failed, "unreadable_secret", nil}
     end
   end
 
@@ -600,7 +602,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert run.status == :failed
-      assert run.error =~ "the source broke"
+      assert run.reason =~ "the source broke"
       assert is_nil(run.connection_secret)
     end
   end
@@ -635,6 +637,63 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert {:cancel, :not_running} = perform_job(ImportWorker, args)
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :pending
       assert redirects(site) == []
+    end
+
+    test "whose run is cancelled while it walks stops at the next page and is cancelled", %{
+      site: site,
+      admin: admin
+    } do
+      register_plugin!(ItemGate, Events.before_import_event())
+
+      rows = [
+        redirect_row(1, "/one", "/a", %{"gate" => "cancel"}),
+        redirect_row(2, "/two", "/b"),
+        redirect_row(3, "/three", "/c")
+      ]
+
+      run = site |> create_run!(admin, %{"redirect" => rows}) |> dry_run!(admin)
+      MishkaCmsMigration.start_import!(run, actor: admin, tenant: site.id)
+      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+
+      assert {:cancel, :not_running} = perform_job(ImportWorker, args)
+
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+               :cancelled
+
+      assert Enum.map(redirects(site), & &1.from_path) == ["/one", "/two"]
+    end
+
+    test "fails an item whose skip cannot be recorded, and goes on with the rest", %{
+      site: site,
+      admin: admin
+    } do
+      Repo.query!("""
+      CREATE FUNCTION refuse_skipped() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.outcome = 'skipped' THEN
+          RAISE EXCEPTION 'the skip could not be recorded';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER refuse_skipped BEFORE INSERT ON mishka_cms_migration_items
+      FOR EACH ROW EXECUTE FUNCTION refuse_skipped()
+      """)
+
+      items = %{
+        "redirect" => [redirect_row(1, "/old", "/new")],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      run = migrate!(site, admin, items)
+
+      assert run.status == :done
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 1}
+      assert %{"1" => {:created, nil}, "9" => {:failed, reason}} = outcomes(run)
+      assert reason =~ "the skip could not be recorded"
+      assert [%{source_id: "1", outcome: :created}] = items(site)
     end
   end
 end

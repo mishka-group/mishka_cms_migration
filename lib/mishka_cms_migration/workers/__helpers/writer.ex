@@ -5,16 +5,17 @@
 defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   @moduledoc """
   What happens to one item once it is decided (`MishkaCmsMigration.Workers.Helpers.Decision`), and
-  its line of the report (`call/3`, answering `MishkaCmsMigration.Report.entry/5`).
+  its entry in the report (`call/3`, answering `MishkaCmsMigration.Report.entry/5`).
 
   In an import an item to create or update has its content converted (`migration:content:convert`),
   is offered to the plugins (`migration:item:before_import`), is written through its target
   (`MishkaCmsMigration.Target.write/4`) as the admin who pressed Import, and is recorded
-  (`MishkaCmsMigration.MigrationItem`'s `:record`) with the record it was written to, in one
+  (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
-  so a retry never meets a record no item remembers. An item skipped or failed is recorded with why
-  (`:record_outcome`), which keeps what the last write recorded. A dry run records nothing and
-  writes nothing: it reports the plan.
+  so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
+  its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot
+  be recorded, the item's entry says it failed, with why. A dry run records nothing and writes
+  nothing: it reports the plan.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason.
@@ -24,45 +25,51 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias MishkaCmsMigration.Source.Item
 
   @doc """
-  Settles `item` by `plan` and answers its line of the report:
+  Settles `item` by `plan` and answers its entry in the report:
 
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
       in a dry run;
-    * `{:skipped, reason}` — recorded as skipped in an import;
-    * `:duplicate` — the source listed its id before: reported, never recorded;
-    * `{:failed, reason}` with `{kind, source_id}` in place of the item — a row the source could
-      not hand over as an item, recorded as failed when it named its source id.
+    * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason in an import; an item
+      whose row could not be read has only its kind and, when the row named one, its source id;
+    * `:duplicate` — the source listed its id before: reported, never recorded.
   """
-  @spec call(map(), Item.t() | {String.t(), String.t() | nil}, term()) :: Report.entry()
-  def call(state, %Item{} = item, {:skipped, reason}), do: leave(state, item, :skipped, reason)
-
+  @spec call(map(), Item.t(), term()) :: Report.entry()
   def call(_state, %Item{} = item, :duplicate),
     do: Report.entry(item.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
+
+  def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
+    do: entry(state, item, outcome, reason)
 
   def call(%{mode: :dry_run}, %Item{} = item, {outcome, _target, _record}),
     do: Report.entry(item.kind, item.source_id, item.title, outcome, nil)
 
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
-    case written(state, item, target, outcome, record) do
-      {:ok, _record} -> Report.entry(item.kind, item.source_id, item.title, outcome, nil)
-      {:skipped, reason} -> leave(state, item, :skipped, reason)
-      {:error, error} -> leave(state, item, :failed, Report.reason(error))
-    end
+    state
+    |> written(item, target, outcome, record)
+    |> settled(state, item, outcome)
   end
 
-  def call(state, {kind, source_id}, {:failed, reason}) do
-    note(state, kind, source_id, :failed, reason)
-    Report.entry(kind, source_id, nil, :failed, reason)
-  end
+  defp settled({:ok, _record}, _state, item, outcome),
+    do: Report.entry(item.kind, item.source_id, item.title, outcome, nil)
 
-  defp leave(state, item, outcome, reason) do
-    note(state, item.kind, item.source_id, outcome, reason)
-    Report.entry(item.kind, item.source_id, item.title, outcome, reason)
-  end
+  defp settled({:skipped, reason}, state, item, _outcome),
+    do: entry(state, item, :skipped, reason)
+
+  defp settled({:error, error}, state, item, _outcome),
+    do: entry(state, item, :failed, Report.reason(error))
+
+  defp entry(state, item, outcome, reason),
+    do: state |> noted(item, outcome, reason) |> entered(item, outcome, reason)
+
+  defp entered(:ok, item, outcome, reason),
+    do: Report.entry(item.kind, item.source_id, item.title, outcome, reason)
+
+  defp entered({:error, error}, item, _outcome, _reason),
+    do: Report.entry(item.kind, item.source_id, item.title, :failed, Report.reason(error))
 
   defp written(state, source_item, target, outcome, record) do
     with {:ok, item} <- convert(state, source_item),
-         {:import, item} <- Events.before_import(item, outcome, state.run, state.actor) do
+         {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor) do
       Ash.transact([target.resource(), MigrationItem], fn ->
         store(state, source_item, item, {outcome, target, record})
       end)
@@ -101,52 +108,49 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     )
   end
 
-  defp note(%{mode: :import} = state, kind, source_id, outcome, reason)
+  defp noted(%{mode: :import} = state, %Item{source_id: source_id} = item, outcome, reason)
        when is_binary(source_id) do
-    MishkaCmsMigration.record_item_outcome!(
-      %{
-        source_host: state.run.source_host,
-        source_kind: kind,
-        source_id: source_id,
-        run_id: state.run.id,
-        outcome: outcome,
-        reason: reason
-      },
-      tenant: state.run.site_id,
-      authorize?: false
-    )
+    with {:ok, _item} <-
+           MishkaCmsMigration.record_item_outcome(
+             %{
+               source_host: state.run.source_host,
+               source_kind: item.kind,
+               source_id: source_id,
+               run_id: state.run.id,
+               outcome: outcome,
+               reason: reason
+             },
+             tenant: state.run.site_id,
+             authorize?: false
+           ),
+         do: :ok
   end
 
-  defp note(_state, _kind, _source_id, _outcome, _reason), do: nil
+  defp noted(_state, _item, _outcome, _reason), do: :ok
 
-  defp convert(state, %Item{content: content} = item) when is_list(content) do
-    case convert_pieces(state, item, content, []) do
-      {:ok, pieces} -> {:ok, %{item | content: pieces}}
-      :cannot_run -> {:skipped, "plugins_cannot_run"}
-      :failed -> {:skipped, "plugins_failed"}
-    end
-  end
+  defp convert(state, %Item{content: [_ | _] = content} = item),
+    do: state |> convert_pieces(item, content, []) |> converted(item)
 
   defp convert(_state, item), do: {:ok, item}
 
+  defp converted({:ok, pieces}, item), do: {:ok, %{item | content: pieces}}
+  defp converted(:cannot_run, _item), do: {:skipped, "plugins_cannot_run"}
+  defp converted(:failed, _item), do: {:skipped, "plugins_failed"}
+
   defp convert_pieces(_state, _item, [], done), do: {:ok, Enum.reverse(done)}
 
+  defp convert_pieces(state, item, [%{html: html} = piece | rest], done) when is_binary(html),
+    do: convert_pieces(state, item, rest, [piece | done])
+
   defp convert_pieces(state, item, [piece | rest], done) do
-    case converted(state, item, piece) do
-      {:ok, piece} -> convert_pieces(state, item, rest, [piece | done])
-      unconverted -> unconverted
+    with {:ok, piece} <- piece |> Events.convert(item, state.run, state.actor) |> with_html(piece) do
+      convert_pieces(state, item, rest, [piece | done])
     end
   end
 
-  defp converted(_state, _item, %{html: html} = piece) when is_binary(html), do: {:ok, piece}
-
-  defp converted(state, item, piece) do
-    case Events.convert(piece, item, state.run, state.actor) do
-      {:ok, html} -> {:ok, %{piece | html: html}}
-      :unconverted -> {:ok, %{piece | html: escaped(piece.raw)}}
-      failed -> failed
-    end
-  end
+  defp with_html({:ok, html}, piece), do: {:ok, %{piece | html: html}}
+  defp with_html(:unconverted, piece), do: {:ok, %{piece | html: escaped(piece.raw)}}
+  defp with_html(failed, _piece), do: failed
 
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()

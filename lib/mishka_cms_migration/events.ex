@@ -41,15 +41,15 @@ defmodule MishkaCmsMigration.Events do
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
-        outcome: :created, item: %MishkaCmsMigration.Source.Item{}, decision: :import, reason: nil,
-        asked: true
+        outcome: :created, item: %MishkaCmsMigration.Source.Item{}, reason: nil, asked: true
       }
 
-  `outcome` is what the import will record once the item is written: `:created` for a new row,
-  `:updated` for one an earlier run wrote. A plugin may answer with a changed `item` (its `kind` and
-  `source_id` stay as they were), with `decision: :skip` and a `reason` to leave the item out, or
-  with `decision: :take` when it wrote the item itself. A skipped or taken item is recorded as
-  skipped, with the plugin's reason.
+  `outcome` is what the import will record once the item is written: `:created` for a new CMS
+  record, `:updated` for one an earlier run wrote. A plugin may answer with a changed `item` (its
+  `kind` and `source_id` stay as they were), or with `outcome: :skipped` and a `reason` to leave the
+  item out: a plugin that writes the item itself skips it with a reason saying so. A skipped item is
+  recorded as skipped, with the plugin's reason, or `"skipped by a plugin"` when it gave none. Any
+  other outcome a plugin answers is not used: the import's own stands.
 
   ## `migration:import:finished`
 
@@ -72,7 +72,7 @@ defmodule MishkaCmsMigration.Events do
   @finished "migration:import:finished"
 
   @typedoc "What a plugin decides for an item about to be written."
-  @type decision :: {:import, Item.t()} | {:skipped, String.t()}
+  @type decision :: {:ok, Item.t()} | {:skipped, String.t()}
 
   @doc "The event a piece of content is offered on."
   @spec convert_event() :: String.t()
@@ -105,17 +105,14 @@ defmodule MishkaCmsMigration.Events do
         asked: false
       })
 
-    case Hook.call(@convert, payload, meta: meta(run, actor), cannot_run: :cannot_run) do
-      :cannot_run -> :cannot_run
-      %{asked: true, html: html} when is_binary(html) -> {:ok, html}
-      %{asked: true} -> :unconverted
-      _failed -> :failed
-    end
+    @convert
+    |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run)
+    |> converted()
   end
 
   @doc """
-  What the plugins decide for `item` about to be written as `outcome`: `{:import, item}`, with the
-  item as a plugin left it, or `{:skipped, reason}`.
+  What the plugins decide for `item` about to be written as `outcome`: `{:ok, item}`, with the item
+  as a plugin left it, or `{:skipped, reason}`.
   """
   @spec before_import(Item.t(), :created | :updated, map(), map() | nil) :: decision()
   def before_import(%Item{} = item, outcome, run, actor) do
@@ -123,7 +120,6 @@ defmodule MishkaCmsMigration.Events do
       Map.merge(base(run), %{
         outcome: outcome,
         item: item,
-        decision: :import,
         reason: nil,
         asked: false
       })
@@ -154,18 +150,20 @@ defmodule MishkaCmsMigration.Events do
 
   defp meta(run, actor), do: %{actor: actor, site_id: run.site_id}
 
+  defp converted(:cannot_run), do: :cannot_run
+  defp converted(%{asked: true, html: html}) when is_binary(html), do: {:ok, html}
+  defp converted(%{asked: true}), do: :unconverted
+  defp converted(_failed), do: :failed
+
   defp decided(:cannot_run, _item), do: {:skipped, "plugins_cannot_run"}
   defp decided(%{asked: true} = answer, item), do: answered(answer, item)
   defp decided(_failed, _item), do: {:skipped, "plugins_failed"}
 
-  defp answered(%{decision: :import, item: %Item{} = changed}, item),
-    do: {:import, %{changed | kind: item.kind, source_id: item.source_id}}
-
-  defp answered(%{decision: :skip} = answer, _item),
+  defp answered(%{outcome: :skipped} = answer, _item),
     do: {:skipped, reason(answer, "skipped by a plugin")}
 
-  defp answered(%{decision: :take} = answer, _item),
-    do: {:skipped, reason(answer, "taken by a plugin")}
+  defp answered(%{item: %Item{} = changed}, item),
+    do: {:ok, %{changed | kind: item.kind, source_id: item.source_id}}
 
   defp answered(_answer, _item), do: {:skipped, "plugins_failed"}
 

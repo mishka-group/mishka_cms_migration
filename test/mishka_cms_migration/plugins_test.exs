@@ -74,7 +74,7 @@ defmodule MishkaCmsMigration.PluginsTest do
     assert {:cancel, :not_installed} =
              perform_job(MishkaCmsMigration.Workers.DryRunWorker, args, attempt: 3)
 
-    assert %{status: :failed, error: "not_installed"} =
+    assert %{status: :failed, reason: "not_installed"} =
              MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
   end
 end
