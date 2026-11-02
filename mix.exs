@@ -61,7 +61,7 @@ defmodule MishkaCmsMigration.MixProject do
       mishka_dep(:mishka_installer, "~> 0.1.15"),
       {:guarded_struct, "~> 0.1.4"},
       {:igniter, "~> 0.8", only: [:dev, :test]},
-      mishka_dep(:mishka_cms_core, "~> 0.0.4"),
+      mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.2"),
       mishka_dep(:mishka_gervaz, "~> 0.0.3"),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.18", only: [:dev, :test], runtime: false},
