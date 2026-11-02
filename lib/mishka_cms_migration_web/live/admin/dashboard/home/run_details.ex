@@ -867,7 +867,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp pages("publish"), do: gettext("Published at their old addresses")
   defp pages(_draft), do: gettext("Brought in as drafts")
 
-  defp post_address("keep"), do: gettext("Kept as they are")
+  defp post_address("blog_without_redirects"),
+    do: gettext("Under /blog, with no redirect from the old addresses")
+
   defp post_address(_blog), do: gettext("Under /blog, with a redirect from each old address")
 
   defp comments(true), do: gettext("Brought in too")

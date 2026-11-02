@@ -24,13 +24,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       way each becomes that user's blog author (`MishkaCmsMigration.Targets.BlogBlogger`).
     * `:pages` — `"draft"` (the default) brings pages in as drafts; `"publish"` puts them live at
       their old addresses.
-    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>` with a 301 from each
-      old address; `"keep"` keeps the source's own addresses.
+    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>`, with a 301 redirect
+      from each old address; `"blog_without_redirects"` serves them there with no redirect.
+      Keeping a source's own address, such as WordPress's `/2025/12/hello/`, needs Mishka Blog to
+      serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
     * `:comments` — whether comments come too; `false` by default.
 
-  Only the authors choice is read yet, by the Blog's author target: pages will be read by the page
-  target, post addresses by the post and redirect targets and comments by the comment target, as
-  each kind's import comes.
+  Only the authors choice is read yet, by the Blog's author target: post addresses will be read by
+  the redirect target, pages by the page target and comments by the comment target, as each kind's
+  import comes.
 
   ## Its life
 
@@ -132,12 +134,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   read, so each source's New import asks for its own: WordPress's address, user and application
   password, and a plugin's source what its `form_fields/0` names. The secret's key is a masked
   password input that never shows what was typed. The field's description says where WordPress
-  makes an application password, as a Gervaz key carries no description of its own. For a master
-  the form asks for the site the content moves to as well (`:master_create`). Its button, Check
-  connection, creates the run, which connects to the source first
-  (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
-  refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
-  given a `source_host` takes the host its source reads from the connection
+  makes an application password, as a Gervaz key carries no description of its own. Under it,
+  Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
+  the post addresses, each starting at the default the `sub_field` gives it; its description says
+  why a post's old address is redirected rather than kept. Comments are not asked for until a
+  source's comments can be imported. For a master the form asks for the site the content moves to
+  as well (`:master_create`). Its button, Check connection, creates the run, which connects to
+  the source first (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not
+  answer or refuses the user keeps the form open with the reason, and nothing is saved. A run that
+  is not given a `source_host` takes the host its source reads from the connection
   (`c:MishkaCmsMigration.Source.host/1`).
   """
 
@@ -212,7 +217,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       field :post_address, :string,
         default: "blog",
-        derives: "sanitize(trim) validate(enum=String[blog::keep])"
+        derives: "sanitize(trim) validate(enum=String[blog::blog_without_redirects])"
 
       field :comments, :boolean, default: false, derives: "validate(boolean)"
     end
@@ -606,11 +611,65 @@ defmodule MishkaCmsMigration.MigrationRun do
             end
           end
         end
+
+        field :options, :key_map do
+          default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
+
+          options [
+            [
+              name: :authors,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Authors"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
+                {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
+              ]
+            ],
+            [
+              name: :pages,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Pages"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
+                {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
+              ]
+            ],
+            [
+              name: :post_address,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Post addresses"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
+                {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"),
+                 "blog_without_redirects"}
+              ]
+            ]
+          ]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Choices for this run") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. The Pages choice is kept for when pages can be imported."
+              )
+            end
+          end
+        end
       end
 
       groups do
         group :connection do
           fields [:site_id, :connection]
+
+          ui do
+            columns 1
+          end
+        end
+
+        group :options do
+          fields [:options]
 
           ui do
             columns 1

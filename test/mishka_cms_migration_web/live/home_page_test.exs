@@ -91,6 +91,22 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end)
   end
 
+  # The run's choices the form draws, each as `{chosen value, every value offered}` by its key.
+  defp choices(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(~s|#migration-run-form-modal select[name^="form[options]["]|)
+    |> Map.new(fn select ->
+      [name] = LazyHTML.attribute(select, "name")
+      [chosen] = select |> LazyHTML.query("option[selected]") |> LazyHTML.attribute("value")
+      offered = select |> LazyHTML.query("option") |> LazyHTML.attribute("value")
+
+      {name |> String.trim_leading("form[options][") |> String.trim_trailing("]"),
+       {chosen, Enum.reject(offered, &(&1 == ""))}}
+    end)
+  end
+
   defp secret_input_value(view) do
     view
     |> render()
@@ -353,6 +369,60 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert length(String.split(html, "Pick the site the content moves to.")) == 2
       refute html =~ "is required"
       refute html =~ "must be present"
+    end
+
+    test "asks for the run's choices, each at its default, and offers no address it cannot keep",
+         %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+      {:ok, defaults} = MigrationRun.Options.builder(%{})
+
+      assert choices(view) == %{
+               "authors" => {defaults.authors, ["connect", "create"]},
+               "pages" => {defaults.pages, ["draft", "publish"]},
+               "post_address" => {defaults.post_address, ["blog", "blog_without_redirects"]}
+             }
+
+      for label <- ["Choices for this run", "Authors", "Pages", "Post addresses"],
+          do: assert(has_element?(view, "#migration-run-form-modal label", label))
+
+      assert has_element?(
+               view,
+               "#migration-run-form-modal",
+               "needs the Blog to serve posts there"
+             )
+    end
+
+    test "saves what the admin chose into the run's options, and the default of the rest", %{
+      conn: conn,
+      site: site
+    } do
+      stub!()
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form(~s|#migration-run-form-modal form|, %{
+        "form" => %{
+          "connection" => %{
+            "url" => "http://localhost:8089",
+            "user" => "admin",
+            "secret" => "app password"
+          },
+          "options" => %{"authors" => "create", "post_address" => "blog_without_redirects"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+
+      assert stored(run).options == %{
+               "authors" => "create",
+               "pages" => "draft",
+               "post_address" => "blog_without_redirects",
+               "comments" => false
+             }
     end
   end
 
