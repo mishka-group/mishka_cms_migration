@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Mix Dependency Submission
+
+# Sends the Mix dependency graph (mix.lock) to GitHub's dependency graph on every push to master, so
+# Dependabot alerts cover Hex packages. It can be started by hand from the Actions tab as well.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  submit-dependencies:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Submit Mix dependencies
+        uses: erlef/mix-dependency-submission@v1.3.5
+        with:
+          install-deps: true
