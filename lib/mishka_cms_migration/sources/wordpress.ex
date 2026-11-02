@@ -33,12 +33,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "page", "post"]`: authors and terms before the pages
-  and posts that point at them. `list/3` reads each from its REST route (`/wp/v2/users`,
-  `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with
-  `context=edit`, so WordPress answers the raw fields an editor sees, 100 rows a page. Pages and
-  posts are asked for with `status=any`: published, scheduled, draft, pending and private, but not
-  the trash. The cursor is the next page number while `X-WP-TotalPages` says there is one, and
+  `kinds/0` is `["user", "category", "tag", "page", "post", "post_redirect"]`: authors and terms
+  before the pages and posts that point at them, and each post's old address after its post.
+  `list/3` reads each from its REST route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`,
+  `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with `context=edit`, so WordPress answers
+  the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with `status=any`:
+  published, scheduled, draft, pending and private, but not the trash. `"post_redirect"` reads the
+  posts again, only their `id`, `title`, `status`, `link` and `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there is one, and
   `nil` after the last. A list WordPress refuses fails the walk:
     * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
       context, or the password was revoked since the run was made;
@@ -67,6 +68,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
       `last_name`, `nickname`, `description`, `roles`, `url`, `link` and `avatar_urls`. A user has
       no `modified_at`.
+    * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
+      and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
+      with an address of its own; `nil` for any other, such as a draft, whose `link` is
+      `/?p=39`, an address no redirect can answer.
 
   `extra` is every other field of the row: `meta` (Yoast's `_yoast_wpseo_*` fields and every other
   registered meta), `guid`, `password`, `comment_status`, `class_list`, a user's `capabilities`
@@ -81,8 +86,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   Users, categories, tags and posts are written into Mishka Blog where it runs: users as bloggers
   of the site's users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
-  `MishkaCmsMigration.Targets.BlogPost`. Pages have no target yet, so a dry run reports them as
-  skipped (`"no_target"`).
+  `MishkaCmsMigration.Targets.BlogPost`, and each post's old address as a 301 to the post
+  (`MishkaCmsMigration.Targets.PostRedirect`). Pages have no target yet, so a dry run reports them
+  as skipped (`"no_target"`).
 
   Requests go through `Req`. `req_options` in the application environment are merged into every
   request, which is how the suite replays what a real WordPress answered
@@ -97,7 +103,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   alias MishkaCmsMigration.Sources.WordPress.Content
 
-  @kinds ["user", "category", "tag", "page", "post"]
+  @kinds ["user", "category", "tag", "page", "post", "post_redirect"]
 
   @form_fields [
     [
@@ -127,7 +133,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "category" => {"/wp/v2/categories", []},
     "tag" => {"/wp/v2/tags", []},
     "page" => {"/wp/v2/pages", [status: "any"]},
-    "post" => {"/wp/v2/posts", [status: "any"]}
+    "post" => {"/wp/v2/posts", [status: "any"]},
+    "post_redirect" =>
+      {"/wp/v2/posts", [status: "any", _fields: "id,title,status,link,modified_gmt"]}
   }
 
   @per_page 100
@@ -202,6 +210,16 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      }}
   end
 
+  def normalize(%{"id" => id, "title" => %{"raw" => title}} = row, "post_redirect", _context),
+    do:
+      {:ok,
+       %{
+         source_id: id,
+         title: title,
+         modified_at: Map.get(row, "modified_gmt"),
+         attrs: %{"from" => old_path(row)}
+       }}
+
   def normalize(%{"id" => id, "name" => name} = row, kind, _context)
       when is_map_key(@named, kind) do
     attrs = Map.fetch!(@named, kind)
@@ -235,6 +253,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: Map.new(rows, &{&1["id"], &1})
 
   defp by_id(_unanswered), do: %{}
+
+  defp old_path(%{"status" => "publish", "link" => link}) when is_binary(link),
+    do: link |> URI.parse() |> own_path()
+
+  defp old_path(_not_public), do: nil
+
+  defp own_path(%URI{path: "/" <> rest = path}) when rest != "", do: path
+  defp own_path(_no_path), do: nil
 
   defp parent(%{"parent" => parent}) when is_integer(parent) and parent > 0, do: parent
   defp parent(_row), do: nil

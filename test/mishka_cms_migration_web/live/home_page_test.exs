@@ -681,7 +681,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       expand!(view, run)
       assert has_element?(view, ~s|[data-role="run-details"][data-status="pending"]|)
       assert has_element?(view, ~s|[data-role="run-details-empty"]|, "No dry run yet")
-      assert detailed(view, "run-details-reads", "data-kind") == ~w(user category tag page post)
+
+      assert detailed(view, "run-details-reads", "data-kind") ==
+               ~w(user category tag page post post_redirect)
+
       assert outcomes(view) == %{}
 
       assert row_action!(view, "dry_run", run) =~ "Dry run started."
@@ -699,7 +702,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 41, "skipped" => 16}
+      assert outcomes(view) == %{"created" => 58, "skipped" => 20}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
 
       assert kinds(view) == %{
@@ -707,7 +710,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "category" => 9,
                "tag" => 11,
                "page" => 11,
-               "post" => 21
+               "post" => 21,
+               "post_redirect" => 21
              }
 
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
@@ -717,11 +721,12 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "category" => 9,
                "tag" => 11,
                "page" => 11,
-               "post" => 21
+               "post" => 21,
+               "post_redirect" => 21
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 41, "skipped" => 16}
+               %{"created" => 58, "skipped" => 20}
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
@@ -735,7 +740,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         %{
           source: "wordpress",
           connection: %{"url" => "http://localhost:8089", "user" => "admin"},
-          secret: "app password"
+          secret: "app password",
+          options: %{post_address: "blog_without_redirects"}
         }
         |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
         |> dry_run!(admin)
@@ -754,7 +760,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       for {kind, found, why} <- [
             {"user", 5, "No user with this email on the site"},
-            {"page", 11, "Nothing imports these yet"}
+            {"page", 11, "Nothing imports these yet"},
+            {"post_redirect", 21, "Left out by this run's choices"}
           ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
@@ -776,16 +783,16 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         |> Enum.reverse()
 
       assert detailed(view, "run-details-item", "data-source-id") == newest_posts
-      assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post", 8)
-      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("created", 8)
+      assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post_redirect", 8)
+      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("skipped", 8)
 
       assert has_element?(
                view,
                ~s|[data-role="run-details-item"][data-source-id="34"] [data-role="run-details-item-reason"]|,
-               "Kept as text: unknown_plugin_shortcode, pullbox"
+               "Left out by this run's choices"
              )
 
-      assert detailed(view, "run-details-items-more", "data-count") == ["49"]
+      assert detailed(view, "run-details-items-more", "data-count") == ["70"]
 
       for {fact, said} <- [
             {"name", "Mishka Test Blog"},
@@ -806,14 +813,24 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert detailed(view, "run-details-option", "data-value") == [
                "connect",
                "draft",
-               "blog",
+               "blog_without_redirects",
                "false"
              ]
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-option"][data-option="post_address"]|,
+               "Under /blog, with no redirect from the old addresses"
+             )
     end
   end
 
   describe "a WordPress run's Import" do
-    @blog_admin ["admin:dashboard:migration", "admin:dashboard:blog:post"]
+    @blog_admin [
+      "admin:dashboard:migration",
+      "admin:dashboard:blog:post",
+      "admin:dashboard:runtime:redirect"
+    ]
 
     setup %{site: site} do
       stub!()
@@ -853,7 +870,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Imported"
              )
 
-      assert outcomes(view) == %{"created" => 41, "skipped" => 16}
+      assert outcomes(view) == %{"created" => 58, "skipped" => 20}
 
       assert has_element?(
                view,
@@ -861,17 +878,26 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 41, "skipped" => 16}
+               %{"created" => 58, "skipped" => 20}
 
-      for {kind, created} <- [{"category", 9}, {"tag", 11}, {"post", 21}] do
+      for {kind, counts} <- [
+            {"category", %{"created" => 9}},
+            {"tag", %{"created" => 11}},
+            {"post", %{"created" => 21}},
+            {"post_redirect", %{"created" => 17, "skipped" => 4}}
+          ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
-                 %{"created" => created}
+                 counts
       end
 
       assert length(Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false)) == 11
       assert length(Ash.read!(MishkaBlog.BlogPost, tenant: site.id, authorize?: false)) == 21
+
+      assert length(Ash.read!(MishkaCmsCore.Runtime.Redirect, tenant: site.id, authorize?: false)) ==
+               17
+
       refute has_element?(view, "#migration-runs-table #{action("import", run)}")
     end
   end

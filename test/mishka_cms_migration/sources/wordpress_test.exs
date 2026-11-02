@@ -27,7 +27,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     "category" => "categories",
     "tag" => "tags",
     "page" => "pages",
-    "post" => "posts"
+    "post" => "posts",
+    "post_redirect" => "posts"
   }
 
   defp connected! do
@@ -57,6 +58,12 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   defp pieces(item), do: for(%{name: name} = piece <- item.content, name != nil, do: piece)
 
   defp recorded_ids(recording), do: recording |> recorded() |> Enum.map(&to_string(&1["id"]))
+
+  defp counts(run, kind),
+    do:
+      run.report.kinds
+      |> Enum.find(&(&1.kind == kind))
+      |> Map.take([:created, :updated, :skipped, :failed])
 
   describe "connecting" do
     test "signs in and keeps what the site says of itself" do
@@ -159,7 +166,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
     test "is installed with the extension, and lists authors and terms before what points at them" do
       assert {:ok, WordPress} = Source.fetch("wordpress")
-      assert WordPress.kinds() == ["user", "category", "tag", "page", "post"]
+
+      assert WordPress.kinds() == ["user", "category", "tag", "page", "post", "post_redirect"]
     end
   end
 
@@ -173,7 +181,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             {"category", "/wp-json/wp/v2/categories", nil},
             {"tag", "/wp-json/wp/v2/tags", nil},
             {"page", "/wp-json/wp/v2/pages", "any"},
-            {"post", "/wp-json/wp/v2/posts", "any"}
+            {"post", "/wp-json/wp/v2/posts", "any"},
+            {"post_redirect", "/wp-json/wp/v2/posts", "any"}
           ] do
         assert {:ok, [_ | _], nil} = WordPress.list(conn, kind, nil)
         assert_received {:wordpress_request, %{request_path: ^route, query_params: params}}
@@ -181,6 +190,15 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
         assert {params["context"], params["per_page"], params["page"], params["status"]} ==
                  {"edit", "100", "1", status}
       end
+    end
+
+    test "reads a post's old address with only the fields it needs" do
+      stub!()
+      assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "post_redirect", nil)
+      assert_received {:wordpress_request, %{query_params: %{"_fields" => fields}}}
+
+      assert fields |> String.split(",") |> Enum.sort() ==
+               ~w(id link modified_gmt status title)
     end
 
     test "lists every row WordPress answered for each kind" do
@@ -340,6 +358,25 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
     end
 
+    test "a post's old address is the path of a published post's link, and none for the rest" do
+      redirects = items!("post_redirect")
+      posts = Map.new(recorded("posts"), &{to_string(&1["id"]), &1})
+
+      assert redirects["44"].attrs == %{"from" => "/2025/12/release-1-0-announcement/"}
+      assert redirects["44"].title == "Release 1.0 announcement"
+      assert redirects["44"].modified_at
+
+      for {id, item} <- redirects,
+          posts[id]["status"] == "publish",
+          do: assert(item.attrs["from"] == URI.parse(posts[id]["link"]).path)
+
+      for {id, item} <- redirects,
+          posts[id]["status"] != "publish",
+          do: assert(is_nil(item.attrs["from"]))
+
+      assert {redirects["39"].attrs["from"], redirects["41"].attrs["from"]} == {nil, nil}
+    end
+
     test "a row without the fields its kind needs is refused, and an unknown kind too" do
       [row | _] = recorded("posts-page-2")
 
@@ -486,7 +523,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, page and post it found: terms and posts to create in the Blog, users with no CMS user, pages with no target yet" do
+    test "reports every user, term, page, post and old address it found: terms and posts to create in the Blog, users with no CMS user, pages with no target yet, a redirect from each published post's address" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -499,7 +536,17 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert run.status == :dry_run
       assert Enum.map(run.report.kinds, & &1.kind) == WordPress.kinds()
 
-      for %{kind: kind} = counts <- run.report.kinds do
+      published = Enum.count(recorded("posts"), &(&1["status"] == "publish"))
+
+      assert counts(run, "post_redirect") ==
+               %{
+                 created: published,
+                 updated: 0,
+                 skipped: length(recorded("posts")) - published,
+                 failed: 0
+               }
+
+      for %{kind: kind} = counts <- run.report.kinds, kind != "post_redirect" do
         planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
@@ -516,7 +563,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
                    {:skipped, "no_user"},
-                   {:skipped, "no_target"}
+                   {:skipped, "no_target"},
+                   {:skipped, "no_old_address"}
                  ])
              )
 

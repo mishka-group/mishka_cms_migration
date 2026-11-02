@@ -19,10 +19,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
   alias MishkaBlog.{Blogger, BlogPost, Collection, Tag}
   alias MishkaCmsCore.Accounts.User
-  alias MishkaCmsCore.Runtime.Languages
+  alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.{Events, MigrationItem}
-  alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag}
+  alias MishkaCmsMigration.MigrationRun.Options
+  alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag, PostRedirect}
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
@@ -902,6 +904,157 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       posts = posts(site)
       assert posts["Roadmap, edited"].id == draft.id
       refute is_map_key(posts, "Draft roadmap")
+    end
+  end
+
+  describe "post addresses" do
+    @movers @admin ++ ["admin:dashboard:runtime:redirect"]
+    @release "/2025/12/release-1-0-announcement"
+
+    setup %{site: site}, do: %{admin: migration_admin!(site, @movers)}
+
+    defp redirects(site),
+      do:
+        Redirect |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.from_path, &1})
+
+    defp published, do: Enum.filter(recorded("posts"), &(&1["status"] == "publish"))
+
+    defp old_path(row) do
+      {:ok, path} = Redirects.normalize_path(row["link"])
+      path
+    end
+
+    defp redirect!(site, admin, attrs),
+      do:
+        Redirect
+        |> Ash.Changeset.for_create(:create, attrs, actor: admin, tenant: site.id)
+        |> Ash.create!()
+
+    test "a dry run plans a redirect from each published post's old address, and writes none", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      unpublished = length(recorded("posts")) - length(published())
+
+      assert counts(run, "post_redirect") ==
+               %{created: length(published()), updated: 0, skipped: unpublished, failed: 0}
+
+      assert for({_id, {:skipped, reason}} <- outcomes(run, "post_redirect"), do: reason) ==
+               List.duplicate("no_old_address", unpublished)
+
+      assert redirects(site) == %{}
+    end
+
+    test "an import sends each published post's old address to its Blog address with a 301, on the run's site only",
+         %{site: site, admin: admin} do
+      other = create_site!()
+      run = imported!(site, admin)
+      redirects = redirects(site)
+      posts = posts(site)
+
+      assert counts(run, "post_redirect").created == length(published())
+      assert map_size(redirects) == length(published())
+
+      assert %{to: "/blog/release-1-0-announcement", status: 301, active: true} =
+               redirects[@release]
+
+      for row <- published(),
+          do: assert(redirects[old_path(row)].to == "/blog/" <> posts[row["title"]["raw"]].slug)
+
+      refute is_map_key(redirects, "/2026/03/private-team-notes")
+      assert redirects(other) == %{}
+    end
+
+    test "a second run writes no second redirect, and keeps one an admin edited", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin)
+      again = imported!(site, admin)
+
+      assert %{created: 0, updated: 0, failed: 0} = counts(again, "post_redirect")
+
+      assert again |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() |> Enum.sort() ==
+               [{:skipped, "no_old_address"}, {:skipped, "unchanged"}]
+
+      redirects(site)[@release]
+      |> Ash.Changeset.for_update(:update, %{to: "/news/release-1-0"},
+        actor: admin,
+        tenant: site.id
+      )
+      |> Ash.update!()
+
+      change_in_wordpress!("post_redirect")
+      third = imported!(site, admin)
+
+      assert %{"44" => {:skipped, "edited_in_cms"}} = outcomes(third, "post_redirect")
+      assert counts(third, "post_redirect").updated == length(published()) - 1
+      assert map_size(redirects(site)) == length(published())
+      assert redirects(site)[@release].to == "/news/release-1-0"
+    end
+
+    test "an old address the site already redirects is reported, and the site's own rule is kept",
+         %{site: site, admin: admin} do
+      redirect!(site, admin, %{from_path: @release <> "/", to: "/news/release-1-0"})
+      run = imported!(site, admin)
+
+      assert {:failed, reason} = outcomes(run, "post_redirect")["44"]
+      assert reason =~ "already redirects that address"
+      assert counts(run, "post_redirect").created == length(published()) - 1
+      assert redirects(site)[@release].to == "/news/release-1-0"
+    end
+
+    test "with no redirects chosen, an import writes the posts and no redirect, and says why", %{
+      site: site,
+      admin: admin
+    } do
+      run = imported!(site, admin, %{post_address: "blog_without_redirects"})
+
+      assert counts(run, "post").created == length(recorded("posts"))
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() ==
+               [{:skipped, "not_chosen"}]
+
+      assert redirects(site) == %{}
+    end
+
+    test "an old address whose post was not imported is left out", %{site: site, admin: admin} do
+      target = MishkaCmsMigration.Targets.BlogPost
+      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, target, false)
+      on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(target, false) end)
+
+      run = imported!(site, admin)
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() |> Enum.sort() ==
+               [{:skipped, "no_old_address"}, {:skipped, "post_missing"}]
+
+      assert redirects(site) == %{}
+    end
+
+    test "an old address that is already its post's Blog address is left out", %{
+      site: site,
+      admin: admin
+    } do
+      run = imported!(site, admin, %{post_address: "blog_without_redirects"})
+      {:ok, options} = Options.builder(%{})
+
+      context = %{
+        mode: :import,
+        actor: admin,
+        site_id: site.id,
+        run_id: run.id,
+        source_host: run.source_host,
+        options: options,
+        parent_id: nil,
+        record: nil
+      }
+
+      items =
+        for {id, from} <- [{"44", "/blog/release-1-0-announcement/"}, {"43", @release}],
+            do: %Item{kind: "post_redirect", source_id: id, attrs: %{"from" => from}}
+
+      assert PostRedirect.existing(items, context) == %{"44" => {:skipped, "same_address"}}
     end
   end
 end

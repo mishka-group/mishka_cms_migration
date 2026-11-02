@@ -61,6 +61,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       create: :create,
       update: :update
 
+    alias MishkaBlog.Provision
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
 
@@ -83,6 +84,21 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         blogger_ids: written(context, "user", item.attrs["author"])
       })
     end
+
+    @doc """
+    Where the Blog serves a post with `slug` in `language` on the site `site_id`: the path of its
+    post page (`MishkaBlog.Provision.item_paths/0`) as the site's own address
+    (`MishkaCmsCore.Runtime.Languages.url/3`), `/blog/<slug>` in the language the site leaves
+    unprefixed and `/fa/blog/<slug>` in Persian. `nil` for a language the site does not publish in.
+    """
+    @spec address(String.t(), String.t(), String.t()) :: String.t() | nil
+    def address(slug, language, site_id),
+      do:
+        Languages.url(
+          Provision.item_paths().post,
+          %{Languages.capture() => language, "slug" => slug},
+          site_id
+        )
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do

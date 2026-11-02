@@ -887,6 +887,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp kind_tone("tag"), do: "bg-[#e9effb] text-[#3b6fd4]"
   defp kind_tone("page"), do: "bg-[#e6f6ee] text-[#1f9d6b]"
   defp kind_tone("post"), do: "bg-[#f1edfb] text-[#7a5bd0]"
+  defp kind_tone("post_redirect"), do: "bg-[#eaf1fb] text-[#3a6cb5]"
   defp kind_tone(_other), do: "bg-[#f2f1ec] text-[#6d6a63]"
 
   defp outcome_fill(:created), do: "#1f9d6b"

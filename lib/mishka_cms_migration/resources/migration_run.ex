@@ -30,9 +30,9 @@ defmodule MishkaCmsMigration.MigrationRun do
       serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
     * `:comments` — whether comments come too; `false` by default.
 
-  Only the authors choice is read yet, by the Blog's author target: post addresses will be read by
-  the redirect target, pages by the page target and comments by the comment target, as each kind's
-  import comes.
+  The authors choice is read by the Blog's author target and the post addresses by the redirect
+  target (`MishkaCmsMigration.Targets.PostRedirect`); pages will be read by the page target and
+  comments by the comment target, as each kind's import comes.
 
   ## Its life
 
@@ -1233,6 +1233,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("tag"), do: "hero-tag"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
+  def kind_icon("post_redirect"), do: "hero-arrows-right-left"
   def kind_icon(_other), do: "hero-cube"
 
   @doc """
@@ -1485,6 +1486,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
+  defp kind_noun("post_redirect"), do: dgettext("mishka_gervaz", "redirects")
   defp kind_noun(kind), do: kind
 
   @doc """
@@ -1497,6 +1499,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
+  def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
   def kind_label(kind), do: String.capitalize(kind)
 
   @doc """
@@ -1514,6 +1517,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
   defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
+  defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")
+  defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")
+  defp said("post_missing"), do: dgettext("mishka_gervaz", "Its post was not imported")
+  defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
 
   defp said("author_missing"),
     do: dgettext("mishka_gervaz", "Its author was not imported, so it has none")

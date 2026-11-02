@@ -18,7 +18,8 @@ defmodule MishkaCmsMigrationTest do
                 MishkaCmsMigration.Targets.BlogBlogger,
                 MishkaCmsMigration.Targets.BlogCollection,
                 MishkaCmsMigration.Targets.BlogTag,
-                MishkaCmsMigration.Targets.BlogPost
+                MishkaCmsMigration.Targets.BlogPost,
+                MishkaCmsMigration.Targets.PostRedirect
               ]}
 
     for plugin <- MishkaCmsMigration.Application.plugins() do
