@@ -41,6 +41,12 @@ defmodule MishkaCmsMigration.TargetTest do
     end
   end
 
+  test "a resource whose updated_at an action may be handed is refused" do
+    assert_raise ArgumentError, ~r/update_timestamp/, fn ->
+      compile_target(MishkaCmsMigration.Test.WritableTimestampResource)
+    end
+  end
+
   test "a resource whose id is not a UUID is refused" do
     assert_raise ArgumentError, ~r/UUID/, fn ->
       compile_target(MishkaCmsMigration.Test.IntegerResource)

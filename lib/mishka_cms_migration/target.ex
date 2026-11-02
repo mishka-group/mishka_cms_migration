@@ -44,9 +44,10 @@ defmodule MishkaCmsMigration.Target do
 
     * it is an Ash resource whose primary key is `:id`, a UUID — an item records the row it wrote
       by that id (`MishkaCmsMigration.MigrationItem`'s `target_id`);
-    * its `updated_at` is an `update_timestamp`, which Ash sets on every write — a re-run compares
-      it with the one recorded when the row was written, to keep an admin's edits (below); a plain
-      `updated_at` attribute that a write may leave alone is refused;
+    * its `updated_at` is an `update_timestamp`, which Ash sets on every write and no input may
+      set — a re-run compares it with the one recorded when the record was written, to keep an
+      admin's edits (below); a plain `updated_at` attribute, or one an action may be handed, is
+      refused;
     * `:create` names one of its create actions and `:update` one of its update actions.
 
   ## The source's other fields
@@ -74,6 +75,8 @@ defmodule MishkaCmsMigration.Target do
   alias MishkaCmsMigration.Source.Item
 
   @event "migration:targets"
+  @uuid_types [Ash.Type.UUID, Ash.Type.UUIDv7]
+  @timestamp_types [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
 
   @typedoc "What `attrs/2` is told: who writes, on which site, from which run, with which choices."
   @type context :: %{
@@ -183,42 +186,34 @@ defmodule MishkaCmsMigration.Target do
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp problems(resource, actions) do
-    case Info.resource?(resource) do
-      true -> resource_problems(resource, actions)
-      false -> ["#{inspect(resource)} is not an Ash resource"]
-    end
-  end
+  defp problems(resource, actions), do: problems(Info.resource?(resource), resource, actions)
 
-  defp resource_problems(resource, actions) do
+  defp problems(false, resource, _actions), do: ["#{inspect(resource)} is not an Ash resource"]
+
+  defp problems(true, resource, actions) do
     [
-      {uuid_id?(resource), "its primary key must be :id, a UUID"},
-      {timestamped?(resource), "its updated_at must be an update_timestamp, set on every write"},
-      {action?(resource, actions.create, :create),
+      {uuid_id?(Info.primary_key(resource), Info.attribute(resource, :id)),
+       "its primary key must be :id, a UUID"},
+      {timestamped?(Info.attribute(resource, :updated_at)),
+       "its updated_at must be an update_timestamp, set by Ash on every write and never by input"},
+      {action?(Info.action(resource, actions.create), :create),
        "#{inspect(actions.create)} is not one of its create actions"},
-      {action?(resource, actions.update, :update),
+      {action?(Info.action(resource, actions.update), :update),
        "#{inspect(actions.update)} is not one of its update actions"}
     ]
     |> Enum.reject(&elem(&1, 0))
     |> Enum.map(&"#{inspect(resource)}: #{elem(&1, 1)}")
   end
 
-  defp uuid_id?(resource) do
-    Info.primary_key(resource) == [:id] and
-      Info.attribute(resource, :id).type in [Ash.Type.UUID, Ash.Type.UUIDv7]
-  end
+  defp uuid_id?([:id], %{type: type}) when type in @uuid_types, do: true
+  defp uuid_id?(_primary_key, _id), do: false
 
-  defp timestamped?(resource) do
-    case Info.attribute(resource, :updated_at) do
-      %{type: type, update_default: default} when not is_nil(default) ->
-        type in [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
+  defp timestamped?(%{type: type, update_default: default, writable?: false})
+       when type in @timestamp_types and not is_nil(default),
+       do: true
 
-      _none_or_plain ->
-        false
-    end
-  end
+  defp timestamped?(_updated_at), do: false
 
-  defp action?(resource, name, type) do
-    match?(%{type: ^type}, Info.action(resource, name))
-  end
+  defp action?(%{type: type}, type), do: true
+  defp action?(_action, _type), do: false
 end
