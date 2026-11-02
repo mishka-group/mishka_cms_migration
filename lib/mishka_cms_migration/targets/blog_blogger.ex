@@ -55,6 +55,7 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
 
     alias MishkaBlog.Blogger
     alias MishkaCmsCore.Accounts.User
+    alias MishkaCmsMigration.Targets.Helpers.Read
 
     @impl MishkaCmsMigration.Target
     def existing(items, context) do
@@ -118,8 +119,7 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
     defp users(emails, context) do
       User
       |> Ash.Query.filter(email in ^emails)
-      |> Ash.read(actor: context.actor, tenant: context.site_id)
-      |> read()
+      |> Read.call(context)
       |> Map.new(&{&1.email |> to_string() |> String.downcase(), &1})
     end
 
@@ -130,14 +130,9 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
 
       Blogger
       |> Ash.Query.filter(user_id in ^ids)
-      |> Ash.read(actor: context.actor, tenant: context.site_id)
-      |> read()
+      |> Read.call(context)
       |> Map.new(&{&1.user_id, &1})
     end
-
-    defp read({:ok, rows}), do: rows
-    defp read({:error, %Ash.Error.Forbidden{}}), do: []
-    defp read({:error, error}), do: raise(error)
 
     defp email(item), do: item |> address() |> List.wrap()
 

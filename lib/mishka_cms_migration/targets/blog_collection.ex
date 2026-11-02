@@ -18,6 +18,12 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     WordPress category is live once it exists, and in the language the site leads with
     (`MishkaCmsCore.Runtime.Languages.primary/1`): a WordPress term has no language of its own.
 
+    A category the run's site already has, with the slug as the Blog writes it and in that language,
+    is that category: the item is connected to it and not written, the posts that name it are linked
+    to it, and the categories that sat under it in the source go under it
+    (`MishkaCmsMigration.Targets.Helpers.BySlug`), and the report says `"connected"`. The category
+    is kept as it is, now and on every later run.
+
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
     """
@@ -29,6 +35,10 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
       update: :update
 
     alias MishkaCmsCore.Runtime.Languages
+    alias MishkaCmsMigration.Targets.Helpers.BySlug
+
+    @impl MishkaCmsMigration.Target
+    def existing(items, context), do: BySlug.call(__MODULE__, items, context)
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
