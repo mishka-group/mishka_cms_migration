@@ -50,7 +50,7 @@ defmodule MishkaCmsMigration.Walker do
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
-      walk = %{kind: kind, cursor: nil, cursors: MapSet.new(), ids: MapSet.new(), pages: 0}
+      walk = %{kind: kind, cursor: nil, cursors: %{}, ids: %{}, pages: 0}
 
       case walk_kind(state, walk, report) do
         {:ok, report} -> {:cont, {:ok, report}}
@@ -77,12 +77,16 @@ defmodule MishkaCmsMigration.Walker do
   defp walk_on(_state, _walk, nil, report), do: {:ok, report}
 
   defp walk_on(state, walk, next, report) do
-    case MapSet.member?(walk.cursors, next) do
+    case Map.has_key?(walk.cursors, next) do
       true ->
         {:error, {:cursor_repeated, walk.kind}}
 
       false ->
-        walk_kind(state, %{walk | cursor: next, cursors: MapSet.put(walk.cursors, next)}, report)
+        walk_kind(
+          state,
+          %{walk | cursor: next, cursors: Map.put(walk.cursors, next, true)},
+          report
+        )
     end
   end
 
@@ -98,9 +102,9 @@ defmodule MishkaCmsMigration.Walker do
   end
 
   defp once({:ok, item} = row, ids) do
-    case MapSet.member?(ids, item.source_id) do
+    case Map.has_key?(ids, item.source_id) do
       true -> {{:duplicate, item}, ids}
-      false -> {row, MapSet.put(ids, item.source_id)}
+      false -> {row, Map.put(ids, item.source_id, true)}
     end
   end
 
