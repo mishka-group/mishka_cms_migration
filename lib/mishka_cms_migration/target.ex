@@ -44,8 +44,9 @@ defmodule MishkaCmsMigration.Target do
 
     * it is an Ash resource whose primary key is `:id`, a UUID — an item records the row it wrote
       by that id (`MishkaCmsMigration.MigrationItem`'s `target_id`);
-    * it has an `updated_at` timestamp — a re-run compares it with the one recorded when the row was
-      written, to keep an admin's edits (below);
+    * its `updated_at` is an `update_timestamp`, which Ash sets on every write — a re-run compares
+      it with the one recorded when the row was written, to keep an admin's edits (below); a plain
+      `updated_at` attribute that a write may leave alone is refused;
     * `:create` names one of its create actions and `:update` one of its update actions.
 
   ## Keeping an admin's edits
@@ -181,7 +182,7 @@ defmodule MishkaCmsMigration.Target do
   defp resource_problems(resource, actions) do
     [
       {uuid_id?(resource), "its primary key must be :id, a UUID"},
-      {timestamped?(resource), "it must have an updated_at timestamp"},
+      {timestamped?(resource), "its updated_at must be an update_timestamp, set on every write"},
       {action?(resource, actions.create, :create),
        "#{inspect(actions.create)} is not one of its create actions"},
       {action?(resource, actions.update, :update),
@@ -198,8 +199,11 @@ defmodule MishkaCmsMigration.Target do
 
   defp timestamped?(resource) do
     case Info.attribute(resource, :updated_at) do
-      %{type: type} -> type in [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
-      nil -> false
+      %{type: type, update_default: default} when not is_nil(default) ->
+        type in [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
+
+      _none_or_plain ->
+        false
     end
   end
 

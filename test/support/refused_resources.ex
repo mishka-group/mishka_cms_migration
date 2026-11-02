@@ -19,3 +19,22 @@ defmodule MishkaCmsMigration.Test.IntegerResource do
     update_timestamp :updated_at
   end
 end
+
+defmodule MishkaCmsMigration.Test.PlainTimestampResource do
+  @moduledoc """
+  A resource for the suite whose `updated_at` is a plain attribute rather than an
+  `update_timestamp`, kept in ETS and in no domain: a migration target over it is refused when it
+  compiles (`MishkaCmsMigration.Target`).
+  """
+
+  use Ash.Resource, domain: nil, data_layer: Ash.DataLayer.Ets
+
+  actions do
+    defaults [:read, create: :*, update: :*]
+  end
+
+  attributes do
+    uuid_primary_key :id
+    attribute :updated_at, :utc_datetime_usec, public?: true
+  end
+end

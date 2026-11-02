@@ -35,6 +35,12 @@ defmodule MishkaCmsMigration.TargetTest do
     end
   end
 
+  test "a resource whose updated_at is a plain attribute, not an update_timestamp, is refused" do
+    assert_raise ArgumentError, ~r/update_timestamp/, fn ->
+      compile_target(MishkaCmsMigration.Test.PlainTimestampResource)
+    end
+  end
+
   test "a resource whose id is not a UUID is refused" do
     assert_raise ArgumentError, ~r/UUID/, fn ->
       compile_target(MishkaCmsMigration.Test.IntegerResource)
