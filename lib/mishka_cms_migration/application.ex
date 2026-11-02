@@ -33,6 +33,7 @@ defmodule MishkaCmsMigration.Application do
   @sources [MishkaCmsMigration.Sources.WordPress]
 
   @blog_targets [
+    MishkaCmsMigration.Targets.BlogBlogger,
     MishkaCmsMigration.Targets.BlogCollection,
     MishkaCmsMigration.Targets.BlogTag,
     MishkaCmsMigration.Targets.BlogPost
@@ -56,9 +57,9 @@ defmodule MishkaCmsMigration.Application do
 
   @doc """
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
-  through an existing CMS action: categories, tags and posts into Mishka Blog
-  (`MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
-  `MishkaCmsMigration.Targets.BlogPost`).
+  through an existing CMS action: authors, categories, tags and posts into Mishka Blog
+  (`MishkaCmsMigration.Targets.BlogBlogger`, `MishkaCmsMigration.Targets.BlogCollection`,
+  `MishkaCmsMigration.Targets.BlogTag`, `MishkaCmsMigration.Targets.BlogPost`).
 
   Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,
   so on a node without it they are left out and their kinds are skipped as `"no_target"`.

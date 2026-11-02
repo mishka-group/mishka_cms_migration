@@ -861,8 +861,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
 
   defp chosen(_unreadable), do: []
 
-  defp authors("create"), do: gettext("A new user and blog author for each")
-  defp authors(_connect), do: gettext("Matched to existing users by email")
+  defp authors("create"), do: gettext("Matched to users by email, a new user for the rest")
+  defp authors(_connect), do: gettext("Matched to users by email, the rest skipped")
 
   defp pages("publish"), do: gettext("Published at their old addresses")
   defp pages(_draft), do: gettext("Brought in as drafts")

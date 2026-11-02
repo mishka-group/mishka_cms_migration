@@ -486,7 +486,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, page and post it found: terms and posts to create in the Blog, the rest with no target yet" do
+    test "reports every user, term, page and post it found: terms and posts to create in the Blog, users with no CMS user, pages with no target yet" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -513,7 +513,11 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert run.report.entries
              |> Enum.reject(&(&1.kind == "post"))
              |> Enum.all?(
-               &({&1.outcome, &1.reason} in [{:created, nil}, {:skipped, "no_target"}])
+               &({&1.outcome, &1.reason} in [
+                   {:created, nil},
+                   {:skipped, "no_user"},
+                   {:skipped, "no_target"}
+                 ])
              )
 
       assert Enum.any?(run.report.entries, &(&1.title == "نصب وردپرس روی سرور"))

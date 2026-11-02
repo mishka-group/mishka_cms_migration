@@ -8,9 +8,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   recorded for the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the
   item's kind and its source id:
 
-    * none, or one never written — `{:created, target, nil}`;
+    * none, or one never written — `{:created, target, nil}`, unless the target finds it in the
+      CMS already (`MishkaCmsMigration.Target`'s `existing/2`): `{:connected, target, record}`, the
+      CMS record it is, or `{:skipped, reason}`, why it is left out;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
+    * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
+      record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
       it in the CMS — `{:skipped, "edited_in_cms"}`;
     * otherwise — `{:updated, target, record}`, the CMS record to write over.
@@ -25,7 +29,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   never meet: the same id from two hosts is two items, each with its own CMS record.
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
-  CMS records they were written to.
+  CMS records they were written to; and its items no run has written are handed to the target's
+  `existing/2` together, once.
   """
 
   require Ash.Query
@@ -33,9 +38,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
 
-  @typedoc "What to do with an item: write a new record, write over `record`, or leave it, and why."
+  @typedoc """
+  What to do with an item: write a new record, write over `record`, record it against `record` the
+  CMS already held, or leave it, and why.
+  """
   @type plan ::
-          {:created, module(), nil} | {:updated, module(), struct()} | {:skipped, String.t()}
+          {:created, module(), nil}
+          | {:updated, module(), struct()}
+          | {:connected, module(), struct()}
+          | {:skipped, String.t()}
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
@@ -50,10 +61,28 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     known = known(state, kind, items)
     records = known |> Map.values() |> Enum.flat_map(&target_id/1) |> current(target, state)
 
-    Map.new(items, fn item ->
-      {item.source_id, plan(target, item, Map.get(known, item.source_id), records)}
+    items
+    |> Map.new(&{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records)})
+    |> existing(target, items, state)
+  end
+
+  defp existing(plans, target, items, state) do
+    new = for item <- items, match?({:created, _target, nil}, plans[item.source_id]), do: item
+    ids = Enum.map(new, & &1.source_id)
+
+    new
+    |> found(target, state)
+    |> Map.take(ids)
+    |> Enum.reduce(plans, fn {source_id, found}, plans ->
+      Map.put(plans, source_id, connected(target, found))
     end)
   end
+
+  defp found([], _target, _state), do: %{}
+  defp found(items, target, state), do: target.existing(items, state.context)
+
+  defp connected(target, {:connected, record}), do: {:connected, target, record}
+  defp connected(_target, {:skipped, reason}) when is_binary(reason), do: {:skipped, reason}
 
   defp current([], _target, _state), do: %{}
 
@@ -72,6 +101,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+  defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
   defp decide(target, known, _hash, record),
     do: record |> edited?(known) |> updated(target, record)

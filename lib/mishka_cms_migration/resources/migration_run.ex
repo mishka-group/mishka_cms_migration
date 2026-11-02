@@ -19,17 +19,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   `MishkaCmsMigration.MigrationRun.Options`, the struct the `sub_field` generates, with its
   `builder/1`, and hands it to every target:
 
-    * `:authors` — `"connect"` (the default) ties each source author to an existing user, matched by
-      email; `"create"` makes a user and a blog author for each.
+    * `:authors` — `"connect"` (the default) ties each source author to a user of the site, matched
+      by email, and skips one with no match; `"create"` makes a user for one with no match. Either
+      way each becomes that user's blog author (`MishkaCmsMigration.Targets.BlogBlogger`).
     * `:pages` — `"draft"` (the default) brings pages in as drafts; `"publish"` puts them live at
       their old addresses.
     * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>` with a 301 from each
       old address; `"keep"` keeps the source's own addresses.
     * `:comments` — whether comments come too; `false` by default.
 
-  No target reads them yet: the authors choice is read by the author and post targets, pages by the
-  page target, post addresses by the post and redirect targets and comments by the comment target,
-  as each kind's import comes.
+  Only the authors choice is read yet, by the Blog's author target: pages will be read by the page
+  target, post addresses by the post and redirect targets and comments by the comment target, as
+  each kind's import comes.
 
   ## Its life
 
@@ -1453,6 +1454,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("target_missing"), do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+  defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
+
+  defp said("connected"),
+    do: dgettext("mishka_gervaz", "Already in the CMS, so linked and kept as it is")
 
   defp said("plugins_cannot_run"),
     do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")

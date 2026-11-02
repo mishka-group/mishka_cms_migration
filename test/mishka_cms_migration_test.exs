@@ -15,6 +15,7 @@ defmodule MishkaCmsMigrationTest do
     assert {MishkaCmsMigration.Application.sources(), MishkaCmsMigration.Application.targets()} ==
              {[MishkaCmsMigration.Sources.WordPress],
               [
+                MishkaCmsMigration.Targets.BlogBlogger,
                 MishkaCmsMigration.Targets.BlogCollection,
                 MishkaCmsMigration.Targets.BlogTag,
                 MishkaCmsMigration.Targets.BlogPost

@@ -30,8 +30,9 @@ defmodule MishkaCmsMigration.Target do
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
-  `actions/0` and a `note/1` that says nothing; a target writes only `attrs/2`, and `note/1` when
-  it writes an item otherwise than the source has it.
+  `actions/0`, a `note/1` that says nothing and an `existing/2` that finds nothing; a target writes
+  only `attrs/2`, `note/1` when it writes an item otherwise than the source has it, and
+  `existing/2` when the CMS may already hold some of its items.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -75,6 +76,37 @@ defmodule MishkaCmsMigration.Target do
   An item whose parent has no CMS record is not written; it is skipped as `"parent_missing"`
   (`MishkaCmsMigration.Workers.Helpers.Writer`).
 
+  ## A create and an update
+
+  `attrs/2` builds the input of both actions. On an update its context's `record` is the CMS
+  record being written over, and `nil` on a create, so a target can leave out what is set only
+  once, such as whose profile a blog author is. It runs inside the write's transaction, as the
+  admin: what it writes first for the record to point at (the Blog's author target makes the user
+  its profile names) is rolled back with the record when the write fails, and one it cannot write
+  raises, which fails the item with the error.
+
+  ## What the CMS already holds
+
+  An item may already be in the CMS without any run having written it, such as a WordPress author
+  who is a user of the site with a blog profile of their own. `existing/2` is handed a page's items
+  no run has written yet, with the context `attrs/2` gets (no parent and no record), before
+  anything is written and in a dry run too, and answers by source id:
+
+    * `{:connected, record}` — the item is that CMS record. It is recorded against it and never
+      written, by this run or a later one: the record is the CMS's own and is kept as it is, and
+      the report says `"connected"` (`MishkaCmsMigration.Workers.Helpers.Decision`);
+    * `{:skipped, reason}` — the item is left out, with `reason`.
+
+  An item the answer leaves out is created. It reads as the admin running the job, under the CMS's
+  own policies. `use` answers `%{}`.
+
+      def existing(items, context) do
+        held = held_by_slug(items, context)
+
+        for item <- items, record = held[item.attrs["slug"]], into: %{},
+            do: {item.source_id, {:connected, record}}
+      end
+
   ## What the report says
 
   `note/1` is what the report says about an item the target writes otherwise than the source has
@@ -103,8 +135,9 @@ defmodule MishkaCmsMigration.Target do
   @timestamp_types [Ash.Type.UtcDatetimeUsec, Ash.Type.UtcDatetime, Ash.Type.DateTime]
 
   @typedoc """
-  What `attrs/2` is told: who writes, on which site, from which run, with which choices, and the
-  CMS record of the item's parent (see "An item's parent").
+  What `attrs/2` is told: who writes, on which site, from which run, with which choices, the CMS
+  record of the item's parent (see "An item's parent") and the record an update writes over (see
+  "A create and an update").
   """
   @type context :: %{
           actor: map(),
@@ -112,8 +145,12 @@ defmodule MishkaCmsMigration.Target do
           run_id: String.t(),
           source_host: String.t(),
           options: map(),
-          parent_id: Ecto.UUID.t() | nil
+          parent_id: Ecto.UUID.t() | nil,
+          record: struct() | nil
         }
+
+  @typedoc "What `existing/2` says of one item: the CMS record it already is, or why it is left out."
+  @type found :: {:connected, struct()} | {:skipped, String.t()}
 
   @doc "The kind of item this target writes, such as `\"post\"`."
   @callback id() :: String.t()
@@ -132,6 +169,12 @@ defmodule MishkaCmsMigration.Target do
   (see "What the report says"). `use` answers `nil`.
   """
   @callback note(Item.t()) :: String.t() | nil
+
+  @doc """
+  What the CMS already holds of `items`, a page of items no run has written yet, by source id; an
+  item left out is created (see "What the CMS already holds"). `use` answers `%{}`.
+  """
+  @callback existing([Item.t()], context()) :: %{String.t() => found()}
 
   @doc false
   defmacro __using__(opts) do
@@ -166,7 +209,10 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def note(_item), do: nil
 
-      defoverridable note: 1
+      @impl MishkaCmsMigration.Target
+      def existing(_items, _context), do: %{}
+
+      defoverridable note: 1, existing: 2
     end
   end
 

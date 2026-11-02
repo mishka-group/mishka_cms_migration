@@ -682,7 +682,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
       end
 
-      for {kind, found} <- [{"user", 5}, {"page", 11}] do
+      for {kind, found, why} <- [
+            {"user", 5, "No user with this email on the site"},
+            {"page", 11, "Nothing imports these yet"}
+          ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -691,7 +694,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         assert has_element?(
                  view,
                  ~s|#{card} [data-role="run-details-kind-reason"][data-outcome="skipped"]|,
-                 "Nothing imports these yet"
+                 why
                )
       end
 

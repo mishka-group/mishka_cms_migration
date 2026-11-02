@@ -4,10 +4,11 @@
 
 defmodule MishkaCmsMigration.Targets.BlogTest do
   @moduledoc """
-  A WordPress site's categories, tags and posts moved into Mishka Blog, against what the seeded
-  WordPress answered: what a dry run reports, what an import writes and where, what a second run
-  does with it, and a node whose Blog targets are stopped. A post's content is read for what it
-  means, with LazyHTML, not as markup.
+  A WordPress site's authors, categories, tags and posts moved into Mishka Blog, against what the
+  seeded WordPress answered: what a dry run reports, what an import writes and where, what a second
+  run does with it, and a node whose Blog targets are stopped. A post's content is read for what it
+  means, with LazyHTML, not as markup. An author becomes the blogger of the site's user with their
+  email, the editor `shahryar@mishka.tools` in the seed's story, and under `"create"` of a new user.
 
   A second run sees an item WordPress changed when the item's hash is no longer the one the first
   run recorded, so a test has WordPress change its items by changing the recorded hashes.
@@ -16,7 +17,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
 
-  alias MishkaBlog.{BlogPost, Collection, Tag}
+  alias MishkaBlog.{Blogger, BlogPost, Collection, Tag}
+  alias MishkaCmsCore.Accounts.User
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag}
@@ -24,6 +26,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:blog:post"]
+  @people @admin ++ ["admin:dashboard:user"]
+  @editor "shahryar@mishka.tools"
 
   setup do
     stub!()
@@ -31,13 +35,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     %{site: site, admin: migration_admin!(site, @admin)}
   end
 
-  defp wordpress_run!(site, admin) do
-    %{source: "wordpress", connection: @connection, secret: "app password"}
+  defp wordpress_run!(site, admin, options \\ %{}) do
+    %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
   end
 
-  defp imported!(site, admin),
-    do: site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+  defp imported!(site, admin, options \\ %{}),
+    do: site |> wordpress_run!(admin, options) |> dry_run!(admin) |> import!(admin)
 
   defp counts(run, kind) do
     run.report.kinds
@@ -80,6 +84,21 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     names = Map.new(recorded(recording), &{&1["id"], &1["name"]})
     ids |> Enum.map(&names[&1]) |> Enum.sort()
   end
+
+  defp bloggers(site),
+    do: Blogger |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.slug, &1})
+
+  defp accounts(site) do
+    User
+    |> Ash.read!(tenant: site.id, authorize?: false, load: [:permissions])
+    |> Enum.filter(&(&1.site_id == site.id))
+    |> Map.new(&{to_string(&1.email), &1})
+  end
+
+  defp kept(blogger),
+    do: Map.take(blogger, [:id, :user_id, :display_name, :slug, :bio, :avatar_url, :updated_at])
+
+  defp emails(recording), do: recording |> recorded() |> Map.new(&{&1["email"], &1})
 
   defp change_in_wordpress!(kind) do
     Repo.query!(
@@ -239,6 +258,197 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       tags = blog(Tag, site)
       assert tags["Search engines"].id == seo.id
       refute is_map_key(tags, "SEO")
+    end
+  end
+
+  describe "authors" do
+    setup %{site: site}, do: %{admin: migration_admin!(site, @people)}
+
+    test "a dry run plans a blogger for the author whose email is a user of the site, skips the others as having no user, and writes nothing",
+         %{site: site, admin: admin} do
+      create_user!(email: @editor, site_id: site.id)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run, "user") == %{
+               "2" => {:created, nil},
+               "1" => {:skipped, "no_user"},
+               "3" => {:skipped, "no_user"},
+               "4" => {:skipped, "no_user"},
+               "5" => {:skipped, "no_user"}
+             }
+
+      assert bloggers(site) == %{}
+    end
+
+    test "an import makes the site's user with the editor's email a blogger with the WordPress profile, and makes no user",
+         %{site: site, admin: admin} do
+      editor = create_user!(email: @editor, site_id: site.id)
+      before = accounts(site)
+
+      run = imported!(site, admin)
+
+      assert counts(run, "user") == %{created: 1, updated: 0, skipped: 4, failed: 0}
+      assert %{"shahryar" => blogger} = bloggers(site)
+      assert map_size(bloggers(site)) == 1
+      assert blogger.user_id == editor.id
+      assert blogger.display_name == "Shahryar Tavakkoli"
+      assert blogger.bio == emails("users")[@editor]["description"]
+      assert blogger.avatar_url == emails("users")[@editor]["avatar_urls"]["96"]
+      assert is_nil(blogger.contact_email)
+      refute blogger.can_publish_directly
+      assert Map.keys(accounts(site)) == Map.keys(before)
+    end
+
+    test "an author whose user already has a blogger is linked to it, and the profile is kept, on every run",
+         %{site: site, admin: admin} do
+      editor = create_user!(email: @editor, site_id: site.id)
+
+      own =
+        Blogger
+        |> Ash.Changeset.for_create(
+          :create,
+          %{user_id: editor.id, display_name: "Shahryar, in the CMS", slug: "mine", bio: "Mine"},
+          actor: admin,
+          tenant: site.id
+        )
+        |> Ash.create!()
+
+      run = imported!(site, admin)
+
+      assert %{"2" => {:skipped, "connected"}} = outcomes(run, "user")
+      assert site |> bloggers() |> Map.values() |> Enum.map(&kept/1) == [kept(own)]
+
+      change_in_wordpress!("user")
+      again = imported!(site, admin)
+
+      assert %{"2" => {:skipped, "connected"}} = outcomes(again, "user")
+      assert site |> bloggers() |> Map.values() |> Enum.map(&kept/1) == [kept(own)]
+    end
+
+    test "under create, an author with no user gets a new user of the site, unconfirmed, with no permission and no password anyone knows, and a blogger",
+         %{site: site, admin: admin} do
+      editor = create_user!(email: @editor, site_id: site.id)
+      run = imported!(site, admin, %{authors: "create"})
+      wordpress = emails("users")
+      accounts = accounts(site)
+
+      assert counts(run, "user") ==
+               %{created: map_size(wordpress), updated: 0, skipped: 0, failed: 0}
+
+      assert accounts[@editor].id == editor.id
+
+      for {email, %{"username" => username, "slug" => slug}} <- wordpress, email != @editor do
+        user = accounts[email]
+
+        assert user.site_id == site.id
+        assert is_nil(user.confirmed_at)
+        assert user.permissions == []
+
+        for guess <- ["", email, username, slug, "app password", "Password123!"],
+            do: refute(Bcrypt.verify_pass(guess, user.hashed_password))
+      end
+
+      hashes =
+        for {email, _row} <- wordpress, email != @editor, do: accounts[email].hashed_password
+
+      assert hashes |> Enum.uniq() |> length() == map_size(wordpress) - 1
+
+      bloggers = bloggers(site)
+      assert map_size(bloggers) == map_size(wordpress)
+
+      for {email, %{"slug" => slug, "name" => name}} <- wordpress do
+        assert bloggers[slug].user_id == accounts[email].id
+        assert bloggers[slug].display_name == name
+      end
+
+      assert bloggers["omid"].display_name == "امید رحیمی"
+    end
+
+    test "a second run keeps every author's user and blogger, each unchanged", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin, %{authors: "create"})
+      accounts = accounts(site)
+      bloggers = bloggers(site)
+
+      again = imported!(site, admin, %{authors: "create"})
+
+      assert again |> outcomes("user") |> Map.values() |> Enum.uniq() == [{:skipped, "unchanged"}]
+      assert accounts(site) == accounts
+      assert bloggers(site) == bloggers
+
+      change_in_wordpress!("user")
+      third = imported!(site, admin, %{authors: "create"})
+
+      assert counts(third, "user").updated == map_size(bloggers)
+      assert accounts(site) == accounts
+
+      assert for({slug, blogger} <- bloggers(site), do: {slug, blogger.id, blogger.user_id}) ==
+               for({slug, blogger} <- bloggers, do: {slug, blogger.id, blogger.user_id})
+    end
+
+    test "an author skipped for having no user becomes a blogger once the site has the user", %{
+      site: site,
+      admin: admin
+    } do
+      run = imported!(site, admin)
+      assert %{"2" => {:skipped, "no_user"}} = outcomes(run, "user")
+
+      editor = create_user!(email: @editor, site_id: site.id)
+      again = imported!(site, admin)
+
+      assert %{"2" => {:created, nil}} = outcomes(again, "user")
+      assert bloggers(site)["shahryar"].user_id == editor.id
+    end
+
+    test "a site admin's run matches only its own site's users: never another site's or a master with that email",
+         %{site: site, admin: admin} do
+      other = create_site!()
+      elsewhere = create_user!(email: @editor, site_id: other.id)
+      master = create_user!(email: "nadia.karimi@example.test")
+
+      run = imported!(site, admin)
+
+      assert %{"2" => {:skipped, "no_user"}, "3" => {:skipped, "no_user"}} = outcomes(run, "user")
+      assert bloggers(site) == %{}
+
+      created = imported!(site, admin, %{authors: "create"})
+
+      assert %{"2" => {:created, nil}, "3" => {:created, nil}} = outcomes(created, "user")
+      own = accounts(site)
+      bloggers = bloggers(site)
+
+      for {email, slug} <- [{@editor, "shahryar"}, {"nadia.karimi@example.test", "nadia"}] do
+        assert own[email].site_id == site.id
+        assert bloggers[slug].user_id == own[email].id
+        refute own[email].id in [elsewhere.id, master.id]
+      end
+
+      assert %{site_id: site_id, hashed_password: hash} =
+               Ash.get!(User, elsewhere.id, authorize?: false)
+
+      assert {site_id, hash} == {other.id, elsewhere.hashed_password}
+      assert is_nil(Ash.get!(User, master.id, authorize?: false).site_id)
+      assert bloggers(other) == %{}
+    end
+
+    test "an admin who may not see the site's users connects none and makes none", %{site: site} do
+      admin = migration_admin!(site, @admin)
+      create_user!(email: @editor, site_id: site.id)
+      before = accounts(site)
+
+      run = imported!(site, admin)
+      assert %{"2" => {:skipped, "no_user"}} = outcomes(run, "user")
+
+      created = imported!(site, admin, %{authors: "create"})
+
+      assert created |> outcomes("user") |> Map.values() |> Enum.uniq() == [
+               {:failed, "forbidden"}
+             ]
+
+      assert Map.keys(accounts(site)) == Map.keys(before)
+      assert bloggers(site) == %{}
     end
   end
 

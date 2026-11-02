@@ -23,6 +23,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   `"draft_from_pending; unconverted: acme/callout, gallery"`. A dry run asks no plugin, so it names
   every piece the source left to convert.
 
+  An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`)
+  is not written: in an import it is recorded against that record, with no `target_updated_at`, as
+  skipped, `"connected"`; a dry run reports it so.
+
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
   record's id as its context's `parent_id`. When the parent has none — it failed, was never written,
@@ -42,6 +46,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
       in a dry run, with its target's note and the pieces of its content left unconverted as its
       reason;
+    * `{:connected, target, record}` — recorded against `record` in an import, never written, and
+      reported as skipped, `"connected"`;
     * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason in an import; an item
       whose row could not be read has only its kind and, when the row named one, its source id;
     * `:duplicate` — the source listed its id before: reported, never recorded.
@@ -52,6 +58,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
     do: entry(state, item, outcome, reason)
+
+  def call(%{mode: :dry_run}, %Item{} = item, {:connected, _target, _record}),
+    do: Report.entry(item.kind, item.source_id, item.title, :skipped, "connected")
+
+  def call(%{mode: :import} = state, %Item{} = item, {:connected, target, record}) do
+    state
+    |> recorded(item, target, %{id: record.id, updated_at: nil}, {:skipped, "connected"})
+    |> stored()
+    |> entered(item, :skipped, "connected")
+  end
 
   def call(%{mode: :dry_run}, %Item{} = item, {outcome, target, _record}),
     do:
@@ -106,10 +122,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, {target, written}, outcome, note) do
+         {:ok, _item} <- recorded(state, source_item, target, written, {outcome, note}) do
       {:ok, written}
     end
   end
+
+  defp stored({:ok, _item}), do: :ok
+  defp stored({:error, error}), do: {:error, error}
 
   defp parented(state, %Item{parent: nil}), do: {:ok, target_context(state, nil)}
 
@@ -133,13 +152,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp write(target, item, record, context) do
     record
-    |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
+    |> Ash.Changeset.for_update(
+      target.actions().update,
+      target.attrs(item, %{context | record: record}),
+      as(context)
+    )
     |> Ash.update()
   end
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp recorded(state, item, {target, record}, outcome, note) do
+  defp recorded(state, item, target, %{id: id, updated_at: updated_at}, {outcome, note}) do
     MishkaCmsMigration.record_item(
       %{
         source_host: state.run.source_host,
@@ -149,8 +172,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
         target_resource: inspect(target.resource()),
-        target_id: record.id,
-        target_updated_at: record.updated_at,
+        target_id: id,
+        target_updated_at: updated_at,
         outcome: outcome,
         reason: note,
         extra: item.extra
@@ -226,13 +249,5 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp target_context(state, parent_id),
-    do: %{
-      actor: state.actor,
-      site_id: state.run.site_id,
-      run_id: state.run.id,
-      source_host: state.run.source_host,
-      options: state.options,
-      parent_id: parent_id
-    }
+  defp target_context(state, parent_id), do: %{state.context | parent_id: parent_id}
 end

@@ -78,10 +78,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   A row without the fields its kind needs, such as one read with `_fields`, is refused as
   `:unreadable`.
 
-  Categories, tags and posts are written into Mishka Blog where it runs
-  (`MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
-  `MishkaCmsMigration.Targets.BlogPost`). Users and pages have no target yet, so a dry run reports
-  them as skipped (`"no_target"`): authors come next (mishka_cms_migration#6).
+  Users, categories, tags and posts are written into Mishka Blog where it runs: users as bloggers
+  of the site's users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
+  `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
+  `MishkaCmsMigration.Targets.BlogPost`. Pages have no target yet, so a dry run reports them as
+  skipped (`"no_target"`).
 
   Requests go through `Req`. `req_options` in the application environment are merged into every
   request, which is how the suite replays what a real WordPress answered
