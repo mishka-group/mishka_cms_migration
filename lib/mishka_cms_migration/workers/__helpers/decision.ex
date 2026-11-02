@@ -11,9 +11,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     * none, or one never written — `{:created, target, nil}`;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
-    * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed it in
-      the CMS — `{:skipped, "edited_in_cms"}`;
+    * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
+      it in the CMS — `{:skipped, "edited_in_cms"}`;
     * otherwise — `{:updated, target, record}`, the CMS record to write over.
+
+  The CMS records are read through the target resource's primary read as the admin running the
+  job, under the CMS's own policies; a read the CMS refuses fails the attempt, as an error of the
+  walk does (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
 
   An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`.
 
@@ -23,6 +27,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
   CMS records they were written to.
   """
+
+  require Ash.Query
 
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
@@ -42,13 +48,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp plans(state, target, kind, items) do
     known = known(state, kind, items)
-
-    records =
-      Target.current(target, Enum.flat_map(Map.values(known), &target_id/1), state.run.site_id)
+    records = known |> Map.values() |> Enum.flat_map(&target_id/1) |> current(target, state)
 
     Map.new(items, fn item ->
       {item.source_id, plan(target, item, Map.get(known, item.source_id), records)}
     end)
+  end
+
+  defp current([], _target, _state), do: %{}
+
+  defp current(ids, target, state) do
+    target.resource()
+    |> Ash.Query.filter(id in ^ids)
+    |> Ash.read!(actor: state.actor, tenant: state.run.site_id)
+    |> Map.new(&{&1.id, &1})
   end
 
   defp plan(target, _item, nil, _records), do: {:created, target, nil}

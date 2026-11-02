@@ -8,20 +8,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   its entry in the report (`call/3`, answering `MishkaCmsMigration.Report.entry/5`).
 
   In an import an item to create or update has its content converted (`migration:content:convert`),
-  is offered to the plugins (`migration:item:before_import`), is written through its target
-  (`MishkaCmsMigration.Target.write/4`) as the admin who pressed Import, and is recorded
+  is offered to the plugins (`migration:item:before_import`), is written through its target's create
+  or update action (`MishkaCmsMigration.Target`) as the admin who pressed Import, and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
   so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
-  its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot
-  be recorded, the item's entry says it failed, with why. A dry run records nothing and writes
-  nothing: it reports the plan.
+  its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot be
+  recorded, the item's entry says it failed, with why. A dry run records nothing and writes nothing:
+  it reports the plan.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason.
   """
 
-  alias MishkaCmsMigration.{Events, MigrationItem, Report, Target}
+  alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
 
   @doc """
@@ -81,11 +81,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   end
 
   defp store(state, source_item, item, {outcome, target, record}) do
-    with {:ok, written} <- Target.write(target, item, record, target_context(state)),
+    with {:ok, written} <- write(target, item, record, target_context(state)),
          {:ok, _item} <- recorded(state, source_item, target, written, outcome) do
       {:ok, written}
     end
   end
+
+  defp write(target, item, nil, context) do
+    target.resource()
+    |> Ash.Changeset.for_create(target.actions().create, target.attrs(item, context), as(context))
+    |> Ash.create()
+  end
+
+  defp write(target, item, record, context) do
+    record
+    |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
+    |> Ash.update()
+  end
+
+  defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
   defp recorded(state, item, target, record, outcome) do
     MishkaCmsMigration.record_item(

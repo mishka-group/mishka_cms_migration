@@ -9,6 +9,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Actor do
   loads the user with their permissions when the job runs (`lookup/1`), so a target writes as that
   admin under the CMS's own policies, with the permissions they hold then. A user who is gone
   fails the attempt.
+
+  `lookup/1` reads the user as the system (`authorize?: false`): there is no actor yet to read as,
+  since finding one is what it is for. It is one of the two places the extension acts as the
+  system, with `MishkaCmsMigration.Workers.Helpers.Discarded`, which runs outside any job.
   """
 
   use AshOban.ActorPersister

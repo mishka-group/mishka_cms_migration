@@ -6,9 +6,9 @@ defmodule MishkaCmsMigration.Target do
   @moduledoc """
   Where one kind of item goes in the CMS: one module that is a `mishka_installer` plugin on the
   `"migration:targets"` event and names an existing CMS resource and the create and update actions
-  that write it. The extension adds no write path of its own: every record is written by that action,
-  as the admin who pressed Import and under the run's site, so the resource's policies, validations
-  and plugins decide as they do for anything else.
+  that write it. The extension adds no write path of its own: every record is written by that
+  action, as the admin who pressed Import and under the run's site, so the resource's policies,
+  validations and plugins decide as they do for anything else.
 
       defmodule MyExtension.Targets.Post do
         use MishkaCmsMigration.Target,
@@ -34,9 +34,9 @@ defmodule MishkaCmsMigration.Target do
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
-  this extension's; no list here names it. Which target writes a kind is read from mishka_installer's
-  registry (`MishkaCmsMigration.Source.installed/2`): a target an operator stops in the installer writes
-  nothing, and its kind is skipped as `"no_target"`.
+  this extension's; no list here names it. Which target writes a kind is read from
+  mishka_installer's registry (`MishkaCmsMigration.Source.installed/2`): a target an operator stops
+  in the installer writes nothing, and its kind is skipped as `"no_target"`.
 
   ## What the resource needs
 
@@ -63,12 +63,11 @@ defmodule MishkaCmsMigration.Target do
 
   ## Keeping an admin's edits
 
-  A re-run reads the records earlier runs wrote (`current/3`) and compares each one's `updated_at`
-  with the one the run recorded when it wrote it. A record changed in the CMS since is never written
-  again, and one that is gone is not brought back.
+  A re-run reads the records earlier runs wrote, as the admin running it
+  (`MishkaCmsMigration.Workers.Helpers.Decision`), and compares each one's `updated_at` with the
+  one the run recorded when it wrote it. A record changed in the CMS since is never written again,
+  and one that is gone is not brought back.
   """
-
-  require Ash.Query
 
   alias Ash.Resource.Info
   alias MishkaCmsMigration.Source
@@ -109,7 +108,7 @@ defmodule MishkaCmsMigration.Target do
 
     quote do
       use MishkaInstaller.Event.Hook,
-        event: "migration:targets",
+        event: unquote(@event),
         initial: %{priority: unquote(priority)}
 
       @behaviour MishkaCmsMigration.Target
@@ -135,48 +134,16 @@ defmodule MishkaCmsMigration.Target do
   def __after_compile__(env, _bytecode),
     do: env.module.resource() |> problems(env.module.actions()) |> refused(env.module)
 
-  @doc "The event a target plugin registers on."
+  @doc """
+  The event a target plugin registers on, the one `use MishkaCmsMigration.Target` names: what an
+  extension's own tests register a target for.
+  """
   @spec event() :: String.t()
   def event, do: @event
 
   @doc "The installed target that writes `kind`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
   def fetch(kind), do: Source.installed(@event, __MODULE__, kind)
-
-  @doc """
-  The records of `ids` the target's resource still holds on `site_id`, by id. Read through the
-  resource's primary read as the system: only to tell whether each record is still there and when it
-  last changed.
-  """
-  @spec current(module(), [String.t()], String.t()) :: %{String.t() => struct()}
-  def current(_target, [], _site_id), do: %{}
-
-  def current(target, ids, site_id) do
-    target.resource()
-    |> Ash.Query.filter(id in ^ids)
-    |> Ash.read!(tenant: site_id, authorize?: false)
-    |> Map.new(&{&1.id, &1})
-  end
-
-  @doc """
-  Writes `item` through the target's create action, or through its update action over `record`, as
-  `context.actor` under `context.site_id`.
-  """
-  @spec write(module(), Item.t(), struct() | nil, context()) ::
-          {:ok, struct()} | {:error, term()}
-  def write(target, item, nil, context) do
-    target.resource()
-    |> Ash.Changeset.for_create(target.actions().create, target.attrs(item, context), as(context))
-    |> Ash.create()
-  end
-
-  def write(target, item, record, context) do
-    record
-    |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
-    |> Ash.update()
-  end
-
-  defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
   defp refused([], _module), do: :ok
 
