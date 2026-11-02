@@ -20,7 +20,8 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
     * `"unreadable" => true` — refused by `normalize/3`.
 
   A connection with `"broken" => "list"` answers every `list/3` with an error, and one with
-  `"broken" => "raise"` raises in it. A row that is not a map makes `normalize/3` raise.
+  `"broken" => "raise"` raises in it; `"broken" => "loop"` answers the same cursor every time and
+  `"broken" => "endless"` a new one every time, with no rows. A row that is not a map makes `normalize/3` raise.
   """
 
   use MishkaCmsMigration.Source, id: "fake", label: "Fake"
@@ -38,6 +39,8 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   @impl MishkaCmsMigration.Source
   def list(%{"broken" => "list"}, _kind, _cursor), do: {:error, :source_unreachable}
   def list(%{"broken" => "raise"}, _kind, _cursor), do: raise("the source broke")
+  def list(%{"broken" => "loop"}, _kind, _cursor), do: {:ok, [], :same_page}
+  def list(%{"broken" => "endless"}, _kind, cursor), do: {:ok, [], (cursor || 0) + 1}
 
   def list(conn, kind, cursor) do
     rows = get_in(conn, ["items", kind]) || []

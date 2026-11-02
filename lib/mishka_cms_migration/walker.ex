@@ -13,12 +13,19 @@ defmodule MishkaCmsMigration.Walker do
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
-  remembered. A row the source cannot normalize fails alone, and the report says why, also when `normalize/3`
-  raises or exits: a plugin's mistake costs the row, not the run. An error from `connect/2` or
-  `list/3` ends the walk with it; one that raises ends the job (`MishkaCmsMigration.Pipeline`).
+  remembered. A row the source cannot normalize fails alone, and the report says why, also when
+  `normalize/3` raises or exits: a plugin's mistake costs the row, not the run. An error from
+  `connect/2` or `list/3` ends the walk with it; one that raises ends the job
+  (`MishkaCmsMigration.Pipeline`).
+
+  A source whose cursors never end cannot hold the site's one migration job for good: the walk ends
+  with `{:cursor_repeated, kind}` when `list/3` answers a cursor it already answered for that kind,
+  and with `{:too_many_pages, kind}` after 10,000 pages of one kind.
   """
 
   alias MishkaCmsMigration.{Decision, Item, Options, Progress, Report, Secret, Source, Writer}
+
+  @max_pages 10_000
 
   @doc """
   Walks `run`'s source in `mode` as `actor` and answers the report, or why the source could not be
@@ -43,19 +50,24 @@ defmodule MishkaCmsMigration.Walker do
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
-      case walk_kind(state, %{kind: kind, cursor: nil, ids: MapSet.new()}, report) do
+      walk = %{kind: kind, cursor: nil, cursors: MapSet.new(), ids: MapSet.new(), pages: 0}
+
+      case walk_kind(state, walk, report) do
         {:ok, report} -> {:cont, {:ok, report}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
+  defp walk_kind(_state, %{pages: @max_pages, kind: kind}, _report),
+    do: {:error, {:too_many_pages, kind}}
+
   defp walk_kind(state, walk, report) do
     case state.source.list(state.conn, walk.kind, walk.cursor) do
       {:ok, rows, next} ->
         {report, ids} = page(state, walk, rows, report)
         Progress.broadcast(state.run, state.mode, walk.kind, report.counts)
-        walk_on(state, %{walk | ids: ids}, next, report)
+        walk_on(state, %{walk | ids: ids, pages: walk.pages + 1}, next, report)
 
       {:error, reason} ->
         {:error, reason}
@@ -63,7 +75,16 @@ defmodule MishkaCmsMigration.Walker do
   end
 
   defp walk_on(_state, _walk, nil, report), do: {:ok, report}
-  defp walk_on(state, walk, next, report), do: walk_kind(state, %{walk | cursor: next}, report)
+
+  defp walk_on(state, walk, next, report) do
+    case MapSet.member?(walk.cursors, next) do
+      true ->
+        {:error, {:cursor_repeated, walk.kind}}
+
+      false ->
+        walk_kind(state, %{walk | cursor: next, cursors: MapSet.put(walk.cursors, next)}, report)
+    end
+  end
 
   defp page(state, walk, rows, report) do
     {built, ids} =

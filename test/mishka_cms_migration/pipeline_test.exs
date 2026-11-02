@@ -367,6 +367,25 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
   end
 
+  describe "a source whose pages never end" do
+    for {broken, reason} <- [{"loop", :cursor_repeated}, {"endless", :too_many_pages}] do
+      test "fails the run with #{reason} when its cursors #{broken}", %{site: site, admin: admin} do
+        run =
+          site
+          |> create_run!(admin, %{}, %{connection: %{"broken" => unquote(broken)}})
+          |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+        args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+
+        assert {:cancel, {unquote(reason), "redirect"}} =
+                 perform_job(DryRunWorker, args, attempt: 3)
+
+        assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+                 :failed
+      end
+    end
+  end
+
   describe "a job" do
     test "whose run is not waiting for it is cancelled and changes nothing", %{
       site: site,
