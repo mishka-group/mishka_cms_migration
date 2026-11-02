@@ -11,6 +11,9 @@ defmodule MishkaCmsMigration.Writer do
   it was written to, or `:record_outcome` with why it was skipped or failed, which keeps what the
   last write recorded. A dry run records nothing.
 
+  A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
+  written fails that item alone, with the exception's message as its reason.
+
   Each function answers the item's line of the report (`MishkaCmsMigration.Report.entry/5`).
   """
 
@@ -54,6 +57,10 @@ defmodule MishkaCmsMigration.Writer do
     with {:import, item} <- Events.before_import(item, action, state.run, state.actor) do
       Target.write(page.target, item, record, target_context(state))
     end
+  rescue
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
   defp recorded(state, page, item, row, action) do

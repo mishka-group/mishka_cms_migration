@@ -10,7 +10,7 @@ defmodule MishkaCmsMigration.Test.Plugins.RedirectTarget do
   policies (`admin:dashboard:runtime:redirect`) and validations, with no write path of its own.
 
   The item's `"from"` and `"to"` are the rule's addresses and its content, joined, is the rule's
-  description.
+  description. An item whose `"explode"` is `"attrs"` makes `attrs/2` raise.
   """
 
   use MishkaCmsMigration.Target,
@@ -22,6 +22,8 @@ defmodule MishkaCmsMigration.Test.Plugins.RedirectTarget do
   alias MishkaCmsMigration.Item
 
   @impl MishkaCmsMigration.Target
+  def attrs(%{attrs: %{"explode" => "attrs"}}, _context), do: raise(ArgumentError, "no redirect")
+
   def attrs(item, _context) do
     %{
       from_path: item.attrs["from"],

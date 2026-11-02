@@ -11,8 +11,9 @@ defmodule MishkaCmsMigration.Walker do
   import, written (`MishkaCmsMigration.Writer`). After each page the progress is broadcast
   (`MishkaCmsMigration.Progress`).
 
-  A row the source cannot normalize fails alone, and the report says why. An error from
-  `connect/2` or `list/3` ends the walk with it.
+  A row the source cannot normalize fails alone, and the report says why, also when `normalize/3`
+  raises or exits: a plugin's mistake costs the row, not the run. An error from `connect/2` or
+  `list/3` ends the walk with it; one that raises ends the job (`MishkaCmsMigration.Pipeline`).
   """
 
   alias MishkaCmsMigration.{Decision, Item, Options, Progress, Report, Secret, Source, Writer}
@@ -73,6 +74,10 @@ defmodule MishkaCmsMigration.Walker do
       {:ok, attrs} -> attrs |> Map.put(:kind, kind) |> Item.build() |> built(attrs)
       {:error, reason} -> {:error, nil, reason}
     end
+  rescue
+    error -> {:error, nil, error}
+  catch
+    :exit, reason -> {:error, nil, {:exit, reason}}
   end
 
   defp built({:ok, item}, _attrs), do: {:ok, item}

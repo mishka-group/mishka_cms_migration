@@ -12,9 +12,10 @@ defmodule MishkaCmsMigration.Pipeline do
   as the admin who pressed Import, and once every kind is walked its report is saved on the run and
   handed to `migration:import:finished` (`MishkaCmsMigration.Events`).
 
-  A walk that fails is tried again by Oban; the last attempt fails the run with the reason
-  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which also clears its secret. A job whose run is
-  gone, or is not waiting for it, is cancelled.
+  A walk that fails, or raises or exits in a plugin's code outside a single row, is tried again by
+  Oban; the last attempt fails the run with the reason (`MishkaCmsMigration.MigrationRun`'s
+  `:fail`), which also clears its secret. A job whose run is gone, or is not waiting for it (it was
+  cancelled meanwhile), is cancelled, and so is one whose run refuses its report.
   """
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
@@ -55,12 +56,21 @@ defmodule MishkaCmsMigration.Pipeline do
   end
 
   defp settle(run, mode, job) do
-    with {:ok, actor} <- actor(job.args),
-         {:ok, report} <- Walker.walk(run, mode, actor) do
-      finish(run, mode, Report.done(report), actor)
-    else
+    case walked(run, mode, job.args) do
+      {:ok, report, actor} -> finish(run, mode, Report.done(report), actor)
       {:error, reason} -> retry_or_fail(run, reason, job.attempt >= job.max_attempts)
     end
+  end
+
+  defp walked(run, mode, args) do
+    with {:ok, actor} <- actor(args),
+         {:ok, report} <- Walker.walk(run, mode, actor) do
+      {:ok, report, actor}
+    end
+  rescue
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
   end
 
   defp actor(%{"actor_id" => id}) when is_binary(id) do
@@ -73,18 +83,21 @@ defmodule MishkaCmsMigration.Pipeline do
   defp actor(_args), do: {:error, :actor_not_found}
 
   defp finish(run, :dry_run, report, _actor) do
-    MishkaCmsMigration.finish_dry_run!(run, report, authorize?: false)
-    :ok
+    case MishkaCmsMigration.finish_dry_run(run, report, authorize?: false) do
+      {:ok, _run} -> :ok
+      {:error, error} -> {:cancel, error}
+    end
   end
 
   defp finish(run, :import, report, actor) do
-    run
-    |> MishkaCmsMigration.finish_import!(report, authorize?: false)
-    |> then(&Events.finished(report, &1, actor))
+    case MishkaCmsMigration.finish_import(run, report, authorize?: false) do
+      {:ok, run} -> Events.finished(report, run, actor)
+      {:error, error} -> {:cancel, error}
+    end
   end
 
   defp retry_or_fail(run, reason, true) do
-    MishkaCmsMigration.fail_run!(run, Report.reason(reason), authorize?: false)
+    MishkaCmsMigration.fail_run(run, Report.reason(reason), authorize?: false)
     {:cancel, reason}
   end
 

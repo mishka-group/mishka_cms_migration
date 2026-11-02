@@ -256,6 +256,58 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
   end
 
+  describe "a source or a target that raises" do
+    test "costs only the row a source cannot normalize", %{site: site, admin: admin} do
+      run = migrate!(site, admin, %{"redirect" => ["not a row" | @rows]})
+
+      assert run.status == :done
+      assert run.report.counts == %{create: 3, update: 0, skip: 0, fail: 1}
+
+      assert [%{source_id: nil, outcome: :fail, reason: reason}] =
+               Enum.filter(run.report.entries, &(&1.outcome == :fail))
+
+      assert byte_size(reason) > 0
+      assert length(redirects(site)) == 3
+    end
+
+    test "costs only the row a target cannot map, which is recorded as failed", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [Map.put(hd(@rows), "explode", "attrs") | tl(@rows)]
+      run = migrate!(site, admin, %{"redirect" => rows})
+
+      assert run.report.counts == %{create: 2, update: 0, skip: 0, fail: 1}
+      assert %{outcome: :failed, target_id: nil} = Enum.find(items(site), &(&1.source_id == "1"))
+      refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
+    end
+
+    test "outside a row is tried again, and its last attempt fails the run and drops the secret",
+         %{
+           site: site,
+           admin: admin
+         } do
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => @rows}, %{connection: %{"broken" => "raise"}})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      args = %{run_id: run.id, site_id: site.id, actor_id: admin.id}
+
+      assert {:error, %RuntimeError{}} = perform_job(DryRunWorker, args, attempt: 1)
+
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
+               :dry_running
+
+      assert {:cancel, %RuntimeError{}} = perform_job(DryRunWorker, args, attempt: 3)
+
+      run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      assert run.status == :failed
+      assert run.error =~ "the source broke"
+      assert is_nil(run.connection_secret)
+    end
+  end
+
   describe "a job" do
     test "whose run is not waiting for it is cancelled and changes nothing", %{
       site: site,

@@ -14,11 +14,12 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
   `"note"`, in that order. A row is normalized as:
 
     * `"id"` — the source id; `"title"`, `"modified"` — the item's title and modified time;
-    * `"from"`, `"to"`, `"gate"` — kept in the item's `attrs`;
+    * `"from"`, `"to"`, `"gate"`, `"explode"` — kept in the item's `attrs`;
     * `"content"` — the item's content pieces, as they are;
     * `"unreadable" => true` — refused by `normalize/3`.
 
-  A connection with `"broken" => "list"` answers every `list/3` with an error.
+  A connection with `"broken" => "list"` answers every `list/3` with an error, and one with
+  `"broken" => "raise"` raises in it. A row that is not a map makes `normalize/3` raise.
   """
 
   use MishkaCmsMigration.Source, id: "fake", label: "Fake"
@@ -34,6 +35,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
 
   @impl MishkaCmsMigration.Source
   def list(%{"broken" => "list"}, _kind, _cursor), do: {:error, :source_unreachable}
+  def list(%{"broken" => "raise"}, _kind, _cursor), do: raise("the source broke")
 
   def list(conn, kind, cursor) do
     rows = get_in(conn, ["items", kind]) || []
@@ -60,7 +62,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
        source_id: row["id"],
        title: row["title"],
        modified_at: row["modified"],
-       attrs: Map.take(row, ["from", "to", "gate"]),
+       attrs: Map.take(row, ["from", "to", "gate", "explode"]),
        content: row["content"] || []
      }}
   end
