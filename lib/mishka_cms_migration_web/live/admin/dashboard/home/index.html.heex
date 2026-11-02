@@ -29,8 +29,19 @@ SPDX-License-Identifier: Apache-2.0
         data-source={source.id()}
         class="rounded-[14px] border border-[#ecebe6] bg-white px-4 py-[15px] shadow-[0_1px_2px_rgba(30,28,24,0.04)]"
       >
-        <div class="font-['Space_Grotesk'] text-[18px] font-semibold tracking-[-0.01em] text-[#17161a]">
-          {Source.label(source.id())}
+        <div class="flex items-center justify-between gap-3">
+          <div class="font-['Space_Grotesk'] text-[18px] font-semibold tracking-[-0.01em] text-[#17161a]">
+            {Source.label(source.id())}
+          </div>
+
+          <button
+            type="button"
+            data-role="migration-new-run"
+            phx-click={JS.push("new_run", value: %{source: source.id()})}
+            class="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] bg-[linear-gradient(140deg,#6d69e6,#4f4bcc)] px-3 text-[12px] font-bold text-white shadow-[0_5px_14px_rgba(79,75,204,0.28)] transition-opacity hover:opacity-95"
+          >
+            <.icon name="hero-plus" class="size-[14px]" /> {gettext("New import")}
+          </button>
         </div>
       </div>
     </div>
@@ -40,9 +51,18 @@ SPDX-License-Identifier: Apache-2.0
       data-role="migration-no-source"
       class="rounded-[14px] border border-dashed border-[#e3e1da] bg-white px-4 py-[15px] text-[13px] text-[#7c7a75]"
     >
-      {gettext("No source is installed yet. WordPress is the first one on its way.")}
+      {gettext("No source is installed.")}
     </div>
   </div>
+
+  <.modal id="migration-run-form-modal">
+    <.live_component
+      module={MishkaGervaz.Form.Web.Live}
+      id={MishkaGervaz.Resource.Info.Form.component_id(MishkaCmsMigration.MigrationRun)}
+      resource={MishkaCmsMigration.MigrationRun}
+      current_user={@current_user}
+    />
+  </.modal>
 
   <div class="rounded-[14px] border border-[#ecebe6] bg-white p-4 shadow-[0_1px_2px_rgba(30,28,24,0.04)]">
     <.live_component

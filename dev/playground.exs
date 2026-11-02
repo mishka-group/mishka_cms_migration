@@ -275,7 +275,7 @@ defmodule Playground.Tour do
   import MishkaCmsCore.Test.Factory, only: [create_site!: 0, create_user_with_permissions!: 2]
   import MishkaCmsMigration.Test.Factory
 
-  alias MishkaCmsMigration.{MigrationRun, Report}
+  alias MishkaCmsMigration.{MigrationRun, Report, Repo}
 
   @rows [
     redirect_row(1, "/old-one", "/one"),
@@ -322,7 +322,10 @@ defmodule Playground.Tour do
       {"A row it cannot read and a kind no target writes",
        "The unreadable row fails and the kind with no target is skipped.", &unreadable/1},
       {"Wrong source password",
-       "The job fails twice, and its third attempt ends the run as failed.", &wrong_password/1},
+       "A run is refused when its source does not take the password, and nothing is saved.",
+       &wrong_password/1},
+      {"Password revoked after the run was saved",
+       "The job fails twice, and its third attempt ends the run as failed.", &revoked_password/1},
       {"Cancel", "A run is cancelled before its job runs, so the job writes nothing.", &cancel/1},
       {"One active run per site", "A second run cannot start while one is waiting or running.",
        &one_active/1},
@@ -487,7 +490,31 @@ defmodule Playground.Tour do
   end
 
   defp wrong_password(context) do
-    run = new_run(%{"redirect" => @rows}, %{secret: "wrong"})
+    runs = Ash.count!(MigrationRun, as_admin())
+
+    {:error, error} =
+      MishkaCmsMigration.create_run(
+        %{source: "fake", source_host: "old.example.com", connection: %{}, secret: "wrong"},
+        as_admin()
+      )
+
+    say("refused: #{Report.reason(error)}")
+
+    {context,
+     [
+       {"the run was refused on its connection",
+        match?(%{errors: [%{field: :connection} | _]}, error)},
+       {"no run was saved", Ash.count!(MigrationRun, as_admin()) == runs}
+     ]}
+  end
+
+  defp revoked_password(context) do
+    run = new_run(%{"redirect" => @rows})
+
+    Repo.query!(
+      ~s(UPDATE mishka_cms_migration_runs SET connection = connection || '{"revoked": true}' WHERE id = $1),
+      [Ecto.UUID.dump!(run.id)]
+    )
 
     MishkaCmsMigration.start_dry_run!(run, as_admin())
     jobs = Playground.drain()

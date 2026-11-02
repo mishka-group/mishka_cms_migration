@@ -30,7 +30,7 @@ defmodule MishkaCmsMigration.Application do
 
   use Application
 
-  @sources []
+  @sources [MishkaCmsMigration.Sources.WordPress]
 
   @targets []
 
@@ -44,8 +44,8 @@ defmodule MishkaCmsMigration.Application do
   ]
 
   @doc """
-  The sources this extension ships, each a plugin on `"migration:sources"`. None yet; WordPress is
-  planned as the first.
+  The sources this extension ships, each a plugin on `"migration:sources"`: WordPress
+  (`MishkaCmsMigration.Sources.WordPress`).
   """
   @spec sources() :: [module()]
   def sources, do: @sources

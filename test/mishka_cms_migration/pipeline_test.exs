@@ -400,10 +400,14 @@ defmodule MishkaCmsMigration.PipelineTest do
       site: site,
       admin: admin
     } do
-      run =
-        site
-        |> create_run!(admin, %{"redirect" => @rows}, %{secret: "wrong"})
-        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+      run = create_run!(site, admin, %{"redirect" => @rows})
+
+      Repo.query!(
+        ~s(UPDATE mishka_cms_migration_runs SET connection = connection || '{"revoked": true}' WHERE id = $1),
+        [Ecto.UUID.dump!(run.id)]
+      )
+
+      run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
 
       [job] = assert_triggered(run, :run_dry_run)
 

@@ -117,7 +117,8 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
     assert {:ok, [_run]} = read(MigrationRun, master, site_a.id)
 
     assert {:ok, %{site_id: site_b_id, user_id: master_id}} =
-             MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
+             MishkaCmsMigration.create_run(
+               %{source: "fake", source_host: "old.example.com", secret: "letmein"},
                actor: master,
                tenant: site_b.id
              )

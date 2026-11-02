@@ -36,3 +36,5 @@ unauthorized-status-any.json	GET	/wp-json/wp/v2/posts?context=edit&per_page=100&
 unauthorized-settings.json	GET	/wp-json/wp/v2/settings [none]	401
 unauthorized-users-me.json	GET	/wp-json/wp/v2/users/me?context=edit [none]	401
 media-upload-svg-refused.json	POST	/wp-json/wp/v2/media (an SVG upload) [app]	500
+unauthorized-users-me-wrong-password.json	GET	/wp-json/wp/v2/users/me?context=edit [wrong]	401
+unauthorized-users-me-unknown-user.json	GET	/wp-json/wp/v2/users/me?context=edit [baduser]	401

@@ -90,7 +90,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   A run is a site's own. Reading, creating, starting and cancelling one takes
   `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose
   `site_id` is nil) reaches every site's runs; a site user only its own site's, whatever tenant it
-  names.
+  names. A run is created on the tenant (`:create`), which a site user may only name as its own
+  site (`MishkaCmsCore.Runtime.Resources.Validations.TenantContext`), or by a master on the site it
+  names (`:master_create`); the site filter holds reads and steps, so a create is decided before
+  its source is asked anything.
 
   ## In the admin
 
@@ -98,6 +101,14 @@ defmodule MishkaCmsMigration.MigrationRun do
   the address it is moved from, where the run is (`status_label/1`), what the last dry run or import
   did and when it started. The table follows the run's PubSub notifications, so a run moving on
   shows without a reload.
+
+  A source's card opens the run's Gervaz form: the site's address and user (`connection`), the
+  secret, and for a master the site the content moves to (`:master_create`). Its button, Check
+  connection, creates the run, which connects to the source first
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
+  refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
+  given a `source_host` takes the host its source reads from the connection
+  (`c:MishkaCmsMigration.Source.host/1`).
   """
 
   use Ash.Resource,
@@ -114,7 +125,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob, Reason}
+  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, CheckConnection, EnqueueJob, Reason}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
@@ -349,6 +360,104 @@ defmodule MishkaCmsMigration.MigrationRun do
         ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
       end
     end
+
+    form do
+      identity do
+        name :migration_run_form
+      end
+
+      source do
+        access :update, false
+
+        actions do
+          create {:master_create, :create}
+        end
+      end
+
+      fields do
+        field :site_id, :relation do
+          restricted true
+          required true
+          show_on :create
+          display_field :name
+          search_field :name
+          mode :search
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Site") end
+            description fn -> dgettext("mishka_gervaz", "The site the content moves to.") end
+          end
+        end
+
+        field :source, :hidden do
+          required true
+        end
+
+        field :connection, :key_map do
+          required true
+
+          options [
+            [
+              name: :url,
+              type: :text,
+              label: dgettext_noop("mishka_gervaz", "Address"),
+              placeholder: "https://example.com"
+            ],
+            [
+              name: :user,
+              type: :text,
+              label: dgettext_noop("mishka_gervaz", "User"),
+              placeholder: "admin"
+            ]
+          ]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "WordPress site") end
+          end
+        end
+
+        field :secret, :password do
+          virtual true
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Application password") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Made in WordPress under Users, Profile, Application Passwords. It is kept sealed until the run ends."
+              )
+            end
+
+            autocomplete "off"
+          end
+        end
+      end
+
+      groups do
+        group :connection do
+          fields [:site_id, :source, :connection, :secret]
+
+          ui do
+            columns 1
+          end
+        end
+      end
+
+      submit do
+        create label: fn -> dgettext("mishka_gervaz", "Check connection") end
+        cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
+        position :bottom
+      end
+
+      presentation do
+        ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
+      end
+
+      hooks do
+        on_cancel fn state -> state end
+      end
+    end
   end
 
   actions do
@@ -397,6 +506,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: false}
+      change CheckConnection
       validate present([:source, :source_host])
       validate SourceInstalled, before_action?: true
 
@@ -404,7 +514,31 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:user_id, actor(:id))
       change &MishkaCmsMigration.MigrationRun.seal_secret/2
 
-      description "Creates a run on the tenant's site, started by the actor"
+      description "Creates a run on the tenant's site, started by the actor, once its source answers"
+    end
+
+    create :master_create do
+      accept [:site_id, :source, :source_host, :connection, :options]
+
+      argument :secret, :string do
+        sensitive? true
+        allow_nil? true
+        description "The secret the source signs in with; only its sealed form is kept"
+      end
+
+      validate {TenantContext, require_master: true}
+      change CheckConnection
+      validate present([:site_id, :source, :source_host])
+      validate SourceInstalled, before_action?: true
+
+      change fn changeset, _context ->
+        Ash.Changeset.set_tenant(changeset, Ash.Changeset.get_attribute(changeset, :site_id))
+      end
+
+      change set_attribute(:user_id, actor(:id))
+      change &MishkaCmsMigration.MigrationRun.seal_secret/2
+
+      description "Creates a run on the site it names, started by the master, once its source answers"
     end
 
     update :start_dry_run do
@@ -541,7 +675,7 @@ defmodule MishkaCmsMigration.MigrationRun do
                     permissions: ["admin:dashboard:migration", "admin:api:migration"]}
     end
 
-    policy action_type([:read, :create, :update]) do
+    policy action_type([:read, :update]) do
       authorize_if actor_attribute_equals(:site_id, nil)
       authorize_if expr(site_id == ^actor(:site_id))
     end
@@ -752,7 +886,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   @doc "Where a run with `status` is, as the admin reads it."
   @spec status_label(atom()) :: String.t()
-  def status_label(:pending), do: dgettext("mishka_gervaz", "Waiting")
+  def status_label(:pending), do: dgettext("mishka_gervaz", "Connected")
   def status_label(:dry_running), do: dgettext("mishka_gervaz", "Dry run running")
   def status_label(:dry_run), do: dgettext("mishka_gervaz", "Dry run ready")
   def status_label(:importing), do: dgettext("mishka_gervaz", "Importing")

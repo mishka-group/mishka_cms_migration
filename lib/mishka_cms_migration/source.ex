@@ -5,9 +5,9 @@
 defmodule MishkaCmsMigration.Source do
   @moduledoc """
   A CMS a site is moved from: one module that is a `mishka_installer` plugin on the
-  `"migration:sources"` event and implements the callbacks below. WordPress is planned as the
-  first; Joomla and others come the same way and reuse the mapping, the dry run, the import job and
-  the report.
+  `"migration:sources"` event and implements the callbacks below. WordPress is the first
+  (`MishkaCmsMigration.Sources.WordPress`); Joomla and others come the same way and reuse the
+  mapping, the dry run, the import job and the report.
 
       defmodule MyExtension.Sources.Ghost do
         use MishkaCmsMigration.Source, id: "ghost", label: "Ghost"
@@ -30,8 +30,9 @@ defmodule MishkaCmsMigration.Source do
       end
 
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
-  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`
-  and an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself. A source
+  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`,
+  an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself, and a
+  `host/1` that reads the connection's `"url"`. A source
   registers once it is supervised: an extension that ships one lists the module among the children
   of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this
   extension's. Which sources are installed is read from mishka_installer's own registry
@@ -82,9 +83,28 @@ defmodule MishkaCmsMigration.Source do
   """
   @callback kinds() :: [String.t()]
 
-  @doc "Connects with a run's `connection` map and its opened secret (`nil` when it has none)."
+  @doc """
+  Connects with a run's `connection` map and its opened secret (`nil` when it has none).
+
+  It is asked when a run is created, so a run is only kept for a source it can reach
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`), and again by each job. A refusal is
+  shown to the admin on the run's `connection`; these reasons are put in words, and any other is
+  shown as it is:
+
+    * `:invalid_address` — the connection does not name an address the source can use;
+    * `:unreachable` — nothing answered at the address;
+    * `:no_site` — something answered, but not a site of this source;
+    * `:unauthorized` — the site refused the user or the secret.
+  """
   @callback connect(connection :: map(), secret :: String.t() | nil) ::
               {:ok, conn()} | {:error, term()}
+
+  @doc """
+  The host a run's `connection` points at, kept as the run's `source_host` when the run does not
+  name one: with the source id and an item's id it is how a re-run finds what an earlier run
+  wrote. `use` answers the host of the connection's `"url"`, or `nil` without one.
+  """
+  @callback host(connection :: map()) :: String.t() | nil
 
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
@@ -129,7 +149,10 @@ defmodule MishkaCmsMigration.Source do
       @impl MishkaCmsMigration.Source
       def extra(_conn), do: %{}
 
-      defoverridable extra: 1
+      @impl MishkaCmsMigration.Source
+      def host(connection), do: MishkaCmsMigration.Source.url_host(connection)
+
+      defoverridable extra: 1, host: 1
     end
   end
 
@@ -156,6 +179,30 @@ defmodule MishkaCmsMigration.Source do
 
   defp shown({:ok, source}, _id), do: Gettext.gettext(MishkaCmsCore.Gettext, source.label())
   defp shown({:error, :not_installed}, id), do: id
+
+  @doc """
+  The host of a connection's `"url"`, lower-cased and with its port when it is not the scheme's
+  own (`localhost:8089`), or `nil` when it has no address with a host: what `use` answers as
+  `c:host/1`.
+  """
+  @spec url_host(map()) :: String.t() | nil
+  def url_host(%{"url" => url}) when is_binary(url),
+    do: url |> String.trim() |> URI.parse() |> host_of()
+
+  def url_host(_connection), do: nil
+
+  defp host_of(%URI{host: host} = uri) when is_binary(host) and host != "",
+    do: String.downcase(host) <> port_of(uri)
+
+  defp host_of(_uri), do: nil
+
+  defp port_of(%URI{scheme: scheme, port: port}) when is_integer(port),
+    do: port_suffix(port, URI.default_port(scheme))
+
+  defp port_of(_uri), do: ""
+
+  defp port_suffix(port, port), do: ""
+  defp port_suffix(port, _default), do: ":#{port}"
 
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
