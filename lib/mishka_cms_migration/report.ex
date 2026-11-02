@@ -72,6 +72,29 @@ defmodule MishkaCmsMigration.Report do
   @spec done(t()) :: t()
   def done(report), do: %{report | entries: Enum.reverse(report.entries)}
 
+  @doc "One item's line: its kind, source id and title, its outcome and why."
+  @spec entry(String.t(), String.t() | nil, String.t() | nil, outcome(), String.t() | nil) ::
+          entry()
+  def entry(kind, source_id, title, outcome, reason),
+    do: %{kind: kind, source_id: source_id, title: title, outcome: outcome, reason: reason}
+
+  @doc """
+  The words an entry or a failed run keeps for why: an exception's message, a string as it is, an
+  atom's name, guarded_struct's errors as `field: message` pairs, anything else inspected. At most
+  1000 characters.
+  """
+  @spec reason(term()) :: String.t()
+  def reason(%{__exception__: true} = error), do: error |> Exception.message() |> short()
+  def reason(reason) when is_binary(reason), do: short(reason)
+  def reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+
+  def reason([%{message: _} | _] = errors),
+    do: errors |> Enum.map_join("; ", &"#{&1[:field]}: #{&1.message}") |> short()
+
+  def reason(reason), do: reason |> inspect() |> short()
+
+  defp short(text), do: String.slice(text, 0, 1000)
+
   defp count_kind(kinds, kind, outcome) do
     case Enum.find_index(kinds, &(&1.kind == kind)) do
       nil -> kinds ++ [zero() |> Map.put(:kind, kind) |> Map.update!(outcome, &(&1 + 1))]

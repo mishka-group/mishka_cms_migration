@@ -37,8 +37,8 @@ defmodule MishkaCmsMigration.Source do
 
   ## A run
 
-  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`). The pipeline
-  (`MishkaCmsMigration.Pipeline`) asks `connect/2` once, with the run's `connection` map and its
+  A run names its source by `id/0` (`MishkaCmsMigration.MigrationRun`'s `source`). The walk
+  (`MishkaCmsMigration.Walker`) asks `connect/2` once, with the run's `connection` map and its
   secret opened (`MishkaCmsMigration.Secret`), then walks `kinds/0` in order — a kind another kind
   points at comes first, so authors come before posts — and pages through each with `list/3` until
   it answers no cursor. Each listed row goes through `normalize/3` and

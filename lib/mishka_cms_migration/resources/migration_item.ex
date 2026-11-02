@@ -12,7 +12,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   An item is one per site, source host, kind and source id (`:unique_source_item`). That is what
   makes running again safe: a second run finds the row the first one wrote and updates it, leaves
   it when the source has not changed it, and never overwrites one an admin changed in the CMS since
-  (`MishkaCmsMigration.Pipeline`).
+  (`MishkaCmsMigration.Decision`).
 
   Written by the import job alone (`authorize?: false`), as upserts on that identity: `:record`
   after a row was written, `:record_outcome` after an item was skipped or failed, which keeps what
