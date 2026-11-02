@@ -93,6 +93,8 @@ fetch unauthorized-unknown-user "$v/posts?$all" baduser
 fetch unauthorized-status-any "$v/posts?$all&status=any" none
 fetch unauthorized-settings "$v/settings" none
 fetch unauthorized-users-me "$v/users/me?context=edit" none
+fetch unauthorized-users-me-wrong-password "$v/users/me?context=edit" wrong
+fetch unauthorized-users-me-unknown-user "$v/users/me?context=edit" baduser
 
 # WordPress refuses an SVG upload by default; the answer is what an importer sees from a host that cannot take it.
 status=$(curl -sS -u "$auth" -X POST -H 'Content-Type: image/svg+xml' \

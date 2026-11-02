@@ -53,7 +53,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   The job's action walks the source (`MishkaCmsMigration.Workers.Helpers.Pipeline`) and saves its
   `report` (`MishkaCmsMigration.Report`) through `:finish_dry_run` or `:finish_import` and how far
-  it is through `:record_progress`; after its last attempt fails, AshOban runs `:fail`, the
+  it is through `:record_progress`, whose `progress` each request empties for its new job; after
+  its last attempt fails, AshOban runs `:fail`, the
   triggers' `on_error`, which keeps the reason. Those six are the system's own: every actor is
   refused them, and only what AshOban runs, and what its job runs with its context, passes
   (`AshOban.Checks.AshObanInteraction`).
@@ -75,7 +76,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   ## The source's secret
 
   The secret a source signs in with (such as a WordPress application password) is the `:create`
-  action's `secret` argument. Only its sealed form is kept, in `connection_secret`, sealed the way
+  action's `secret` argument. The New import form types it under the connection's `"secret"` key
+  (`c:MishkaCmsMigration.Source.form_fields/0`); `take_secret/2` moves it from there into the
+  argument before the run connects, so `connection` never holds it, and a `secret` argument a
+  caller gives as well wins. Only its sealed form is kept, in `connection_secret`, sealed the way
   `MishkaCmsCore.Settings` seals a `:secret` setting: `Phoenix.Token.encrypt/4` with the endpoint's
   `secret_key_base`, under a salt of this extension's own. The argument is dropped once sealed. The
   sealed secret is kept from the run's creation until it ends — done, failed or cancelled — and is
@@ -90,22 +94,67 @@ defmodule MishkaCmsMigration.MigrationRun do
   A run is a site's own. Reading, creating, starting and cancelling one takes
   `admin:dashboard:migration` (or `admin:api:migration` over the API). A master (a user whose
   `site_id` is nil) reaches every site's runs; a site user only its own site's, whatever tenant it
-  names.
+  names. A run is created on the tenant (`:create`), which a site user may only name as its own
+  site (`MishkaCmsCore.Runtime.Resources.Validations.TenantContext`), or by a master on the site it
+  names (`:master_create`); the site filter holds reads and steps, so a create is decided before
+  its source is asked anything.
+
+  ## In the admin
+
+  The Migration page lists a site's runs, every site's for a master, as a Gervaz table laid out
+  like the Pages table: the source with its icon (`source_icon/1`) and the run's short id, the
+  address it is moved from with the source site's name under it, where the run is as a coloured pill
+  (`status_label/1`, `status_class/1`), its result (`result_cell/1`), for a master the site, and
+  when it started. Each column is as narrow as its cell can be drawn without cutting it off, an
+  address truncating with the whole of it as its tooltip, and a result wrapping onto more lines,
+  so the table fits beside the admin's sidebar on a laptop screen without scrolling sideways. It
+  filters by status, source, for a master the site, and the days a run started in, and keeps them
+  in the address. The table follows the run's PubSub notifications, so a run moving on, and a
+  running job's progress, show without a reload.
+
+  A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
+  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
+  admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
+  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by
+  the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
+  as its tooltip and accessible name. The Actions column is always as wide as the most a row shows,
+  two 30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose
+  status changes its buttons never moves the other columns. A row expands to what its last dry
+  run or import found, kind by kind: the kind in words (`kind_label/1`), how many items the source
+  listed, what was done with them (`result_summary/1`) and why the skipped ones were skipped
+  (`reason_label/1`).
+
+  A source's card opens the run's Gervaz form with the card's source as the form's default. Its
+  Connection is a `:key_map` whose keys the source names
+  (`MishkaCmsMigration.Source.form_fields/1`), read each time the form is drawn and its params are
+  read, so each source's New import asks for its own: WordPress's address, user and application
+  password, and a plugin's source what its `form_fields/0` names. The secret's key is a masked
+  password input that never shows what was typed. The field's description says where WordPress
+  makes an application password, as a Gervaz key carries no description of its own. For a master
+  the form asks for the site the content moves to as well (`:master_create`). Its button, Check
+  connection, creates the run, which connects to the source first
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
+  refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
+  given a `source_host` takes the host its source reads from the connection
+  (`c:MishkaCmsMigration.Source.host/1`).
   """
 
   use Ash.Resource,
     otp_app: :mishka_cms_migration,
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
-    extensions: [GuardedStruct.AshResource, AshOban],
+    extensions: [GuardedStruct.AshResource, AshOban, MishkaGervaz.Resource],
     notifiers: [Ash.Notifier.PubSub],
     authorizers: [Ash.Policy.Authorizer]
 
   use Gettext, backend: MishkaCmsCore.Gettext
 
+  import Phoenix.Component, only: [sigil_H: 2]
+  import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
+
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, EnqueueJob, Reason}
+  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, CheckConnection, EnqueueJob, Reason}
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
@@ -114,6 +163,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
+  @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
   @busy dgettext_noop(
           "errors",
           "Another migration of this site is still waiting or running. Try again once it is done."
@@ -170,41 +220,437 @@ defmodule MishkaCmsMigration.MigrationRun do
       trigger :run_dry_run do
         action :run_dry_run
         where expr(status == :dry_running)
-        queue(:migration)
-        scheduler_cron(false)
-        lock_for_update?(false)
-        max_attempts(3)
+        queue :migration
+        scheduler_cron false
+        lock_for_update? false
+        max_attempts 3
         backoff :exponential
         timeout :timer.hours(1)
         on_error :fail
-        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
-        shared_context([:ash_oban?])
-        worker_module_name(MishkaCmsMigration.Workers.DryRunWorker)
+        actor_persister MishkaCmsMigration.Workers.Helpers.Actor
+        shared_context [:ash_oban?]
+        worker_module_name MishkaCmsMigration.Workers.DryRunWorker
       end
 
       trigger :run_import do
         action :run_import
         where expr(status == :importing)
-        queue(:migration)
-        scheduler_cron(false)
-        lock_for_update?(false)
-        max_attempts(3)
+        queue :migration
+        scheduler_cron false
+        lock_for_update? false
+        max_attempts 3
         backoff :exponential
         timeout :timer.hours(1)
         on_error :fail
-        actor_persister(MishkaCmsMigration.Workers.Helpers.Actor)
-        shared_context([:ash_oban?])
-        worker_module_name(MishkaCmsMigration.Workers.ImportWorker)
+        actor_persister MishkaCmsMigration.Workers.Helpers.Actor
+        shared_context [:ash_oban?]
+        worker_module_name MishkaCmsMigration.Workers.ImportWorker
+      end
+    end
+  end
+
+  mishka_gervaz do
+    table do
+      identity do
+        name :migration_runs
+        route "/admin/dashboard/migration"
+        stream_name :migration_runs
+      end
+
+      source do
+        preload do
+          always [:site]
+        end
+      end
+
+      columns do
+        default_sort inserted_at: :desc
+
+        column :source_info do
+          static true
+          requires [:id, :source]
+          label fn -> dgettext("mishka_gervaz", "Source") end
+
+          ui do
+            width "minmax(184px,1.3fr)"
+          end
+
+          render fn record ->
+            short_id = String.slice(record.id, 0, 8) <> "…" <> String.slice(record.id, -4, 4)
+
+            assigns = %{
+              id: record.id,
+              short_id: short_id,
+              label: MishkaCmsMigration.Source.label(record.source),
+              icon: MishkaCmsMigration.MigrationRun.source_icon(record.source)
+            }
+
+            ~H"""
+            <div class="flex min-w-0 items-center gap-[11px]">
+              <span class="grid size-[34px] flex-none place-items-center rounded-[10px] bg-[#f1edfb] text-[#7a5bd0]">
+                <MishkaCmsCore.CoreComponents.icon name={@icon} class="size-[18px]" />
+              </span>
+              <div class="min-w-0">
+                <div
+                  data-role="run-source"
+                  class="truncate text-[13.5px] font-semibold text-[#17161a]"
+                >
+                  {@label}
+                </div>
+                <div class="mt-[2px] flex items-center gap-[5px]">
+                  <span class="font-['Space_Grotesk'] text-[11px] font-medium text-[#a8a5a0]">{@short_id}</span>
+                  <.copy_button
+                    id={"run-id-copy-#{@id}"}
+                    value={@id}
+                    label={dgettext("mishka_gervaz", "Copy run ID")}
+                  />
+                </div>
+              </div>
+            </div>
+            """
+          end
+        end
+
+        column :from do
+          static true
+          requires [:source_host, :extra]
+          label fn -> dgettext("mishka_gervaz", "From") end
+
+          ui do
+            width "minmax(110px,1.1fr)"
+          end
+
+          render fn record ->
+            assigns = %{host: record.source_host, name: record.extra["name"]}
+
+            ~H"""
+            <div class="min-w-0">
+              <div
+                class="truncate font-['Space_Grotesk'] text-[12.5px] font-semibold text-[#3a382f]"
+                title={@host}
+              >
+                {@host}
+              </div>
+              <div
+                :if={@name}
+                class="mt-[2px] truncate text-[11px] font-medium text-[#a8a5a0]"
+                title={@name}
+              >
+                {@name}
+              </div>
+            </div>
+            """
+          end
+        end
+
+        column :status do
+          label fn -> dgettext("mishka_gervaz", "Status") end
+          sortable true
+
+          ui do
+            width "minmax(144px,0.9fr)"
+          end
+
+          render fn status ->
+            assigns = %{
+              status: status,
+              label: MishkaCmsMigration.MigrationRun.status_label(status),
+              class: MishkaCmsMigration.MigrationRun.status_class(status),
+              running?: status in [:dry_running, :importing]
+            }
+
+            ~H"""
+            <span
+              data-role="run-status"
+              data-status={@status}
+              class={[
+                "inline-flex w-fit items-center gap-[6px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
+                @class
+              ]}
+            >
+              <span class={["size-[5px] rounded-full bg-current", @running? && "motion-safe:animate-pulse"]}></span>{@label}
+            </span>
+            """
+          end
+        end
+
+        column :result do
+          static true
+          requires [:status, :source, :report, :progress]
+          label fn -> dgettext("mishka_gervaz", "Result") end
+
+          ui do
+            width "minmax(130px,1.6fr)"
+          end
+
+          render fn record -> MishkaCmsMigration.MigrationRun.result_cell(record) end
+        end
+
+        column :site_info do
+          static true
+          requires [:site_id, :site]
+          label fn -> dgettext("mishka_gervaz", "Site") end
+          visible fn state -> state.master_user? end
+
+          ui do
+            width "minmax(120px,0.9fr)"
+          end
+
+          render fn record ->
+            assigns = %{name: record.site && record.site.name}
+
+            ~H"""
+            <MishkaCmsCore.CoreComponents.site_cell global?={false} name={@name} />
+            """
+          end
+        end
+
+        column :started do
+          static true
+          requires [:inserted_at]
+          label fn -> dgettext("mishka_gervaz", "Started") end
+          sortable true
+          sort_field [:inserted_at]
+
+          ui do
+            width "minmax(116px,0.7fr)"
+          end
+
+          render fn record ->
+            assigns = %{
+              date: MishkaCmsCore.Localized.date(record.inserted_at, :yMMMd),
+              time: MishkaCmsCore.Localized.time(record.inserted_at, :Hm)
+            }
+
+            ~H"""
+            <div class="min-w-0">
+              <div class="text-[12.5px] font-semibold text-[#3a382f]">{@date}</div>
+              <div class="mt-[2px] text-[11px] font-medium text-[#a8a5a0]">{@time}</div>
+            </div>
+            """
+          end
+        end
+      end
+
+      filters do
+        filter :site_id, :relation do
+          mode :search_multi
+          display_field :name
+          search_field :name
+          min_chars 1
+          page_size 15
+          restricted true
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Site") end
+            placeholder fn -> dgettext("mishka_gervaz", "Search sites...") end
+          end
+        end
+
+        filter :status, :select do
+          options fn -> MishkaCmsMigration.MigrationRun.status_options() end
+
+          ui do
+            prompt dgettext_noop("mishka_gervaz", "Any status")
+            label fn -> dgettext("mishka_gervaz", "Status") end
+          end
+        end
+
+        filter :source, :select do
+          options fn -> MishkaCmsMigration.MigrationRun.source_options() end
+
+          ui do
+            prompt dgettext_noop("mishka_gervaz", "Any source")
+            label fn -> dgettext("mishka_gervaz", "Source") end
+          end
+        end
+
+        filter :started, :date_range do
+          source :inserted_at
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Started") end
+          end
+        end
+      end
+
+      row_actions do
+        actions_layout do
+          width "minmax(96px,max-content)"
+        end
+
+        action :expand, type: :accordion
+
+        action :dry_run do
+          type :event
+          event "dry_run"
+          visible fn record, _state -> record.status == :pending end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Dry run") end
+            icon "hero-play"
+          end
+        end
+
+        action :dry_run_again do
+          type :event
+          event "dry_run"
+          visible fn record, _state -> record.status == :dry_run end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Run again") end
+            icon "hero-arrow-path"
+          end
+        end
+
+        action :cancel do
+          type :event
+          event "cancel"
+
+          confirm fn _record ->
+            dgettext("mishka_gervaz", "Cancel this run? It cannot be started again.")
+          end
+
+          visible fn record, _state ->
+            record.status in [:pending, :dry_running, :dry_run, :importing]
+          end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Cancel") end
+            icon "hero-x-mark"
+          end
+        end
+      end
+
+      realtime do
+        prefix "migration_run"
+
+        visible fn record, user ->
+          is_nil(user.site_id) or record.site_id == user.site_id
+        end
+      end
+
+      url_sync do
+        mode :bidirectional
+        params [:filters, :sort, :page]
+        prefix "runs"
+        max_filter_length 500
+      end
+
+      empty_state message: dgettext_noop("mishka_gervaz", "No runs found"),
+                  icon: "hero-arrows-right-left"
+    end
+
+    form do
+      identity do
+        name :migration_run_form
+      end
+
+      source do
+        access :update, false
+
+        actions do
+          create {:master_create, :create}
+        end
+      end
+
+      fields do
+        field :site_id, :relation do
+          restricted true
+          required true
+          show_on :create
+          display_field :name
+          search_field :name
+          mode :search
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Site") end
+            description fn -> dgettext("mishka_gervaz", "The site the content moves to.") end
+          end
+        end
+
+        field :connection, :key_map do
+          required true
+          options fn state -> MishkaCmsMigration.Source.form_fields(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Connection") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "A WordPress application password is made under Users, Profile, Application Passwords. The password is kept sealed until the run ends."
+              )
+            end
+          end
+        end
+      end
+
+      groups do
+        group :connection do
+          fields [:site_id, :connection]
+
+          ui do
+            columns 1
+          end
+        end
+      end
+
+      submit do
+        create label: fn -> dgettext("mishka_gervaz", "Check connection") end
+        cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
+        position :bottom
+      end
+
+      presentation do
+        ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
+      end
+
+      hooks do
+        on_cancel fn state -> state end
       end
     end
   end
 
   actions do
-    defaults [:read]
+    read :read do
+      description "A site's runs"
+      primary? true
+
+      pagination offset?: true,
+                 keyset?: true,
+                 default_limit: 20,
+                 max_page_size: 100,
+                 countable: true,
+                 required?: false
+    end
+
+    read :master_read do
+      description "Every site's runs (masters)"
+      multitenancy :bypass
+
+      pagination offset?: true,
+                 keyset?: true,
+                 default_limit: 20,
+                 max_page_size: 100,
+                 countable: true,
+                 required?: false
+
+      validate {TenantContext, require_master: true}
+    end
+
+    read :master_get do
+      description "One run of any site (masters)"
+      multitenancy :bypass
+      get? true
+
+      validate {TenantContext, require_master: true}
+    end
 
     create :create do
       primary? true
       accept [:source, :source_host, :connection, :options]
+      allow_nil_input [:source_host]
 
       argument :secret, :string do
         sensitive? true
@@ -213,14 +659,43 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: false}
-      validate present([:source, :source_host])
+      change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change CheckConnection
+      validate present(:source_host), only_when_valid?: true
       validate SourceInstalled, before_action?: true
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
       change set_attribute(:user_id, actor(:id))
       change &MishkaCmsMigration.MigrationRun.seal_secret/2
 
-      description "Creates a run on the tenant's site, started by the actor"
+      description "Creates a run on the tenant's site, started by the actor, once its source answers"
+    end
+
+    create :master_create do
+      accept [:site_id, :source, :source_host, :connection, :options]
+      allow_nil_input [:source_host]
+
+      argument :secret, :string do
+        sensitive? true
+        allow_nil? true
+        description "The secret the source signs in with; only its sealed form is kept"
+      end
+
+      validate {TenantContext, require_master: true}
+      validate present(:site_id), message: @pick_site
+      change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change CheckConnection
+      validate present(:source_host), only_when_valid?: true
+      validate SourceInstalled, before_action?: true
+
+      change fn changeset, _context ->
+        Ash.Changeset.set_tenant(changeset, Ash.Changeset.get_attribute(changeset, :site_id))
+      end
+
+      change set_attribute(:user_id, actor(:id))
+      change &MishkaCmsMigration.MigrationRun.seal_secret/2
+
+      description "Creates a run on the site it names, started by the master, once its source answers"
     end
 
     update :start_dry_run do
@@ -230,6 +705,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:pending, :dry_run]}
 
       change set_attribute(:status, :dry_running)
+      change set_attribute(:progress, nil)
       change {EnqueueJob, trigger: :run_dry_run}
 
       description "Queues a dry run: what an import would create, update and skip, writing nothing"
@@ -242,6 +718,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       validate {Status, from: [:dry_run]}
 
       change set_attribute(:status, :importing)
+      change set_attribute(:progress, nil)
       change {EnqueueJob, trigger: :run_import}
 
       description "Queues the import of a run whose dry run has reported"
@@ -357,7 +834,7 @@ defmodule MishkaCmsMigration.MigrationRun do
                     permissions: ["admin:dashboard:migration", "admin:api:migration"]}
     end
 
-    policy action_type([:read, :create, :update]) do
+    policy action_type([:read, :update]) do
       authorize_if actor_attribute_equals(:site_id, nil)
       authorize_if expr(site_id == ^actor(:site_id))
     end
@@ -560,11 +1037,407 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   def open_secret(_run), do: {:ok, nil}
 
+  @doc """
+  Takes the secret out of a new run's `connection`: what a form typed under its `"secret"` key (or
+  `:secret`, from a caller of its own) becomes the action's `secret` argument, which
+  `seal_secret/2` keeps only sealed, and the key is dropped, so `connection` never holds the
+  secret. A `secret` argument the caller gave wins over the key; a blank key is dropped alone.
+  `:create` and `:master_create` run it before they connect
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`).
+  """
+  @spec take_secret(Ash.Changeset.t(), map()) :: Ash.Changeset.t()
+  def take_secret(changeset, _context),
+    do: changeset |> Ash.Changeset.get_attribute(:connection) |> secret_taken(changeset)
+
   @doc false
   def seal_secret(changeset, _context) do
     secret = Ash.Changeset.get_argument(changeset, :secret)
     changeset |> Ash.Changeset.delete_argument(:secret) |> sealed(secret)
   end
+
+  @doc "Where a run with `status` is, as the admin reads it."
+  @spec status_label(atom()) :: String.t()
+  def status_label(:pending), do: dgettext("mishka_gervaz", "Connected")
+  def status_label(:dry_running), do: dgettext("mishka_gervaz", "Dry run running")
+  def status_label(:dry_run), do: dgettext("mishka_gervaz", "Dry run ready")
+  def status_label(:importing), do: dgettext("mishka_gervaz", "Importing")
+  def status_label(:done), do: dgettext("mishka_gervaz", "Imported")
+  def status_label(:failed), do: dgettext("mishka_gervaz", "Failed")
+  def status_label(:cancelled), do: dgettext("mishka_gervaz", "Cancelled")
+
+  @doc "The pill colours of a run with `status`; its dot takes the text colour."
+  @spec status_class(atom()) :: String.t()
+  def status_class(:pending), do: "bg-[#eaf1fb] text-[#3a6cb5]"
+
+  def status_class(status) when status in [:dry_running, :importing],
+    do: "bg-[#eef0ff] text-[#4f4bcc]"
+
+  def status_class(:dry_run), do: "bg-[#fff6e0] text-[#8a5a00]"
+  def status_class(:done), do: "bg-[#e6f6ee] text-[#177a53]"
+  def status_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
+  def status_class(_cancelled), do: "bg-[#f2f1ec] text-[#8a877f]"
+
+  @doc "Every status as a `{label, status}` pair, in the order a run goes through them."
+  @spec status_options() :: [{String.t(), atom()}]
+  def status_options, do: Enum.map(@statuses, &{status_label(&1), &1})
+
+  @doc "The installed sources as `{label, id}` pairs."
+  @spec source_options() :: [{String.t(), String.t()}]
+  def source_options,
+    do:
+      Enum.map(
+        MishkaCmsMigration.Source.all(),
+        &{MishkaCmsMigration.Source.label(&1.id()), &1.id()}
+      )
+
+  @doc "The heroicon that stands for the source whose id is `id` in the admin's lists."
+  @spec source_icon(String.t()) :: String.t()
+  def source_icon("wordpress"), do: "hero-globe-alt"
+  def source_icon(_other), do: "hero-server-stack"
+
+  @doc """
+  What a run's `report` counts, in one line: `"3 created · 1 updated · 2 skipped · 0 failed"`, or
+  `"—"` before its first dry run.
+  """
+  @spec result_summary(map() | nil) :: String.t()
+  def result_summary(%{counts: counts}) do
+    Enum.map_join(MishkaCmsMigration.Report.outcomes(), " · ", fn outcome ->
+      outcome_count(outcome, Map.get(counts, outcome, 0))
+    end)
+  end
+
+  def result_summary(_no_report), do: "—"
+
+  @doc """
+  The outcomes a run's `report` counts more than none of, in `MishkaCmsMigration.Report.outcomes/0`
+  order, each with its count: `[created: 3, skipped: 2]`. Empty before the first dry run, and for a
+  report whose source listed nothing.
+  """
+  @spec result_outcomes(map() | nil) :: [{atom(), pos_integer()}]
+  def result_outcomes(%{counts: counts}) do
+    for outcome <- @outcomes,
+        count = Map.get(counts, outcome, 0),
+        count > 0,
+        do: {outcome, count}
+  end
+
+  def result_outcomes(_no_report), do: []
+
+  @doc "One outcome's count in words, as a Result pill's tooltip begins: `\"3 created\"`."
+  @spec outcome_count(atom(), non_neg_integer()) :: String.t()
+  def outcome_count(outcome, count),
+    do: "#{MishkaCmsCore.Localized.number(count)} #{outcome_label(outcome)}"
+
+  @doc "The pill colours of an outcome's count: green created, blue updated, grey skipped, red failed."
+  @spec outcome_class(atom()) :: String.t()
+  def outcome_class(:created), do: "bg-[#e6f6ee] text-[#177a53]"
+  def outcome_class(:updated), do: "bg-[#eaf1fb] text-[#3a6cb5]"
+  def outcome_class(:skipped), do: "bg-[#f2f1ec] text-[#8a877f]"
+  def outcome_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
+
+  @doc "The heroicon of an outcome's pill: a plus created, arrows updated, a minus skipped, a warning failed."
+  @spec outcome_icon(atom()) :: String.t()
+  def outcome_icon(:created), do: "hero-plus"
+  def outcome_icon(:updated), do: "hero-arrow-path"
+  def outcome_icon(:skipped), do: "hero-minus"
+  def outcome_icon(:failed), do: "hero-exclamation-triangle"
+
+  @doc """
+  The heroicon that stands for the items of `kind` in the admin's lists, such as
+  `"hero-document-text"` for `"post"`; a kind this extension does not name is a cube.
+  """
+  @spec kind_icon(String.t()) :: String.t()
+  def kind_icon("user"), do: "hero-user"
+  def kind_icon("category"), do: "hero-folder"
+  def kind_icon("tag"), do: "hero-tag"
+  def kind_icon("page"), do: "hero-document"
+  def kind_icon("post"), do: "hero-document-text"
+  def kind_icon(_other), do: "hero-cube"
+
+  @doc """
+  The Runs table's Result cell for `run`, drawn in the width its column gives it: its pills and
+  chips wrap onto more lines rather than widen the column.
+
+    * While the run is dry running or importing, how far its job is (`progress`): the kind it
+      walks, with its icon, the items met so far, of how many the run's last report
+      counted when it has one, and a thin bar of that share. Without a report the bar fills by the
+      kinds of the source walked so far. Before the job's first page it reads Starting.
+    * Otherwise, what its last report counted: a pill for each outcome counted more than none of,
+      in `MishkaCmsMigration.Report.outcomes/0` order (green created, blue updated, grey skipped,
+      red failed), each an icon and its count, its tooltip the count in words and, for skipped or
+      failed items, the reason most of them share (`reason_label/1`). Under them a grey chip for
+      each kind it met, the kind's icon (`kind_icon/1`) and how many the source listed, its
+      tooltip the kind in words (`kind_label/1`). "Nothing to move" when it counted nothing, and "—" before the first
+      dry run.
+
+  The data the page's tests read: `data-role="run-result"` on the cell, `"run-progress"` (with
+  `data-kind`, `data-done` and `data-total`), `"run-outcome"` (`data-outcome`, `data-count` and
+  `data-reason`, the shared reason as the report keeps it) and `"run-kind"` (`data-kind`,
+  `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
+  needs no `style` attribute.
+  """
+  @spec result_cell(map()) :: Phoenix.LiveView.Rendered.t()
+  def result_cell(run) do
+    assigns = result(run)
+
+    ~H"""
+    <div data-role="run-result" class="grid min-w-0 gap-[5px]">
+      <div
+        :if={@progress}
+        data-role="run-progress"
+        data-kind={@progress.kind}
+        data-done={@progress.done}
+        data-total={@progress.total}
+        title={@progress.title}
+        class="min-w-0"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-x-[6px] gap-y-px">
+          <span class="flex min-w-0 items-center gap-[4px] text-[10.5px] font-semibold text-[#4f4bcc]">
+            <MishkaCmsCore.CoreComponents.icon
+              :if={@progress.icon}
+              name={@progress.icon}
+              class="size-[11px] flex-none"
+            />
+            <span class="truncate">{@progress.label}</span>
+          </span>
+          <span class="font-['Space_Grotesk'] text-[10.5px] font-semibold text-[#8a877f]">
+            {@progress.count}
+          </span>
+        </div>
+        <div class="mt-[5px] h-[3px] overflow-hidden rounded-full bg-[#e9e8f7]">
+          <div class={[
+            "h-full rounded-full bg-[#5b57d6] motion-safe:transition-[width] motion-safe:duration-500",
+            @progress.width
+          ]}>
+          </div>
+        </div>
+      </div>
+      <div :if={@outcomes != []} class="flex flex-wrap gap-[4px]">
+        <span
+          :for={outcome <- @outcomes}
+          data-role="run-outcome"
+          data-outcome={outcome.outcome}
+          data-count={outcome.count}
+          data-reason={outcome.reason}
+          title={outcome.title}
+          class={[
+            "inline-flex items-center gap-[3px] rounded-[20px] px-[6px] py-[2px] text-[10px] font-bold whitespace-nowrap",
+            outcome.class
+          ]}
+        >
+          <MishkaCmsCore.CoreComponents.icon name={outcome.icon} class="size-[10px] flex-none" />
+          {outcome.number}<span class="sr-only">{"\u00a0" <> outcome.label}</span>
+        </span>
+      </div>
+      <div :if={@kinds != []} class="flex flex-wrap gap-[3px]">
+        <span
+          :for={kind <- @kinds}
+          data-role="run-kind"
+          data-kind={kind.kind}
+          data-count={kind.count}
+          title={kind.title}
+          class="inline-flex items-center gap-[2px] rounded-[6px] border border-[#ecebe6] px-[4px] py-px text-[10px] font-semibold whitespace-nowrap text-[#8a877f]"
+        >
+          <MishkaCmsCore.CoreComponents.icon name={kind.icon} class="size-[10px] flex-none" />
+          {kind.number}<span class="sr-only">{"\u00a0" <> kind.label}</span>
+        </span>
+      </div>
+      <span :if={@note} class="text-[12.5px] font-medium text-[#a8a5a0]">{@note}</span>
+    </div>
+    """
+  end
+
+  defp result(%{status: status} = run) when status in [:dry_running, :importing],
+    do: %{progress: progress(run), outcomes: [], kinds: [], note: nil}
+
+  defp result(%{report: %{kinds: kinds} = report}) do
+    outcomes =
+      for {outcome, count} <- result_outcomes(report),
+          do: outcome_pill(outcome, count, shared_reason(report, outcome))
+
+    chips =
+      for %{kind: kind} = kind_counts <- kinds,
+          count = items(kind_counts),
+          count > 0,
+          do: kind_chip(kind, count)
+
+    %{progress: nil, outcomes: outcomes, kinds: chips, note: nothing_to_move(outcomes)}
+  end
+
+  defp result(_no_report), do: %{progress: nil, outcomes: [], kinds: [], note: "—"}
+
+  defp outcome_pill(outcome, count, reason) do
+    %{
+      outcome: outcome,
+      count: count,
+      number: MishkaCmsCore.Localized.number(count),
+      label: outcome_label(outcome),
+      icon: outcome_icon(outcome),
+      class: outcome_class(outcome),
+      reason: reason,
+      title: outcome_title(outcome_count(outcome, count), reason)
+    }
+  end
+
+  defp kind_chip(kind, count) do
+    number = MishkaCmsCore.Localized.number(count)
+
+    %{
+      kind: kind,
+      count: count,
+      number: number,
+      label: kind_label(kind),
+      icon: kind_icon(kind),
+      title:
+        dgettext("mishka_gervaz", "%{kind}: %{count} found",
+          kind: kind_label(kind),
+          count: number
+        )
+    }
+  end
+
+  defp nothing_to_move([]), do: dgettext("mishka_gervaz", "Nothing to move")
+  defp nothing_to_move(_outcomes), do: nil
+
+  defp outcome_title(count, nil), do: count
+
+  defp outcome_title(count, reason),
+    do:
+      dgettext("mishka_gervaz", "%{count}: %{reason}",
+        count: count,
+        reason: reason |> reason_label() |> String.split_at(120) |> shortened()
+      )
+
+  defp shortened({text, ""}), do: text
+  defp shortened({text, _rest}), do: text <> "…"
+
+  defp shared_reason(%{entries: entries}, outcome) when outcome in [:skipped, :failed] do
+    entries
+    |> Enum.filter(&(&1.outcome == outcome and is_binary(&1.reason)))
+    |> Enum.frequencies_by(& &1.reason)
+    |> Enum.max_by(&elem(&1, 1), fn -> {nil, 0} end)
+    |> elem(0)
+  end
+
+  defp shared_reason(_report, _outcome), do: nil
+
+  defp progress(%{progress: %{kind: kind, counts: counts}} = run) do
+    done = items(counts)
+    total = run.report |> reported_items() |> at_least(done)
+
+    %{
+      kind: kind,
+      icon: kind_icon(kind),
+      label: walking(run.status, kind),
+      done: done,
+      total: total,
+      count: progress_count(done, total),
+      title: progress_title(done, total),
+      width: "w-[#{share(done, total, kind, run.source)}%]"
+    }
+  end
+
+  defp progress(_run_before_its_first_page) do
+    %{
+      kind: nil,
+      icon: nil,
+      label: dgettext("mishka_gervaz", "Starting"),
+      done: 0,
+      total: nil,
+      count: nil,
+      title: nil,
+      width: "w-[0%]"
+    }
+  end
+
+  defp walking(:dry_running, kind),
+    do: dgettext("mishka_gervaz", "Reading %{kind}", kind: kind_noun(kind))
+
+  defp walking(:importing, kind),
+    do: dgettext("mishka_gervaz", "Importing %{kind}", kind: kind_noun(kind))
+
+  defp progress_count(done, nil), do: MishkaCmsCore.Localized.number(done)
+
+  defp progress_count(done, total),
+    do: "#{MishkaCmsCore.Localized.number(done)}/#{MishkaCmsCore.Localized.number(total)}"
+
+  defp progress_title(done, nil),
+    do:
+      dgettext("mishka_gervaz", "%{done} items so far",
+        done: MishkaCmsCore.Localized.number(done)
+      )
+
+  defp progress_title(done, total),
+    do:
+      dgettext("mishka_gervaz", "%{done} of %{total} items",
+        done: MishkaCmsCore.Localized.number(done),
+        total: MishkaCmsCore.Localized.number(total)
+      )
+
+  defp share(done, total, _kind, _source) when is_integer(total), do: div(done * 100, total)
+
+  defp share(_done, nil, kind, source) do
+    with {:ok, module} <- MishkaCmsMigration.Source.fetch(source),
+         kinds = module.kinds(),
+         index when is_integer(index) <- Enum.find_index(kinds, &(&1 == kind)) do
+      div(index * 100, length(kinds))
+    else
+      _unknown -> 0
+    end
+  end
+
+  defp reported_items(%{counts: counts}), do: items(counts)
+  defp reported_items(_no_report), do: 0
+
+  defp at_least(0, _done), do: nil
+  defp at_least(total, done), do: max(total, done)
+
+  defp items(counts), do: counts |> Map.take(@outcomes) |> Map.values() |> Enum.sum()
+
+  defp outcome_label(:created), do: dgettext("mishka_gervaz", "created")
+  defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
+  defp outcome_label(:skipped), do: dgettext("mishka_gervaz", "skipped")
+  defp outcome_label(:failed), do: dgettext("mishka_gervaz", "failed")
+
+  defp kind_noun("user"), do: dgettext("mishka_gervaz", "users")
+  defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
+  defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
+  defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
+  defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
+  defp kind_noun(kind), do: kind
+
+  @doc """
+  The items of `kind` as the admin reads them, such as `"Posts"` for `"post"`. A kind this
+  extension does not name, one a source plugin of its own lists, reads as itself, capitalized.
+  """
+  @spec kind_label(String.t()) :: String.t()
+  def kind_label("user"), do: dgettext("mishka_gervaz", "Users")
+  def kind_label("category"), do: dgettext("mishka_gervaz", "Categories")
+  def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
+  def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
+  def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
+  def kind_label(kind), do: String.capitalize(kind)
+
+  @doc """
+  Why an item was skipped or failed (a `MishkaCmsMigration.Report` entry's `reason`), as the admin
+  reads it. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  """
+  @spec reason_label(String.t()) :: String.t()
+  def reason_label("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
+  def reason_label("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
+  def reason_label("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+
+  def reason_label("target_missing"),
+    do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+
+  def reason_label("duplicate_in_source"),
+    do: dgettext("mishka_gervaz", "Listed twice by the source")
+
+  def reason_label("plugins_cannot_run"),
+    do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
+
+  def reason_label("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
+  def reason_label(reason), do: reason
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the
@@ -577,6 +1450,28 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp opened({:ok, secret}) when is_binary(secret), do: {:ok, secret}
   defp opened(_unreadable), do: {:error, :unreadable_secret}
+
+  defp secret_taken(%{} = connection, changeset)
+       when is_map_key(connection, "secret") or is_map_key(connection, :secret) do
+    typed = Map.get(connection, "secret", Map.get(connection, :secret))
+
+    changeset
+    |> Ash.Changeset.force_change_attribute(
+      :connection,
+      Map.drop(connection, ["secret", :secret])
+    )
+    |> secret_argument(Ash.Changeset.get_argument(changeset, :secret), typed)
+  end
+
+  defp secret_taken(_no_secret, changeset), do: changeset
+
+  defp secret_argument(changeset, given, _typed) when is_binary(given) and given != "",
+    do: changeset
+
+  defp secret_argument(changeset, _none, typed) when is_binary(typed) and typed != "",
+    do: Ash.Changeset.set_argument(changeset, :secret, typed)
+
+  defp secret_argument(changeset, _none, _blank), do: changeset
 
   defp sealed(changeset, secret) when is_binary(secret) and secret != "",
     do:

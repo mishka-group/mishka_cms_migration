@@ -42,6 +42,28 @@ defmodule MishkaCmsMigration do
 
   use MishkaGervaz.Messages, backend: MishkaCmsCore.Gettext
 
+  mishka_gervaz do
+    table do
+      actor_key :current_user
+      ui_adapter MishkaGervaz.UIAdapters.Tailwind
+
+      pagination do
+        type :load_more
+        page_size 20
+        page_size_options [20, 50, 100]
+      end
+
+      realtime do
+        pubsub MishkaCmsCore.PubSub
+      end
+
+      actions do
+        read {:master_read, :read}
+        get {:master_get, :read}
+      end
+    end
+  end
+
   resources do
     resource MishkaCmsMigration.MigrationRun do
       define :create_run, action: :create

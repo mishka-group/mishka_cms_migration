@@ -24,15 +24,13 @@ defmodule MishkaCmsMigration.ProvisionTest do
         site_id: site.id
       )
 
-  test "the installer offers the migration, and its settings carry the install record" do
+  test "the installer offers the migration, which adds no tab to the Settings page" do
     assert Enum.any?(Extensions.offered(), &(&1.key == "mishka_cms_migration"))
 
     %{definitions: definitions} =
       MishkaInstaller.Event.Hook.call("settings:register", %{definitions: []})
 
-    keys = Enum.map(definitions, & &1.key)
-    assert "mishka_cms_migration.installed" in keys
-    assert "mishka_cms_migration.active" in keys
+    refute Enum.any?(definitions, &String.starts_with?(&1.key, "mishka_cms_migration."))
   end
 
   test "installing it creates the migration area, which a site's admin is then granted and uses" do
@@ -50,7 +48,8 @@ defmodule MishkaCmsMigration.ProvisionTest do
     assert stored("admin:dashboard:migration") == 1
 
     assert {:ok, _run} =
-             MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
+             MishkaCmsMigration.create_run(
+               %{source: "fake", source_host: "old.example.com", secret: "letmein"},
                actor: admin,
                tenant: site.id
              )

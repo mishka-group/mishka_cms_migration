@@ -14,7 +14,7 @@ config :mishka_cms_migration,
 # `pub_sub do module … end`, which is what lets these resources compile outside the CMS at all.
 # Compile-time, so it costs nothing per query.
 # Whose admin routes `extension_routes(:admin)` mounts — on its own, only the core's.
-config :mishka_cms_core, extensions: [MishkaCmsCoreWeb]
+config :mishka_cms_core, extensions: [MishkaCmsCoreWeb, MishkaCmsMigrationWeb]
 
 config :mishka_cms_core,
   repo: MishkaCmsMigration.Repo,

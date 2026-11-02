@@ -17,6 +17,11 @@ config :mishka_cms_migration, MishkaCmsMigration.Repo,
 
 config :mishka_cms_migration, ecto_repos: [MishkaCmsMigration.Repo]
 
+# The WordPress source answers from what a real WordPress answered (`test/fixtures/wordpress`),
+# through `Req.Test`; a test stubs the answers it needs.
+config :mishka_cms_migration, MishkaCmsMigration.Sources.WordPress,
+  req_options: [plug: {Req.Test, MishkaCmsMigration.Sources.WordPress}]
+
 # This extension's resources reach into accounts and runtime — a run belongs to a site and is started
 # by a user — so the schema this extension tests against has to include those domains, not just its
 # own. Listing them here is what makes `mix ash.codegen` emit their tables into this extension's

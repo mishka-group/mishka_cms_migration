@@ -5,15 +5,33 @@
 defmodule MishkaCmsMigration.Source do
   @moduledoc """
   A CMS a site is moved from: one module that is a `mishka_installer` plugin on the
-  `"migration:sources"` event and implements the callbacks below. WordPress is planned as the
-  first; Joomla and others come the same way and reuse the mapping, the dry run, the import job and
-  the report.
+  `"migration:sources"` event and implements the callbacks below. WordPress is the first
+  (`MishkaCmsMigration.Sources.WordPress`); Joomla and others come the same way and reuse the
+  mapping, the dry run, the import job and the report.
 
       defmodule MyExtension.Sources.Ghost do
         use MishkaCmsMigration.Source, id: "ghost", label: "Ghost"
+        use Gettext, backend: MishkaCmsCore.Gettext
 
         @impl true
         def kinds, do: ["user", "tag", "post"]
+
+        @impl true
+        def form_fields,
+          do: [
+            [
+              name: :url,
+              label: dgettext_noop("mishka_gervaz", "Address"),
+              placeholder: "https://example.com",
+              required: true
+            ],
+            [
+              name: :secret,
+              type: :password,
+              label: dgettext_noop("mishka_gervaz", "Admin API key"),
+              required: true
+            ]
+          ]
 
         @impl true
         def connect(%{"url" => url}, key), do: {:ok, Req.new(base_url: url, params: [key: key])}
@@ -30,8 +48,10 @@ defmodule MishkaCmsMigration.Source do
       end
 
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
-  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`
-  and an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself. A source
+  event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`,
+  an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself, a
+  `host/1` that reads the connection's `"url"`, and a `form_fields/0` that asks for an address and
+  a secret, which a source overrides to ask for what it connects with. A source
   registers once it is supervised: an extension that ships one lists the module among the children
   of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this
   extension's. Which sources are installed is read from mishka_installer's own registry
@@ -50,7 +70,32 @@ defmodule MishkaCmsMigration.Source do
   listed row goes through `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from
   `connect/2` or `list/3` fails the run; an error from `normalize/3` fails only that item, and the
   report says why.
+
+  ## Its connection form
+
+  The Migration page's New import opens one form for every source, and the form asks for what
+  `form_fields/0` names: the keys of the run's `connection`, as data, each the shape a Gervaz
+  `:key_map` key takes (`MishkaGervaz.Form.Types.Field.KeyMap`):
+
+    * `:name` — the key the typed value is kept under in `connection`, as a string;
+    * `:type` — `:text` (the default), `:password`, `:number`, `:select` or another type a
+      `:key_map` key takes;
+    * `:label` and `:placeholder` — msgids of the `mishka_gervaz` gettext domain, marked with
+      `dgettext_noop("mishka_gervaz", "...")`, which the form translates as it draws them;
+    * `:required` — `true` marks the key's label as a required field's label is marked.
+
+  The key named `:secret` is the secret the source signs in with. Give it `type: :password`: it is
+  drawn masked and never shown again, and creating the run takes it out of `connection` and keeps
+  it only sealed (`MishkaCmsMigration.MigrationRun.take_secret/2`), so `connect/2` gets it as its
+  `secret`. Every other key, a `:password` one too, is kept in `connection` as typed, so a source
+  has one secret, under `:secret`. A key left blank is not saved.
+
+  `use` asks for an Address (`:url`, required, `https://example.com` as its placeholder) and a
+  Password or key (`:secret`, a required `:password` key). `form_fields/1` reads the keys of the
+  source a form was opened for.
   """
+
+  use Gettext, backend: MishkaCmsCore.Gettext
 
   alias MishkaInstaller.Event.Event
 
@@ -61,6 +106,28 @@ defmodule MishkaCmsMigration.Source do
 
   @typedoc "Where `list/3` goes on from: `nil` is the first page, and answering `nil` ends a kind."
   @type cursor :: term() | nil
+
+  @typedoc """
+  One key of a source's connection form: `:name`, `:type`, `:label`, `:placeholder` and
+  `:required`, as a Gervaz `:key_map` key takes them (see "Its connection form").
+  """
+  @type form_field :: keyword()
+
+  @form_fields [
+    [
+      name: :url,
+      type: :text,
+      label: dgettext_noop("mishka_gervaz", "Address"),
+      placeholder: "https://example.com",
+      required: true
+    ],
+    [
+      name: :secret,
+      type: :password,
+      label: dgettext_noop("mishka_gervaz", "Password or key"),
+      required: true
+    ]
+  ]
 
   @typedoc "What `normalize/3` is told: the run's site, its source host and its options."
   @type context :: %{
@@ -82,9 +149,35 @@ defmodule MishkaCmsMigration.Source do
   """
   @callback kinds() :: [String.t()]
 
-  @doc "Connects with a run's `connection` map and its opened secret (`nil` when it has none)."
+  @doc """
+  Connects with a run's `connection` map and its opened secret (`nil` when it has none).
+
+  It is asked when a run is created, so a run is only kept for a source it can reach
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`), and again by each job. A refusal is
+  shown to the admin on the run's `connection`; these reasons are put in words, and any other is
+  shown as it is:
+
+    * `:invalid_address` — the connection does not name an address the source can use;
+    * `:unreachable` — nothing answered at the address;
+    * `:no_site` — something answered, but not a site of this source;
+    * `:unauthorized` — the site refused the user or the secret.
+  """
   @callback connect(connection :: map(), secret :: String.t() | nil) ::
               {:ok, conn()} | {:error, term()}
+
+  @doc """
+  The host a run's `connection` points at, kept as the run's `source_host` when the run does not
+  name one: with the source id and an item's id it is how a re-run finds what an earlier run
+  wrote. `use` answers the host of the connection's `"url"`, or `nil` without one.
+  """
+  @callback host(connection :: map()) :: String.t() | nil
+
+  @doc """
+  The keys the New import form asks for, in the order it draws them: what `connect/2` reads from a
+  run's `connection`, and its secret under `:secret` (see "Its connection form"). `use` asks for an
+  address and a secret.
+  """
+  @callback form_fields() :: [form_field()]
 
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
@@ -129,7 +222,13 @@ defmodule MishkaCmsMigration.Source do
       @impl MishkaCmsMigration.Source
       def extra(_conn), do: %{}
 
-      defoverridable extra: 1
+      @impl MishkaCmsMigration.Source
+      def host(connection), do: MishkaCmsMigration.Source.url_host(connection)
+
+      @impl MishkaCmsMigration.Source
+      def form_fields, do: unquote(@form_fields)
+
+      defoverridable extra: 1, host: 1, form_fields: 0
     end
   end
 
@@ -141,11 +240,63 @@ defmodule MishkaCmsMigration.Source do
   def event, do: @event
 
   @doc """
-  Every installed source (`installed/2`), by priority, the first of each id: what the coming Import
-  screen offers to migrate from, and what a developer reads to see which sources a node has.
+  Every installed source (`installed/2`), by priority, the first of each id: what the Migration
+  page offers to migrate from, and what a developer reads to see which sources a node has.
   """
   @spec all() :: [module()]
   def all, do: installed(@event, __MODULE__)
+
+  @doc """
+  The name to show for the source whose id is `id`: its label in the reader's language, or the id
+  itself for a source that is no longer installed.
+  """
+  @spec label(String.t()) :: String.t()
+  def label(id), do: id |> fetch() |> shown(id)
+
+  defp shown({:ok, source}, _id), do: Gettext.gettext(MishkaCmsCore.Gettext, source.label())
+  defp shown({:error, :not_installed}, id), do: id
+
+  @doc """
+  The connection keys (`c:form_fields/0`) of the installed source a form names, or of the source
+  whose id is given: what the run's form draws under Connection. A form names its source in its
+  `defaults`, as the Migration page opens it (`defaults: %{source: id}`). Empty for a form opened
+  for no source and for a source that is not installed.
+
+      field :connection, :key_map do
+        options fn state -> MishkaCmsMigration.Source.form_fields(state) end
+      end
+  """
+  @spec form_fields(map() | String.t() | nil) :: [form_field()]
+  def form_fields(%{defaults: %{source: id}}), do: form_fields(id)
+  def form_fields(id) when is_binary(id), do: id |> fetch() |> fields_of()
+  def form_fields(_no_source), do: []
+
+  defp fields_of({:ok, source}), do: source.form_fields()
+  defp fields_of({:error, :not_installed}), do: []
+
+  @doc """
+  The host of a connection's `"url"`, lower-cased and with its port when it is not the scheme's
+  own (`localhost:8089`), or `nil` when it has no address with a host: what `use` answers as
+  `c:host/1`.
+  """
+  @spec url_host(map()) :: String.t() | nil
+  def url_host(%{"url" => url}) when is_binary(url),
+    do: url |> String.trim() |> URI.parse() |> host_of()
+
+  def url_host(_connection), do: nil
+
+  defp host_of(%URI{host: host} = uri) when is_binary(host) and host != "",
+    do: String.downcase(host) <> port_of(uri)
+
+  defp host_of(_uri), do: nil
+
+  defp port_of(%URI{scheme: scheme, port: port}) when is_integer(port),
+    do: port_suffix(port, URI.default_port(scheme))
+
+  defp port_of(_uri), do: ""
+
+  defp port_suffix(port, port), do: ""
+  defp port_suffix(port, _default), do: ":#{port}"
 
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}

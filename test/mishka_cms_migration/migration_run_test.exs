@@ -28,24 +28,65 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       site: site,
       admin: admin
     } do
-      run = create_run!(site, admin, rows(), %{secret: "app password"})
+      run = create_run!(site, admin, rows(), %{secret: "letmein"})
 
       assert {run.status, run.site_id, run.user_id} == {:pending, site.id, admin.id}
-      refute run.connection_secret == "app password"
-      refute inspect(run) =~ "app password"
-      assert MigrationRun.open_secret(run) == {:ok, "app password"}
+      refute run.connection_secret == "letmein"
+      refute inspect(run) =~ "letmein"
+      assert MigrationRun.open_secret(run) == {:ok, "letmein"}
+    end
+
+    test "keeps a secret typed into its connection only sealed, never in the connection", %{
+      site: site,
+      admin: admin
+    } do
+      for connection <- [
+            %{"items" => %{}, "secret" => "letmein"},
+            %{items: %{}, secret: "letmein"}
+          ] do
+        run = create_run!(site, admin, %{}, %{connection: connection, secret: nil})
+        stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+        assert stored.connection == %{"items" => %{}}
+        assert MigrationRun.open_secret(stored) == {:ok, "letmein"}
+        refute inspect(stored) =~ "letmein"
+      end
+    end
+
+    test "takes the secret argument over one typed into its connection", %{
+      site: site,
+      admin: admin
+    } do
+      typed = %{"items" => %{}, "secret" => "typed"}
+      run = create_run!(site, admin, %{}, %{connection: typed, secret: "letmein"})
+      stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+
+      assert stored.connection == %{"items" => %{}}
+      assert MigrationRun.open_secret(stored) == {:ok, "letmein"}
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :connection}]}} =
+               MishkaCmsMigration.create_run(
+                 %{
+                   source: "fake",
+                   source_host: "old.example.com",
+                   connection: %{"items" => %{}, "secret" => "letmein"},
+                   secret: "wrong"
+                 },
+                 actor: admin,
+                 tenant: site.id
+               )
     end
 
     test "never broadcasts its secret or its connection", %{site: site, admin: admin} do
       :ok = MishkaCmsMigration.TestEndpoint.subscribe("migration_run:#{site.id}:created")
-      run = create_run!(site, admin, rows(), %{secret: "app password"})
+      run = create_run!(site, admin, rows(), %{secret: "letmein"})
       run_id = run.id
 
       assert_receive %Phoenix.Socket.Broadcast{payload: %{data: %{id: ^run_id} = data} = payload}
       assert {data.connection_secret, data.connection, payload.changeset} == {nil, %{}, nil}
 
       sent = :erlang.term_to_binary(payload)
-      assert :binary.match(sent, "app password") == :nomatch
+      assert :binary.match(sent, "letmein") == :nomatch
       assert :binary.match(sent, run.connection_secret) == :nomatch
     end
 
@@ -110,6 +151,89 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                MishkaCmsMigration.create_run(%{source: "fake", source_host: "old.example.com"},
                  actor: admin
                )
+    end
+  end
+
+  describe "creating a run connects to its source first" do
+    test "and keeps what the source says of itself", %{site: site, admin: admin} do
+      facts = %{"version" => "6.5", "name" => "Old blog"}
+      run = create_run!(site, admin, %{}, %{connection: %{"items" => %{}, "facts" => facts}})
+
+      assert run.extra == facts
+    end
+
+    test "and saves nothing when the source refuses, saying why on the connection", %{
+      site: site,
+      admin: admin
+    } do
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :connection} = error]}} =
+               MishkaCmsMigration.create_run(
+                 %{source: "fake", source_host: "old.example.com", secret: "wrong"},
+                 actor: admin,
+                 tenant: site.id
+               )
+
+      assert MishkaGervaz.Errors.translate_error(error.message, error.vars) =~
+               "Fake did not accept this user and application password"
+
+      assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+
+    test "and takes the source host from the connection's address when it names none", %{
+      site: site,
+      admin: admin
+    } do
+      connection = %{"url" => " https://Old.Example.com/blog ", "items" => %{}}
+      run = create_run!(site, admin, %{}, %{source_host: nil, connection: connection})
+
+      assert run.source_host == "old.example.com"
+
+      assert {:error, %Ash.Error.Invalid{errors: errors}} =
+               MishkaCmsMigration.create_run(
+                 %{source: "fake", connection: %{"url" => "old blog"}, secret: "letmein"},
+                 actor: admin,
+                 tenant: site.id
+               )
+
+      assert Enum.any?(errors, &(&1.field == :connection))
+    end
+
+    test "sent empty by a master, names the site and the address in words, and no host", %{
+      site: _site
+    } do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+
+      assert {:error, %Ash.Error.Invalid{errors: errors}} =
+               MigrationRun
+               |> Ash.Changeset.for_create(:master_create, %{source: "fake"}, actor: master)
+               |> Ash.create()
+
+      fields = Enum.map(errors, &Map.get(&1, :field))
+
+      assert :connection in fields
+      refute :source_host in fields
+      assert Enum.find(errors, &(Map.get(&1, :field) == :site_id)).message =~ "Pick the site"
+    end
+
+    test "for a master, on the site the master names", %{site: site} do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+
+      run =
+        MigrationRun
+        |> Ash.Changeset.for_create(
+          :master_create,
+          %{
+            site_id: site.id,
+            source: "fake",
+            source_host: "old.example.com",
+            connection: %{"items" => %{}},
+            secret: "letmein"
+          },
+          actor: master
+        )
+        |> Ash.create!()
+
+      assert {run.site_id, run.user_id, run.status} == {site.id, master.id, :pending}
     end
   end
 
