@@ -1,0 +1,17 @@
+HTTP/1.1 200 OK
+Date: Mon, 02 Nov 2026 06:22:45 GMT
+Server: Apache/2.4.69 (Debian)
+X-Powered-By: PHP/8.4.27
+X-Robots-Tag: noindex
+Link: <http://localhost:8089/wp-json/>; rel="https://api.w.org/"
+X-Content-Type-Options: nosniff
+Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link
+Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type
+X-WP-Total: 1
+X-WP-TotalPages: 1
+Allow: GET, POST
+Expires: Wed, 11 Jan 1984 05:00:00 GMT
+Cache-Control: no-cache, must-revalidate, max-age=0, no-store, private
+Content-Length: 2780
+Content-Type: application/json; charset=UTF-8
+

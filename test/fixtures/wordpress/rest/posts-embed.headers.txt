@@ -1,0 +1,17 @@
+HTTP/1.1 200 OK
+Date: Mon, 02 Nov 2026 06:22:44 GMT
+Server: Apache/2.4.69 (Debian)
+X-Powered-By: PHP/8.4.27
+X-Robots-Tag: noindex
+Link: <http://localhost:8089/wp-json/wp/v2/posts?context=edit&per_page=3&status%5B0%5D=any&_embed=1&page=2>; rel="next"
+X-Content-Type-Options: nosniff
+Access-Control-Expose-Headers: X-WP-Total, X-WP-TotalPages, Link
+Access-Control-Allow-Headers: Authorization, X-WP-Nonce, Content-Disposition, Content-MD5, Content-Type
+X-WP-Total: 21
+X-WP-TotalPages: 7
+Allow: GET, POST
+Expires: Wed, 11 Jan 1984 05:00:00 GMT
+Cache-Control: no-cache, must-revalidate, max-age=0, no-store, private
+Transfer-Encoding: chunked
+Content-Type: application/json; charset=UTF-8
+
