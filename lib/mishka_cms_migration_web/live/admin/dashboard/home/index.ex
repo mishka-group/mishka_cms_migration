@@ -17,9 +17,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   ## A run's row
 
-  Dry run, Run again and Cancel reach this page as `{:row_action, "dry_run" | "cancel", %{"id" =>
-  id}}`. The page reads the run as the table does, a master's through `:master_get` on any site, a
-  site admin's on their own site alone, and runs `MishkaCmsMigration.start_dry_run/2` or
+  Dry run, Run again, Import and Cancel reach this page as `{:row_action, "dry_run" | "import" |
+  "cancel", %{"id" => id}}`. The page reads the run as the table does, a master's through
+  `:master_get` on any site, a site admin's on their own site alone, and runs
+  `MishkaCmsMigration.start_dry_run/2`, `MishkaCmsMigration.start_import/2` or
   `MishkaCmsMigration.cancel_run/2` as the signed-in admin, on the run's site. It says so in a
   flash; a run it cannot read, such as another site's id sent by hand, or a step the run refuses,
   such as a second dry run while one of the site's runs is running, is said in Gervaz's words for
@@ -86,6 +87,17 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
        &MishkaCmsMigration.start_dry_run/2,
        gettext("Dry run"),
        gettext("Dry run started.")
+     )}
+  end
+
+  def handle_info({:row_action, "import", %{"id" => id}}, socket) do
+    {:noreply,
+     step(
+       socket,
+       id,
+       &MishkaCmsMigration.start_import/2,
+       gettext("Import"),
+       gettext("Import started.")
      )}
   end
 

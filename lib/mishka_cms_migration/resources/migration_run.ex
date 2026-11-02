@@ -113,15 +113,16 @@ defmodule MishkaCmsMigration.MigrationRun do
   running job's progress, show without a reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
-  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
-  admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
-  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by
-  the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
-  as its tooltip and accessible name. The Actions column is always as wide as the most a row shows,
-  two 30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose
-  status changes its buttons never moves the other columns. A row expands to what its last dry
-  run or import found, kind by kind: the kind in words (`kind_label/1`), how many items the source
-  listed, what was done with them (`result_summary/1`) and why the skipped ones were skipped
+  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, Import on that same ready run
+  (`:start_import`, once the admin confirms), and Cancel (`:cancel`, once the admin confirms) on
+  one that is waiting, dry running, ready or importing. They are `:event` row actions, run by the
+  page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by the domain's
+  Tailwind adapter as the Pages table draws its own: an icon, with the action's name as its
+  tooltip and accessible name. The Actions column is always as wide as the most a row shows, three
+  30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose status
+  changes its buttons never moves the other columns. A row expands to what its last dry run or
+  import found, kind by kind: the kind in words (`kind_label/1`), how many items the source listed,
+  what was done with them (`result_summary/1`) and why the skipped ones were skipped
   (`reason_label/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default. Its
@@ -317,7 +318,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "From") end
 
           ui do
-            width "minmax(110px,1.1fr)"
+            width "minmax(84px,1.1fr)"
           end
 
           render fn record ->
@@ -476,7 +477,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       row_actions do
         actions_layout do
-          width "minmax(96px,max-content)"
+          width "minmax(130px,max-content)"
         end
 
         action :expand, type: :accordion
@@ -500,6 +501,25 @@ defmodule MishkaCmsMigration.MigrationRun do
           ui do
             label fn -> dgettext("mishka_gervaz", "Run again") end
             icon "hero-arrow-path"
+          end
+        end
+
+        action :import do
+          type :event
+          event "import"
+
+          confirm fn _record ->
+            dgettext(
+              "mishka_gervaz",
+              "Import now? It writes what the dry run found into the CMS."
+            )
+          end
+
+          visible fn record, _state -> record.status == :dry_run end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import") end
+            icon "hero-arrow-down-tray"
           end
         end
 

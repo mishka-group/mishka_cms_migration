@@ -721,6 +721,69 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "a WordPress run's Import" do
+    @blog_admin ["admin:dashboard:migration", "admin:dashboard:blog:post"]
+
+    setup %{site: site} do
+      stub!()
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      {:ok, admin: migration_admin!(site, @blog_admin)}
+    end
+
+    test "queues the job, and once it is done shows the run as Imported with what it created, without a reload",
+         %{conn: conn, site: site, admin: admin} do
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+      assert has_element?(view, ~s|[data-role="run-details"][data-status="dry_run"]|)
+      assert has_element?(view, "#migration-runs-table #{action("import", run)}", "Import")
+      assert Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false) == []
+
+      assert row_action!(view, "import", run) =~ "Import started."
+      assert [_job] = assert_triggered(run, :run_import)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="importing"]|)
+      refute has_element?(view, "#migration-runs-table #{action("import", run)}")
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-status"][data-status="done"]|,
+               "Imported"
+             )
+
+      assert outcomes(view) == %{"created" => 20, "skipped" => 37}
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details"][data-status="done"][data-step="import"]|
+             )
+
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
+               %{"created" => 20, "skipped" => 37}
+
+      for {kind, created} <- [{"category", 9}, {"tag", 11}] do
+        card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
+
+        assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
+                 %{"created" => created}
+      end
+
+      assert length(Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false)) == 11
+      refute has_element?(view, "#migration-runs-table #{action("import", run)}")
+    end
+  end
+
   describe "a run's expanded row" do
     setup %{site: site} do
       for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
@@ -908,9 +971,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert has_element?(view, ~s|#{action("dry_run", pending)}[title="Dry run"]|)
       assert has_element?(view, ~s|#{action("dry_run", ready)}[title="Run again"]|)
+      assert has_element?(view, ~s|#{action("import", ready)}[title="Import"][data-confirm]|)
 
       for run <- [running, done, cancelled],
           do: refute(has_element?(view, action("dry_run", run)))
+
+      for run <- [pending, running, done, cancelled],
+          do: refute(has_element?(view, action("import", run)))
 
       for run <- [pending, ready, running],
           do: assert(has_element?(view, "#{action("cancel", run)}[data-confirm]"))
@@ -973,17 +1040,46 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert status(run) == :cancelled
     end
 
-    test "a site admin cannot start or cancel another site's run by a crafted event", %{
+    test "a master imports a run of any site", %{conn: conn} do
+      other = create_site!()
+
+      run =
+        other |> create_run!(migration_admin!(other), %{}) |> dry_run!(migration_admin!(other))
+
+      view = open!(conn, create_user_with_permissions!(["admin:dashboard:migration"]))
+
+      assert row_action!(view, "import", run) =~ "Import started."
+      assert status(run) == :importing
+      assert [_job] = assert_triggered(run, :run_import)
+    end
+
+    test "a site admin cannot start, import or cancel another site's run by a crafted event", %{
       conn: conn,
       admin: admin
     } do
       other = create_site!()
-      theirs = create_run!(other, migration_admin!(other), %{})
+      other_admin = migration_admin!(other)
+      theirs = create_run!(other, other_admin, %{})
+      their_ready = other |> create_run!(other_admin, %{}) |> dry_run!(other_admin)
       view = open!(conn, admin)
 
       assert crafted!(view, "dry_run", theirs.id) =~ "This record is no longer here."
       assert crafted!(view, "cancel", theirs.id) =~ "This record is no longer here."
+      assert crafted!(view, "import", their_ready.id) =~ "This record is no longer here."
       assert status(theirs) == :pending
+      assert status(their_ready) == :dry_run
+    end
+
+    test "an Import of a run whose dry run is not ready is refused in words", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      pending = create_run!(site, admin, %{})
+      view = open!(conn, admin)
+
+      assert crafted!(view, "import", pending.id) =~ "The run cannot do that while it is pending."
+      assert status(pending) == :pending
     end
   end
 
