@@ -607,6 +607,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       row_action!(list, "map_to", phoenix)
       assert map_value(list) == [elixir.id]
     end
+
+    test "Cancel closes the modal and leaves the item as it was", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      phoenix = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.title == "Phoenix"))
+      view = open!(conn, admin, run, "?items_filter_source_kind=tag")
+
+      row_action!(view, "map_to", phoenix)
+      view |> element("#migration-item-map-modal button", "Cancel") |> render_click()
+
+      assert_push_event(view, "gervaz:exec-js", %{target: "migration-item-map-modal", js: js})
+      assert js =~ "#migration-item-map-modal-container"
+      assert item!(phoenix).mapped_id == nil
+    end
   end
 
   describe "the Map view" do

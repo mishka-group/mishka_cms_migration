@@ -530,6 +530,10 @@ defmodule MishkaCmsMigration.MigrationItem do
       presentation do
         ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
       end
+
+      hooks do
+        on_cancel fn state -> state end
+      end
     end
   end
 
