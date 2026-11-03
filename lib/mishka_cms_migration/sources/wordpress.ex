@@ -33,15 +33,18 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "post_redirect"]`: authors,
-  terms and files before the pages and posts that point at them, and each post's old address after
-  its post. `list/3` reads each from its REST route (`/wp/v2/users`, `/wp/v2/categories`,
-  `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with
-  `context=edit`, so WordPress answers the raw fields an editor sees, 100 rows a page. Pages and
-  posts are asked for with `status=any`:
-  published, scheduled, draft, pending and private, but not the trash. `"post_redirect"` reads the
-  posts again, only their `id`, `title`, `status`, `link` and `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there is one, and
-  `nil` after the last. A list WordPress refuses fails the walk:
+  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]`:
+  authors, terms and files before the pages and posts that point at them, the comments after the
+  posts they are on, and each post's old address after its post. `list/3` reads each from its REST
+  route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`,
+  `/wp/v2/posts`, `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress
+  answers the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with
+  `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
+  asked for with `status=all` and `type=all`: approved and held for moderation, of every type
+  (WordPress answers only plain comments unless asked), but not spam and not the trash.
+  `"post_redirect"` reads the posts again, only their `id`, `title`, `status`, `link` and
+  `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there
+  is one, and `nil` after the last. A list WordPress refuses fails the walk:
     * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
       context, or the password was revoked since the run was made;
     * `:unreachable` — nothing answered;
@@ -88,6 +91,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
       `last_name`, `nickname`, `description`, `roles`, `url`, `link` and `avatar_urls`. A user has
       no `modified_at`.
+    * comment — `title` is the author's name, `parent` the id of the comment it replies to (`nil`
+      at the top), and `content` the comment as its author typed it (`content.raw`); `attrs` keeps
+      `post` (the id of the post or page it is on), `post_type` (that entry's type, `"post"` or
+      `"page"`, from the row's `up` link), `author` (the id of the WordPress user, `0` for a
+      visitor), `author_name`, `author_email`, `status` (`"approved"` or `"hold"`; a spam or
+      trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
+      `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
+      address, website, user agent and the rest are kept in `extra`.
     * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
@@ -125,7 +136,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Sources.WordPress.Content
 
-  @kinds ["user", "category", "tag", "media", "page", "post", "post_redirect"]
+  @kinds ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
 
   @form_fields [
     [
@@ -157,6 +168,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "media" => {"/wp/v2/media", []},
     "page" => {"/wp/v2/pages", [status: "any"]},
     "post" => {"/wp/v2/posts", [status: "any"]},
+    "comment" => {"/wp/v2/comments", [status: "all", type: "all"]},
     "post_redirect" =>
       {"/wp/v2/posts", [status: "any", _fields: "id,title,status,link,modified_gmt"]}
   }
@@ -182,6 +194,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+
+  @comment_attrs ~w(post author author_name author_email status type date_gmt)
+  @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
   @impl MishkaCmsMigration.Source
   def kinds, do: @kinds
@@ -272,6 +287,19 @@ defmodule MishkaCmsMigration.Sources.WordPress do
            "description" => raw(row["description"])
          }),
        extra: Map.drop(row, @media_read)
+     }}
+  end
+
+  def normalize(%{"id" => id, "content" => %{"raw" => raw}} = row, "comment", _context)
+      when is_binary(raw) do
+    {:ok,
+     %{
+       source_id: id,
+       title: row["author_name"],
+       parent: parent(row),
+       attrs: row |> Map.take(@comment_attrs) |> Map.put("post_type", post_type(row)),
+       extra: Map.drop(row, @comment_read),
+       content: [%{html: raw}]
      }}
   end
 
@@ -488,6 +516,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp own_path(%URI{path: "/" <> rest = path}) when rest != "", do: path
   defp own_path(_no_path), do: nil
+
+  defp post_type(%{"_links" => %{"up" => [%{"post_type" => type} | _]}}), do: type
+  defp post_type(_row), do: nil
 
   defp parent(%{"parent" => parent}) when is_integer(parent) and parent > 0, do: parent
   defp parent(_row), do: nil

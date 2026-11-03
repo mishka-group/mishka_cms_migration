@@ -29,6 +29,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     "media" => "media",
     "page" => "pages",
     "post" => "posts",
+    "comment" => "comments",
     "post_redirect" => "posts"
   }
 
@@ -169,7 +170,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {:ok, WordPress} = Source.fetch("wordpress")
 
       assert WordPress.kinds() ==
-               ["user", "category", "tag", "media", "page", "post", "post_redirect"]
+               ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
     end
   end
 
@@ -185,6 +186,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             {"media", "/wp-json/wp/v2/media", nil},
             {"page", "/wp-json/wp/v2/pages", "any"},
             {"post", "/wp-json/wp/v2/posts", "any"},
+            {"comment", "/wp-json/wp/v2/comments", "all"},
             {"post_redirect", "/wp-json/wp/v2/posts", "any"}
           ] do
         assert {:ok, [_ | _], nil} = WordPress.list(conn, kind, nil)
@@ -258,11 +260,19 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert reason =~ "500"
     end
 
+    test "asks for comments of every type, held ones too, and for no spam or trash" do
+      stub!()
+      assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "comment", nil)
+      assert_received {:wordpress_request, %{query_params: %{"status" => status, "type" => type}}}
+
+      assert {status, type} == {"all", "all"}
+    end
+
     test "lists no kind it does not read" do
       stub!()
 
-      assert WordPress.list(connected!(), "comment", nil) == {:error, {:unknown_kind, "comment"}}
-      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/comments"}}
+      assert WordPress.list(connected!(), "menu", nil) == {:error, {:unknown_kind, "menu"}}
+      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/menus"}}
     end
   end
 
@@ -378,6 +388,46 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
           do: assert(is_nil(item.attrs["from"]))
 
       assert {redirects["39"].attrs["from"], redirects["41"].attrs["from"]} == {nil, nil}
+    end
+
+    test "a comment carries its post, its parent, its author and its text as the commenter typed it" do
+      comments = items!("comment")
+      reply = comments["7"]
+
+      assert reply.title == "امید رحیمی"
+      assert reply.parent == "6"
+      assert is_nil(reply.modified_at)
+      assert Item.html(reply) == "Reply from an author."
+
+      assert reply.attrs == %{
+               "post" => 50,
+               "post_type" => "post",
+               "author" => 4,
+               "author_name" => "امید رحیمی",
+               "author_email" => "omid.rahimi@example.test",
+               "status" => "approved",
+               "type" => "comment",
+               "date_gmt" => "2026-04-12T05:50:00"
+             }
+
+      assert is_nil(comments["2"].parent)
+      assert comments["3"].parent == "2"
+      assert comments["9"].attrs["status"] == "hold"
+      assert comments["6"] |> html() |> texts("strong") == ["Bold"]
+      assert comments["15"].attrs["post_type"] == "page"
+      assert reply.extra["author_ip"]
+      assert reply.extra["link"] =~ "#comment-7"
+
+      for kept <- ["content", "post", "author", "status", "_links"],
+          do: refute(is_map_key(reply.extra, kept))
+    end
+
+    test "a spam comment and a pingback read as what they are, for the target to leave out" do
+      spam = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-spam"})["10"]
+      pingback = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-pingback"})["11"]
+
+      assert spam.attrs["status"] == "spam"
+      assert pingback.attrs["type"] == "pingback"
     end
 
     test "a file carries where it is, its type and size, its alt text, caption and description" do
@@ -501,8 +551,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert WordPress.normalize(row, "post", @context) == {:error, :unreadable}
 
-      assert WordPress.normalize(row, "comment", @context) ==
-               {:error, {:unknown_kind, "comment"}}
+      assert WordPress.normalize(row, "comment", @context) == {:error, :unreadable}
+      assert WordPress.normalize(row, "menu", @context) == {:error, {:unknown_kind, "menu"}}
     end
   end
 
@@ -642,7 +692,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, file, page, post and old address it found: pages, terms, files and posts to create, users with no CMS user, a file Media cannot keep, a redirect from each published post's address" do
+    test "reports every user, term, file, page, post, comment and old address it found: pages, terms, files and posts to create, users with no CMS user, a file Media cannot keep, a redirect from each published post's address" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -685,6 +735,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
                    {:skipped, "no_user"},
+                   {:skipped, "no_target"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}
                  ])
