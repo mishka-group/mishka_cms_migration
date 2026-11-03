@@ -15,6 +15,45 @@ defmodule MishkaCmsMigration.Workers do
 
   This module attaches the handler that fails the run of a job Oban discards (`attach/0`), the one
   ending AshOban's `on_error` cannot reach.
+
+  ## Telemetry
+
+  Each attempt of a job, and the New import form's connection check, tell `:telemetry` what they
+  do, so a host can attach its own handlers for metrics or logs. Every event's name starts with
+  `:mishka_cms_migration`. A reason is in words (`MishkaCmsMigration.Report.reason/1`), and no
+  event carries a connection or its secret. Durations are in `:native` time units.
+
+    * `[:mishka_cms_migration, :run, :start]` — an attempt of a dry run or an import begins
+      (`:telemetry.span/3`). Measurements: `system_time`, `monotonic_time`. Metadata: `run_id`,
+      `site_id`, `source` (the source's id), `source_host` and `mode` (`:dry_run` or `:import`).
+    * `[:mishka_cms_migration, :run, :stop]` — the attempt ended. Measurements: `duration`,
+      `monotonic_time` and, for a finished one, its report's `created`, `updated`, `skipped` and
+      `failed` counts. Metadata: the start's, and `result`: `:finished`; `:cancelled` when the run
+      no longer waited for its job; or `:failed`, with its `reason`, which AshOban tries again and,
+      after the last attempt, fails the run on.
+    * `[:mishka_cms_migration, :run, :exception]` — the attempt raised past the walk's own rescue.
+      Measurements: `duration`, `monotonic_time`. Metadata: the start's, and `kind`, `reason` and
+      `stacktrace`.
+    * `[:mishka_cms_migration, :kind, :listed]` — the source answered the last page of a kind.
+      Measurements: `count`, the rows it listed, and `pages`. Metadata: the run's, and `kind`.
+    * `[:mishka_cms_migration, :item, :settled]` — an item was written and recorded, recorded as
+      skipped or failed, or, in a dry run, reported. Measurements: `duration`. Metadata: the run's,
+      and the item's `kind`, `source_id`, `outcome` (`:created`, `:updated`, `:skipped` or
+      `:failed`) and `reason`.
+    * `[:mishka_cms_migration, :connect, :refused]` — a source refused to connect, at the form's
+      check or in a job (`MishkaCmsMigration.Source.connect/4`). Measurements: `system_time`.
+      Metadata: `source`, `source_host`, `site_id` and `reason`, and from a job the run's `run_id`
+      and `mode`.
+
+  A handler runs in the process that emits the event, the job's or the form's, so it should be
+  quick, and one that raises is detached by `:telemetry`:
+
+      :telemetry.attach(
+        "imports-to-metrics",
+        [:mishka_cms_migration, :run, :stop],
+        &MyApp.Metrics.handle_migration/4,
+        nil
+      )
   """
 
   @handler "mishka-cms-migration-discarded-jobs"

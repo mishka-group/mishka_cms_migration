@@ -304,6 +304,28 @@ defmodule MishkaCmsMigration.Source do
   defp port_suffix(port, port), do: ""
   defp port_suffix(port, _default), do: ":#{port}"
 
+  @doc """
+  Connects with `source` (`c:connect/2`) and answers what it answers: how the New import form's
+  check and each job connect. A refusal is also told on `[:mishka_cms_migration, :connect,
+  :refused]`, with `metadata`, the source's id and the reason in words (see "Telemetry" in
+  `MishkaCmsMigration.Workers`).
+  """
+  @spec connect(module(), map(), String.t() | nil, map()) :: {:ok, conn()} | {:error, term()}
+  def connect(source, connection, secret, metadata),
+    do: connection |> source.connect(secret) |> connected(source, metadata)
+
+  defp connected({:error, reason} = refused, source, metadata) do
+    :telemetry.execute(
+      [:mishka_cms_migration, :connect, :refused],
+      %{system_time: System.system_time()},
+      Map.merge(metadata, %{source: source.id(), reason: MishkaCmsMigration.Report.reason(reason)})
+    )
+
+    refused
+  end
+
+  defp connected(answer, _source, _metadata), do: answer
+
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
   def fetch(id), do: installed(@event, __MODULE__, id)

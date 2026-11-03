@@ -5,8 +5,9 @@
 defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
   @moduledoc """
   Connects to a new run's source before the run is saved
-  (`c:MishkaCmsMigration.Source.connect/2`, with the run's `connection` and its sealed secret
-  opened), so a run is only kept for a source it can reach. What the source says of itself
+  (`MishkaCmsMigration.Source.connect/4`, with the run's `connection` and its sealed secret
+  opened), so a run is only kept for a source it can reach; a refusal is also told on telemetry.
+  What the source says of itself
   (`c:MishkaCmsMigration.Source.extra/1`) becomes the run's `extra`.
 
   A run that names no `source_host` takes the host its source reads from the connection
@@ -88,7 +89,11 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
     sealed = Ash.Changeset.get_attribute(changeset, :connection_secret)
 
     with {:ok, secret} <- MigrationRun.open_secret(%{connection_secret: sealed}),
-         {:ok, conn} <- source.connect(connection, secret) do
+         {:ok, conn} <-
+           Source.connect(source, connection, secret, %{
+             site_id: changeset.tenant,
+             source_host: Ash.Changeset.get_attribute(changeset, :source_host)
+           }) do
       Ash.Changeset.force_change_attribute(changeset, :extra, source.extra(conn))
     else
       {:error, reason} -> Ash.Changeset.add_error(changeset, refused(source, reason))

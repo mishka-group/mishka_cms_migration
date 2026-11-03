@@ -13,7 +13,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   ## The walk
 
   The job connects once with the run's connection and its opened secret
-  (`MishkaCmsMigration.MigrationRun.open_secret/1`) and reads the source's facts (`extra/1`), then
+  (`MishkaCmsMigration.MigrationRun.open_secret/1`, through `MishkaCmsMigration.Source.connect/4`)
+  and reads the source's facts (`extra/1`), then
   walks the kinds in the order the source's `kinds/0` gives them, and pages through each with
   `list/3` until the source answers no cursor. Each row is normalized into an item
   (`MishkaCmsMigration.Source.Item`), decided (`MishkaCmsMigration.Workers.Helpers.Decision`) and
@@ -62,6 +63,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   which keeps the reason and clears the secret. A last attempt that never returns — Oban stops it at
   its timeout, or it crashes past every rescue — fails its run through Oban's own telemetry
   (`MishkaCmsMigration.Workers.Helpers.Discarded`).
+
+  Each attempt is a `[:mishka_cms_migration, :run]` telemetry span, and the walk tells telemetry of
+  each kind the source has listed and each item it settles (see "Telemetry" in
+  `MishkaCmsMigration.Workers`).
   """
 
   use Ash.Resource.ManualUpdate
@@ -85,14 +90,21 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   """
   @impl Ash.Resource.ManualUpdate
   def update(%Ash.Changeset{data: run}, opts, context) do
-    run
-    |> walked(opts[:mode], context)
-    |> finished(run, opts[:mode], context)
-    |> answered()
+    telemetry = telemetry(run, opts[:mode])
+
+    :telemetry.span([:mishka_cms_migration, :run], telemetry, fn ->
+      answer =
+        run
+        |> walked(opts[:mode], context, telemetry)
+        |> finished(run, opts[:mode], context)
+        |> answered()
+
+      {answer, measured(answer), Map.merge(telemetry, ended(answer))}
+    end)
   end
 
-  defp walked(run, mode, context) do
-    walk(run, mode, context)
+  defp walked(run, mode, context, telemetry) do
+    walk(run, mode, context, telemetry)
   rescue
     error -> {:error, error}
   catch
@@ -107,6 +119,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp answered({:ok, run}), do: {:ok, run}
   defp answered({:error, :not_running}), do: {:error, CancelJob.exception(reason: :not_running)}
   defp answered({:error, reason}), do: {:error, Report.reason(reason)}
+
+  defp measured({:ok, %{report: %{counts: counts}}}), do: counts
+  defp measured(_answer), do: %{}
+
+  defp ended({:ok, _run}), do: %{result: :finished}
+  defp ended({:error, %CancelJob{}}), do: %{result: :cancelled}
+  defp ended({:error, reason}), do: %{result: :failed, reason: reason}
 
   defp finish(run, :dry_run, report, extra, context),
     do: run |> MishkaCmsMigration.finish_dry_run(report, extra, scope: context) |> saved()
@@ -126,11 +145,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp saved({:error, error}), do: {:error, error}
 
-  defp walk(run, mode, context) do
+  defp walk(run, mode, context, telemetry) do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
-         {:ok, conn} <- source.connect(run.connection, secret),
+         {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
          extra = source.extra(conn),
          {:ok, report} <-
            walk_kinds(%{
@@ -141,7 +160,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              source: source,
              conn: conn,
              options: options,
-             context: target_context(run, mode, context.actor, options)
+             context: target_context(run, mode, context.actor, options),
+             telemetry: telemetry
            }) do
       {:ok, report, extra}
     end
@@ -156,7 +176,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
         source_ids: %{},
         settled: %{},
         waiting: %{},
-        pages: 0
+        pages: 0,
+        listed: 0
       }
 
       state |> walk_kind(walk, report) |> walked_kind()
@@ -173,11 +194,24 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     with {:ok, rows, next} <- state.source.list(state.conn, walk.kind, walk.cursor),
          {report, walk} = page(state, walk, rows, report),
          :ok <- progress(state, walk.kind, rows, report.counts) do
-      walk_on(state, %{walk | pages: walk.pages + 1}, next, report)
+      walk_on(
+        state,
+        %{walk | pages: walk.pages + 1, listed: walk.listed + length(rows)},
+        next,
+        report
+      )
     end
   end
 
-  defp walk_on(state, walk, nil, report), do: {:ok, unheld(state, walk, report)}
+  defp walk_on(state, walk, nil, report) do
+    :telemetry.execute(
+      [:mishka_cms_migration, :kind, :listed],
+      %{count: walk.listed, pages: walk.pages},
+      Map.put(state.telemetry, :kind, walk.kind)
+    )
+
+    {:ok, unheld(state, walk, report)}
+  end
 
   defp walk_on(_state, %{cursors: cursors, kind: kind}, next, _report)
        when is_map_key(cursors, next),
@@ -212,7 +246,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp hold(state, held, placed), do: settle_tree(state, held, placed)
 
   defp settle_tree(state, {item, plan}, {report, walk}) do
-    report = Report.add(report, Writer.call(state, item, plan))
+    report = Report.add(report, settled(state, item, plan))
     {children, waiting} = Map.pop(walk.waiting, item.source_id, [])
     walk = %{walk | settled: Map.put(walk.settled, item.source_id, true), waiting: waiting}
 
@@ -259,10 +293,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp source_id(%{"source_id" => id}) when is_binary(id) or is_integer(id), do: to_string(id)
   defp source_id(_attrs), do: nil
 
-  defp settle(state, {:duplicate, item}), do: Writer.call(state, item, :duplicate)
+  defp settle(state, {:duplicate, item}), do: settled(state, item, :duplicate)
 
   defp settle(state, {:failed, item, reason}),
-    do: Writer.call(state, item, {:failed, Report.reason(reason)})
+    do: settled(state, item, {:failed, Report.reason(reason)})
+
+  defp settled(state, item, plan) do
+    started = System.monotonic_time()
+    entry = Writer.call(state, item, plan)
+
+    :telemetry.execute(
+      [:mishka_cms_migration, :item, :settled],
+      %{duration: System.monotonic_time() - started},
+      Map.merge(state.telemetry, Map.take(entry, [:kind, :source_id, :outcome, :reason]))
+    )
+
+    entry
+  end
 
   defp progress(_state, _kind, [], _counts), do: :ok
 
@@ -275,6 +322,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp progressed({:ok, _run}), do: :ok
   defp progressed(error), do: error
+
+  defp telemetry(run, mode),
+    do: %{
+      run_id: run.id,
+      site_id: run.site_id,
+      source: run.source,
+      source_host: run.source_host,
+      mode: mode
+    }
 
   defp target_context(run, mode, actor, options),
     do: %{
