@@ -18,8 +18,9 @@ defmodule Playground do
       Playground.import([%{"id" => 1, "from" => "/old", "to" => "/from-source"}]).report.entries
 
   `Playground.help/0` lists the functions. `rows` is a list of the source's redirect rows, each a
-  map with an `"id"` and the `"from"` and `"to"` addresses, or a map of kind to rows. Only redirects
-  have a target here, so `"note"` and `"page"` rows are reported as skipped (`no_target`). A run
+  map with an `"id"` and the `"from"` and `"to"` addresses, or a map of kind to rows. Redirects are
+  what it writes here: a `"note"` row is reported as skipped (`no_target`), and a `"page"` row goes
+  to the CMS page target (`MishkaCmsMigration.Targets.CmsPage`), which this admin may not use. A run
   created here is the admin's and goes through the domain's own actions and policies, and its job
   runs inline with its retries, so a run that fails ends as `:failed` with its reason.
   """
@@ -86,15 +87,16 @@ defmodule Playground do
   def redirects, do: Enum.map(read_redirects(), &{&1.from_path, &1.to})
 
   @doc """
-  What the migration recorded for each item, as `{kind, source_id, outcome, reason}`, read as the
-  admin.
+  What the migration recorded for each item, as `{kind, source_id, plan, outcome, reason}`, read as
+  the admin: what the last dry run would do with it, and what the last import did and why (`nil`
+  before an import met it).
   """
-  @spec items() :: [{String.t(), String.t(), atom(), String.t() | nil}]
+  @spec items() :: [{String.t(), String.t(), atom() | nil, atom() | nil, String.t() | nil}]
   def items do
     MigrationItem
     |> Ash.Query.sort(:source_id)
     |> Ash.read!(actor: admin(), tenant: site().id)
-    |> Enum.map(&{&1.source_kind, &1.source_id, &1.outcome, &1.reason})
+    |> Enum.map(&{&1.source_kind, &1.source_id, &1.plan, &1.outcome, &1.reason})
   end
 
   @doc """
@@ -409,7 +411,12 @@ defmodule Playground.Tour do
        {"the report says 3 to create",
         run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0}},
        {"the CMS still has no redirect", Playground.redirects() == []},
-       {"no migration item was recorded", Playground.items() == []}
+       {"each item's plan is recorded, and none is imported",
+        Playground.items() == [
+          {"redirect", "1", :created, nil, nil},
+          {"redirect", "2", :created, nil, nil},
+          {"redirect", "3", :created, nil, nil}
+        ]}
      ]}
   end
 

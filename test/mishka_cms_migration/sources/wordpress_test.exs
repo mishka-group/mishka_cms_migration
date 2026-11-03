@@ -5,8 +5,11 @@
 defmodule MishkaCmsMigration.Sources.WordPressTest do
   @moduledoc """
   The WordPress source against what the seeded WordPress answered: signing in and each way a
-  connection is refused, what each kind lists and becomes as an item, how it pages, and a dry run
-  of a whole site.
+  connection is refused, what each kind lists and becomes as an item, how it pages, what a post's
+  content becomes, and a dry run of a whole site.
+
+  A post's content is read for what it means, with LazyHTML: which elements hold which text and
+  which addresses, not its markup as a string.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -18,12 +21,16 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
+  @written %{"category" => :created, "tag" => :created, "page" => :created, "post" => :created}
   @recordings %{
     "user" => "users",
     "category" => "categories",
     "tag" => "tags",
+    "media" => "media",
     "page" => "pages",
-    "post" => "posts"
+    "post" => "posts",
+    "comment" => "comments",
+    "post_redirect" => "posts"
   }
 
   defp connected! do
@@ -31,18 +38,34 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     conn
   end
 
-  defp items!(kind) do
-    stub!()
-    assert {:ok, rows, nil} = WordPress.list(connected!(), kind, nil)
+  defp items!(kind, answers \\ %{}) do
+    stub!(answers)
+    conn = connected!()
+    assert {:ok, rows, nil} = WordPress.list(conn, kind, nil)
 
     Map.new(rows, fn row ->
-      assert {:ok, attrs} = WordPress.normalize(row, kind, @context)
+      assert {:ok, attrs} = WordPress.normalize(row, kind, Map.put(@context, :conn, conn))
       assert {:ok, item} = attrs |> Map.put(:kind, kind) |> Item.build()
       {item.source_id, item}
     end)
   end
 
+  defp html(item), do: item |> Item.html() |> LazyHTML.from_fragment()
+
+  defp texts(html, selector),
+    do: html |> LazyHTML.query(selector) |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+  defp sources(html, selector), do: html |> LazyHTML.query(selector) |> LazyHTML.attribute("src")
+
+  defp pieces(item), do: for(%{name: name} = piece <- item.content, name != nil, do: piece)
+
   defp recorded_ids(recording), do: recording |> recorded() |> Enum.map(&to_string(&1["id"]))
+
+  defp counts(run, kind),
+    do:
+      run.report.kinds
+      |> Enum.find(&(&1.kind == kind))
+      |> Map.take([:created, :updated, :skipped, :failed])
 
   describe "connecting" do
     test "signs in and keeps what the site says of itself" do
@@ -145,7 +168,9 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
     test "is installed with the extension, and lists authors and terms before what points at them" do
       assert {:ok, WordPress} = Source.fetch("wordpress")
-      assert WordPress.kinds() == ["user", "category", "tag", "page", "post"]
+
+      assert WordPress.kinds() ==
+               ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
     end
   end
 
@@ -158,8 +183,11 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             {"user", "/wp-json/wp/v2/users", nil},
             {"category", "/wp-json/wp/v2/categories", nil},
             {"tag", "/wp-json/wp/v2/tags", nil},
+            {"media", "/wp-json/wp/v2/media", nil},
             {"page", "/wp-json/wp/v2/pages", "any"},
-            {"post", "/wp-json/wp/v2/posts", "any"}
+            {"post", "/wp-json/wp/v2/posts", "any"},
+            {"comment", "/wp-json/wp/v2/comments", "all"},
+            {"post_redirect", "/wp-json/wp/v2/posts", "any"}
           ] do
         assert {:ok, [_ | _], nil} = WordPress.list(conn, kind, nil)
         assert_received {:wordpress_request, %{request_path: ^route, query_params: params}}
@@ -167,6 +195,15 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
         assert {params["context"], params["per_page"], params["page"], params["status"]} ==
                  {"edit", "100", "1", status}
       end
+    end
+
+    test "reads a post's old address with only the fields it needs" do
+      stub!()
+      assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "post_redirect", nil)
+      assert_received {:wordpress_request, %{query_params: %{"_fields" => fields}}}
+
+      assert fields |> String.split(",") |> Enum.sort() ==
+               ~w(id link modified_gmt status title)
     end
 
     test "lists every row WordPress answered for each kind" do
@@ -223,11 +260,19 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert reason =~ "500"
     end
 
+    test "asks for comments of every type, held ones too, and for no spam or trash" do
+      stub!()
+      assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "comment", nil)
+      assert_received {:wordpress_request, %{query_params: %{"status" => status, "type" => type}}}
+
+      assert {status, type} == {"all", "all"}
+    end
+
     test "lists no kind it does not read" do
       stub!()
 
-      assert WordPress.list(connected!(), "comment", nil) == {:error, {:unknown_kind, "comment"}}
-      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/comments"}}
+      assert WordPress.list(connected!(), "menu", nil) == {:error, {:unknown_kind, "menu"}}
+      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/menus"}}
     end
   end
 
@@ -257,9 +302,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       categories = items!("category")
 
       assert categories["4"].title == "Announcements"
-      assert categories["4"].attrs["parent"] == 2
+      assert {categories["4"].parent, categories["4"].attrs["parent"]} == {"2", 2}
       assert categories["2"].title == "News"
-      assert categories["2"].attrs["parent"] == 0
+      assert {categories["2"].parent, categories["2"].attrs["parent"]} == {nil, 0}
+      assert categories["8"].parent == "7"
       assert Enum.any?(Map.values(categories), &(&1.title == "آموزش‌ها"))
       assert categories["8"].attrs["slug"] == "migration"
       assert categories["8"].extra["taxonomy"] == "category"
@@ -272,20 +318,32 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                {"Release notes", "release-notes", 2}
 
       refute is_map_key(tags["17"].attrs, "parent")
+      assert is_nil(tags["17"].parent)
+    end
+
+    test "a slug WordPress keeps percent-encoded is decoded, and an ASCII one is kept" do
+      [tag] = Enum.filter(recorded("tags"), &(&1["id"] == 20))
+      [category] = Enum.filter(recorded("categories"), &(&1["id"] == 9))
+
+      assert tag["slug"] =~ "%d9%88"
+      assert items!("tag")["20"].attrs["slug"] == "وردپرس"
+      assert category["slug"] =~ "%d8%a2"
+      assert items!("category")["9"].attrs["slug"] == "آموزش"
+      assert items!("post")["33"].attrs["slug"] == recorded("post-single")["slug"]
     end
 
     test "a page keeps its parent and its place in the menu order" do
       pages = items!("page")
 
       assert pages["26"].title == "Leadership"
-      assert pages["26"].attrs["parent"] == 25
+      assert {pages["26"].parent, pages["26"].attrs["parent"]} == {"25", 25}
       assert pages["25"].attrs["parent"] == 24
       assert pages["29"].attrs["menu_order"] == 5
       assert pages["3"].attrs["status"] == "draft"
-      assert [%{html: "<!-- wp:paragraph -->" <> _}] = pages["24"].content
+      assert [_ | _] = texts(html(pages["24"]), "p")
     end
 
-    test "a post carries its author, terms, raw content and modified time" do
+    test "a post carries its author, terms, converted content and modified time" do
       posts = items!("post")
       [row] = Enum.filter(recorded("posts"), &(&1["id"] == 38))
       post = posts["38"]
@@ -297,7 +355,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert post.attrs["status"] == "future"
       assert post.attrs["date_gmt"] == row["date_gmt"]
       assert post.modified_at == ~U[2026-11-02 06:22:16Z]
-      assert Item.html(post) == row["content"]["raw"]
+      assert texts(html(post), "p code") == ["future"]
+      refute Item.html(post) =~ "wp:paragraph"
       assert Enum.any?(Map.values(posts), &(&1.title == "نصب وردپرس روی سرور"))
     end
 
@@ -312,18 +371,400 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
     end
 
+    test "a post's old address is the path of a published post's link, and none for the rest" do
+      redirects = items!("post_redirect")
+      posts = Map.new(recorded("posts"), &{to_string(&1["id"]), &1})
+
+      assert redirects["44"].attrs == %{"from" => "/2025/12/release-1-0-announcement/"}
+      assert redirects["44"].title == "Release 1.0 announcement"
+      assert redirects["44"].modified_at
+
+      for {id, item} <- redirects,
+          posts[id]["status"] == "publish",
+          do: assert(item.attrs["from"] == URI.parse(posts[id]["link"]).path)
+
+      for {id, item} <- redirects,
+          posts[id]["status"] != "publish",
+          do: assert(is_nil(item.attrs["from"]))
+
+      assert {redirects["39"].attrs["from"], redirects["41"].attrs["from"]} == {nil, nil}
+    end
+
+    test "a comment carries its post, its parent, its author and its text as the commenter typed it" do
+      comments = items!("comment")
+      reply = comments["7"]
+
+      assert reply.title == "امید رحیمی"
+      assert reply.parent == "6"
+      assert is_nil(reply.modified_at)
+      assert Item.html(reply) == "Reply from an author."
+
+      assert reply.attrs == %{
+               "post" => 50,
+               "post_type" => "post",
+               "author" => 4,
+               "author_name" => "امید رحیمی",
+               "author_email" => "omid.rahimi@example.test",
+               "status" => "approved",
+               "type" => "comment",
+               "date_gmt" => "2026-04-12T05:50:00"
+             }
+
+      assert is_nil(comments["2"].parent)
+      assert comments["3"].parent == "2"
+      assert comments["9"].attrs["status"] == "hold"
+      assert comments["6"] |> html() |> texts("strong") == ["Bold"]
+      assert comments["15"].attrs["post_type"] == "page"
+      assert reply.extra["author_ip"]
+      assert reply.extra["link"] =~ "#comment-7"
+
+      for kept <- ["content", "post", "author", "status", "_links"],
+          do: refute(is_map_key(reply.extra, kept))
+    end
+
+    test "a spam comment and a pingback read as what they are, for the target to leave out" do
+      spam = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-spam"})["10"]
+      pingback = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-pingback"})["11"]
+
+      assert spam.attrs["status"] == "spam"
+      assert pingback.attrs["type"] == "pingback"
+    end
+
+    test "a file carries where it is, its type and size, its alt text, caption and description" do
+      hero = items!("media")["4"]
+
+      assert hero.title == "Hero image"
+      assert hero.modified_at == ~U[2026-11-02 06:22:14Z]
+
+      assert Map.take(hero.attrs, ~w(source_url filename mime_type filesize post)) == %{
+               "source_url" => "http://localhost:8089/wp-content/uploads/2026/11/hero.jpg",
+               "filename" => "hero.jpg",
+               "mime_type" => "image/jpeg",
+               "filesize" => 43_354,
+               "post" => 32
+             }
+
+      assert {hero.attrs["alt_text"], hero.attrs["caption"], hero.attrs["description"]} ==
+               {"A blue gradient hero image with a white circle",
+                "The hero image of the welcome post", "A 1600 by 900 JPEG drawn by the seed."}
+
+      assert %{"medium" => %{"source_url" => "http" <> _}} = hero.extra["media_details"]["sizes"]
+
+      for rendered <- ["_links", "modified", "title", "caption", "description"] do
+        refute is_map_key(hero.extra, rendered)
+      end
+    end
+
+    test "a post's media name each file of the site its content shows or links to, by the file's id, a size of it too" do
+      posts = items!("post")
+      uploads = "http://localhost:8089/wp-content/uploads/2026/11/"
+
+      assert posts["35"].attrs["media"] == %{
+               (uploads <> "guide.pdf") => 13,
+               (uploads <> "hero-300x169.jpg") => 4,
+               (uploads <> "diagram.png") => 10
+             }
+
+      assert posts["34"].attrs["media"] == %{
+               (uploads <> "hero.jpg") => 4,
+               (uploads <> "hero-300x169.jpg") => 4,
+               (uploads <> "gallery-1.jpg") => 6,
+               (uploads <> "gallery-2.jpg") => 7,
+               (uploads <> "gallery-3.jpg") => 8,
+               (uploads <> "sample.mp4") => 14,
+               (uploads <> "animated.gif") => 12
+             }
+
+      assert posts["52"].attrs["media"] == %{}
+    end
+
+    test "a post's media are asked for by the ids of its images and by the slugs of its files, with only the fields they need" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, _attrs} = WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/media",
+                         query_params: %{"include" => "10", "_fields" => fields}
+                       }}
+
+      assert_received {:wordpress_request,
+                       %{request_path: "/wp-json/wp/v2/media", query_params: %{"slug" => slugs}}}
+
+      assert fields == "id,source_url,media_details"
+      assert ~w(guide hero diagram) -- String.split(slugs, ",") == []
+    end
+
+    test "a post's links to the site's own posts name the post's slug, and its other links are left out" do
+      posts = items!("post")
+
+      assert posts["35"].attrs["links"] == %{
+               "http://localhost:8089/2026/01/welcome-to-the-mishka-test-blog/" =>
+                 "welcome-to-the-mishka-test-blog",
+               "http://localhost:8089/?p=33" => "gutenberg-all-core-blocks",
+               "/2026/01/gutenberg-all-core-blocks/" => "gutenberg-all-core-blocks",
+               "http://localhost:8089/2025/11/classic-editor-with-shortcodes/#a-heading-after-the-more-tag" =>
+                 "classic-editor-with-shortcodes"
+             }
+
+      assert posts["52"].attrs["links"] == %{}
+    end
+
+    test "a post's and a page's links to the site's pages name the page's address, and its other links are left out" do
+      team = "http://localhost:8089/about/team/"
+
+      assert items!("post")["35"].attrs["pages"] == %{
+               "http://localhost:8089/?page_id=25" => team,
+               "/about/team/" => team
+             }
+
+      pages = items!("page")
+
+      assert pages["24"].attrs["pages"] == %{
+               team => team,
+               "http://localhost:8089/contact/" => "http://localhost:8089/contact/"
+             }
+
+      assert pages["25"].attrs["pages"] == %{}
+      assert items!("post")["52"].attrs["pages"] == %{}
+    end
+
+    test "a link to a page of the site is found however it is written, and a feed, a category or a page the site no longer has is not" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("pages"), &(&1["id"] == 22))
+
+      content =
+        ~s(<a href="http://localhost:8089/contact/?ref=nav#form">a</a> ) <>
+          ~s(<a href="/docs/getting-started">b</a> ) <>
+          ~s(<a href="http://LOCALHOST:8089/?page_id=27">c</a> ) <>
+          ~s(<a href="http://localhost:8089/feed/">d</a> ) <>
+          ~s(<a href="http://localhost:8089/category/news/">e</a> ) <>
+          ~s(<a href="http://localhost:8089/gone/">f</a> ) <>
+          ~s(<a href="https://elsewhere.test/contact/">g</a>)
+
+      row = put_in(row, ["content", "raw"], content)
+
+      assert {:ok, %{attrs: %{"pages" => pages}}} =
+               WordPress.normalize(row, "page", Map.put(@context, :conn, conn))
+
+      assert Map.keys(pages) |> Enum.sort() ==
+               Enum.sort([
+                 "http://localhost:8089/contact/?ref=nav#form",
+                 "/docs/getting-started",
+                 "http://LOCALHOST:8089/?page_id=27"
+               ])
+
+      assert pages["http://localhost:8089/contact/?ref=nav#form"] ==
+               "http://localhost:8089/contact/"
+    end
+
+    test "a link a post answers is not asked of the pages again, and the pages are asked for by slug and by id with only the fields they need" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, _attrs} = WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/pages",
+                         query_params: %{"slug" => slugs, "_fields" => "id,slug,link"}
+                       }}
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/pages",
+                         query_params: %{"include" => "25", "status" => "any"}
+                       }}
+
+      assert ~w(team news elixir nadia this-post-was-deleted) -- String.split(slugs, ",") == []
+      refute "welcome-to-the-mishka-test-blog" in String.split(slugs, ",")
+    end
+
+    test "a post's links are asked for by slug and by id, with only the fields they need" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, _attrs} = WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/posts",
+                         query_params: %{"slug" => slugs, "_fields" => "id,slug,link"}
+                       }}
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/posts",
+                         query_params: %{"include" => "33,25", "status" => "any"}
+                       }}
+
+      assert ~w(welcome-to-the-mishka-test-blog gutenberg-all-core-blocks
+                classic-editor-with-shortcodes this-post-was-deleted) --
+               String.split(slugs, ",") == []
+    end
+
+    test "a post's links and media are left as they are without the connection to ask WordPress" do
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, %{attrs: %{"links" => links, "pages" => pages, "media" => media}}} =
+               WordPress.normalize(row, "post", @context)
+
+      assert {links, pages, media} == {%{}, %{}, %{}}
+    end
+
     test "a row without the fields its kind needs is refused, and an unknown kind too" do
       [row | _] = recorded("posts-page-2")
 
       assert WordPress.normalize(row, "post", @context) == {:error, :unreadable}
 
-      assert WordPress.normalize(row, "comment", @context) ==
-               {:error, {:unknown_kind, "comment"}}
+      assert WordPress.normalize(row, "comment", @context) == {:error, :unreadable}
+      assert WordPress.normalize(row, "menu", @context) == {:error, {:unknown_kind, "menu"}}
+    end
+  end
+
+  describe "a post's content" do
+    test "keeps its core blocks as their HTML, without WordPress's classes and block comments" do
+      post = items!("post")["33"]
+      html = html(post)
+
+      assert texts(html, "p strong") == ["bold"]
+      assert texts(html, "h2") == ["A level two heading"]
+      assert texts(html, "h3") |> Enum.member?("A level three heading")
+      assert texts(html, "ul > li > ul > li") == ["Nested one", "Nested two"]
+      assert texts(html, "ol > li") == ["Step one", "Step two"]
+      assert texts(html, "blockquote cite") |> Enum.member?("A migration proverb")
+      assert texts(html, "table th") == ["Block", "Becomes"]
+      assert [code] = texts(html, "pre > code")
+      assert code =~ ~s(def world, do: "Hello <World> & friends")
+      assert html |> LazyHTML.query("hr") |> Enum.count() == 1
+
+      assert [figure | _] = Enum.to_list(LazyHTML.query(html, "figure:has(> a > img)"))
+
+      assert sources(figure, "img") == [
+               "http://localhost:8089/wp-content/uploads/2026/11/photo.webp"
+             ]
+
+      assert texts(figure, "figcaption") == ["An image linked to its file, with a caption"]
+
+      assert sources(html, "figure > figure > img") |> Enum.map(&Path.basename/1) ==
+               ["gallery-1.jpg", "gallery-2.jpg", "gallery-3.jpg"]
+
+      assert html |> LazyHTML.query("[class]") |> LazyHTML.attribute("class") ==
+               [
+                 "grid gap-6 md:grid-cols-2",
+                 "grid gap-6 md:grid-cols-2",
+                 "grid gap-6",
+                 "custom-widget",
+                 "grid gap-6"
+               ]
+
+      refute Item.html(post) =~ "<!--"
+      assert pieces(post) == []
+    end
+
+    test "lays its columns side by side and inlines the reusable block it names" do
+      html = html(items!("post")["33"])
+
+      assert texts(html, ".md\\:grid-cols-2 > div > p") == [
+               "Text beside an image: the media-text block holds one media item and inner blocks.",
+               "Left column.",
+               "Right column."
+             ]
+
+      assert texts(html, ".grid h3") == ["Get the migration newsletter"]
+
+      assert html
+             |> LazyHTML.query(".grid a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("http://localhost:8089/contact/")
+
+      assert html
+             |> LazyHTML.query("figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+    end
+
+    test "makes paragraphs of a classic post and HTML of its core shortcodes" do
+      post = items!("post")["34"]
+      html = html(post)
+
+      assert [first, second | _] = texts(html, "p")
+      assert first =~ "written in the classic editor"
+      assert second =~ "A second paragraph with bold text"
+      assert texts(html, "p > strong") == ["bold"]
+      assert texts(html, "h2") == ["A heading after the more tag"]
+      assert texts(html, "ul > li") == ["One", "Two"]
+
+      assert [caption] = Enum.to_list(LazyHTML.query(html, "figure:has(> figcaption)"))
+      assert sources(caption, "img") |> Enum.map(&Path.basename/1) == ["hero-300x169.jpg"]
+      assert texts(caption, "figcaption") == ["The hero image, with a caption"]
+
+      assert html
+             |> LazyHTML.query("figure > figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.map(&Path.basename/1) ==
+               ["gallery-1.jpg", "gallery-2.jpg", "gallery-3.jpg"]
+
+      assert sources(html, "video") == [
+               "http://localhost:8089/wp-content/uploads/2026/11/sample.mp4"
+             ]
+
+      assert html
+             |> LazyHTML.query("figure > a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+
+      assert html |> LazyHTML.query("p:has(> img) > br") |> Enum.count() == 2
+      assert texts(html, "pre") == ["preformatted\n   text keeps its spaces"]
+      refute Item.html(post) =~ "[caption"
+      refute Item.html(post) =~ "[gallery"
+    end
+
+    test "leaves a shortcode, a plugin's block and a block WordPress draws itself to convert" do
+      classic = items!("post")["34"]
+      blocks = items!("post")["53"]
+
+      assert [
+               %{name: "unknown_plugin_shortcode", attrs: %{"id" => "7", "title" => "Unknown"}} =
+                 unknown,
+               %{name: "pullbox", attrs: %{"align" => "right"}} = pullbox
+             ] = pieces(classic)
+
+      assert unknown.raw == ~s([unknown_plugin_shortcode id="7" title="Unknown"])
+      assert pullbox.raw =~ ~s([pullbox align="right"]Content inside an enclosing shortcode)
+      assert pullbox.raw =~ "[/pullbox]"
+
+      assert [
+               %{name: "acme/callout", attrs: %{"tone" => "info", "title" => "Heads up"}} =
+                 callout,
+               %{name: "core/latest-posts", attrs: %{"postsToShow" => 2}}
+             ] = pieces(blocks)
+
+      assert callout.raw =~ "<strong>Heads up</strong>"
+      assert texts(html(blocks), "p") |> Enum.member?("Page two starts here.")
+    end
+
+    test "leaves a reusable block and a gallery for a plugin when WordPress does not answer them" do
+      posts =
+        items!("post", %{"/wp-json/wp/v2/blocks" => :no_site, "/wp-json/wp/v2/media" => :no_site})
+
+      assert [%{name: "core/block", attrs: %{"ref" => 54}, raw: raw}] = pieces(posts["33"])
+      assert raw =~ "wp:block"
+      assert texts(html(posts["33"]), "h3") == ["A level three heading"]
+
+      assert %{name: "gallery", attrs: %{"ids" => "6,7,8", "columns" => "3", "link" => "file"}} =
+               Enum.find(pieces(posts["34"]), &(&1.name == "gallery"))
     end
   end
 
   describe "a dry run" do
-    test "reports every user, term, page and post it found, each skipped with no target yet" do
+    test "reports every user, term, file, page, post, comment and old address it found: pages, terms, files and posts to create, users with no CMS user, a file Media cannot keep, a redirect from each published post's address" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -336,18 +777,45 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert run.status == :dry_run
       assert Enum.map(run.report.kinds, & &1.kind) == WordPress.kinds()
 
-      for %{kind: kind} = counts <- run.report.kinds do
-        found = length(recorded(@recordings[kind]))
+      published = Enum.count(recorded("posts"), &(&1["status"] == "publish"))
+
+      assert counts(run, "post_redirect") ==
+               %{
+                 created: published,
+                 updated: 0,
+                 skipped: length(recorded("posts")) - published,
+                 failed: 0
+               }
+
+      assert counts(run, "media") ==
+               %{created: length(recorded("media")) - 1, updated: 0, skipped: 1, failed: 0}
+
+      for %{kind: kind} = counts <- run.report.kinds, kind not in ["post_redirect", "media"] do
+        planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
-                 %{created: 0, updated: 0, skipped: found, failed: 0}
+                 Map.put(
+                   %{created: 0, updated: 0, skipped: 0, failed: 0},
+                   planned,
+                   length(recorded(@recordings[kind]))
+                 )
       end
 
-      assert Enum.all?(run.report.entries, &(&1.reason == "no_target"))
+      assert run.report.entries
+             |> Enum.reject(&(&1.kind in ["page", "post"]))
+             |> Enum.all?(
+               &({&1.outcome, &1.reason} in [
+                   {:created, nil},
+                   {:skipped, "no_user"},
+                   {:skipped, "not_chosen"},
+                   {:skipped, "no_old_address"},
+                   {:skipped, "type_not_allowed"}
+                 ])
+             )
+
       assert Enum.any?(run.report.entries, &(&1.title == "نصب وردپرس روی سرور"))
 
-      assert MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false) ==
-               []
+      assert imported_items(site) == []
     end
   end
 end

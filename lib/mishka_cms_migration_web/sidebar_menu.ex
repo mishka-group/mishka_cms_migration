@@ -8,8 +8,9 @@ defmodule MishkaCmsMigrationWeb.SidebarMenu do
   (`MishkaCmsCore.Sidebar`). It lands in the core's **Plugins** section, and the core never names
   it: removing this extension removes the entry.
 
-  The page is `admin:dashboard:migration`'s, the permission the runs themselves are gated by. It
-  reads its gate from here:
+  The page is `admin:dashboard:migration`'s, the permission the runs themselves are gated by, and so
+  is a run's Items page, declared beside it as a page that is not a link (`nav: false`). They read
+  their gate from here:
 
       MishkaCmsMigrationWeb.SidebarMenu.permissions("migration")
 
@@ -38,12 +39,21 @@ defmodule MishkaCmsMigrationWeb.SidebarMenu do
                permissions: @permissions,
                credit_name: "Mishka CMS",
                credit_url: "https://mishka.tools/cms"
+             },
+             %{
+               extension: :mishka_cms_migration,
+               key: "migration.items",
+               label: gettext_noop("Items"),
+               path: "/admin/dashboard/migration/runs",
+               module: MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index,
+               nav: false,
+               permissions: @permissions
              }
            ],
            &Item.new!/1
          )
 
-  @doc "This extension's sidebar entry and the admin page it owns."
+  @doc "This extension's sidebar entry and the admin pages it owns."
   @spec items() :: [Item.t()]
   def items, do: @items
 

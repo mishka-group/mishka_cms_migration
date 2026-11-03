@@ -33,13 +33,18 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "page", "post"]`: authors and terms before the pages
-  and posts that point at them. `list/3` reads each from its REST route (`/wp/v2/users`,
-  `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with
-  `context=edit`, so WordPress answers the raw fields an editor sees, 100 rows a page. Pages and
-  posts are asked for with `status=any`: published, scheduled, draft, pending and private, but not
-  the trash. The cursor is the next page number while `X-WP-TotalPages` says there is one, and
-  `nil` after the last. A list WordPress refuses fails the walk:
+  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]`:
+  authors, terms and files before the pages and posts that point at them, the comments after the
+  posts they are on, and each post's old address after its post. `list/3` reads each from its REST
+  route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`,
+  `/wp/v2/posts`, `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress
+  answers the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with
+  `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
+  asked for with `status=all` and `type=all`: approved and held for moderation, of every type
+  (WordPress answers only plain comments unless asked), but not spam and not the trash.
+  `"post_redirect"` reads the posts again, only their `id`, `title`, `status`, `link` and
+  `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there
+  is one, and `nil` after the last. A list WordPress refuses fails the walk:
     * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
       context, or the password was revoked since the run was made;
     * `:unreachable` — nothing answered;
@@ -48,32 +53,84 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       a page past the last.
 
   `normalize/3` makes each row an item (`MishkaCmsMigration.Source.Item`). Its `source_id` is the
-  WordPress id; keys are WordPress's own and are never atomized.
+  WordPress id, and its `parent` the id of a page's parent page or a category's parent category
+  (`nil` at the top, where WordPress says `0`); keys are WordPress's own and are never atomized.
+  WordPress keeps a slug written in another script percent-encoded (`%d9%88%d8%b1…` for
+  `وردپرس`), so the item's `slug` is decoded; one that does not decode to text is kept as it is.
 
     * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
-      `content` is one piece holding `content.raw` as `:html` (blocks are converted later). `attrs`
-      keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`, `template`, `excerpt`
-      (its raw text), and `parent` and `menu_order` for a page, `categories`, `tags`, `sticky` and
-      `format` for a post.
+      `content` is `content.raw` converted (`MishkaCmsMigration.Sources.WordPress.Content`): its
+      blocks, classic paragraphs and core shortcodes as HTML, and a piece for each block or
+      shortcode left to `migration:content:convert`. The reusable blocks and gallery images it names
+      are read from `/wp/v2/blocks` and `/wp/v2/media` with the connection the walk hands
+      `normalize/3` (its context's `conn`); without one, or when WordPress does not answer, they are
+      pieces too. `attrs` keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`,
+      `template`, `excerpt` (its raw text), and `parent` and `menu_order` for a page, `categories`,
+      `tags`, `sticky` and `format` for a post. Its `links` are the links of its content to a post
+      of the site, each `href` as written to the post's decoded slug. A link on the site's own
+      host, or a path alone, is asked for: `/?p=<id>` by its id (`include`), any other by the last
+      segment of its path (`slug`), from `/wp/v2/posts` in any status with only `id`, `slug` and
+      `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
+      category, a file, an attachment page or a post the site no longer has is left out, and so is
+      every link when the connection is not at hand. Its `pages` are the links of its content that
+      are left, to a page of the site, each `href` as written to the page's `link`: `/?page_id=<id>`
+      is asked for by its id and any other by the last segment of its path, the same way, from
+      `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
+      `media` are the addresses of
+      its converted content (`src` and `href`) that are a file of the site's media library, each
+      as written to the id of the file it is: the original or one of the sizes WordPress made of it
+      (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
+      with only `id`, `source_url` and `media_details`, by the ids of its `wp-image-<id>` images
+      (`include`) and by slugs made of the file names, without a size (`slug`), and an address is
+      a file's when its path is the path of the file or of one of its sizes. A file whose slug is
+      not its name and that no `wp-image-<id>` names is left out, and so is every address when the
+      connection is not at hand.
+    * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
+      `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
+      `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
+      WordPress that answers none of its own), `alt_text`, `caption` and `description` (their raw
+      text), `post` (the post it was uploaded to, `0` for none) and `date_gmt`.
     * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
       and `parent` for a category. A term has no `modified_at`.
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
       `last_name`, `nickname`, `description`, `roles`, `url`, `link` and `avatar_urls`. A user has
       no `modified_at`.
+    * comment — `title` is the author's name, `parent` the id of the comment it replies to (`nil`
+      at the top), and `content` the comment as its author typed it (`content.raw`); `attrs` keeps
+      `post` (the id of the post or page it is on), `post_type` (that entry's type, `"post"` or
+      `"page"`, from the row's `up` link), `author` (the id of the WordPress user, `0` for a
+      visitor), `author_name`, `author_email`, `status` (`"approved"` or `"hold"`; a spam or
+      trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
+      `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
+      address, website, user agent and the rest are kept in `extra`.
+    * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
+      and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
+      with an address of its own; `nil` for any other, such as a draft, whose `link` is
+      `/?p=39`, an address no redirect can answer.
+
+  Each of these reads goes through the connection's `read`, a function of a REST route and its
+  query answering the rows by id: `connect/2` answers one that asks the site, and the export file
+  source (`MishkaCmsMigration.Sources.WordPressFile`) one that answers from the file, which hands
+  `normalize/3` rows of the same shape, so both make the same items.
 
   `extra` is every other field of the row: `meta` (Yoast's `_yoast_wpseo_*` fields and every other
   registered meta), `guid`, `password`, `comment_status`, `class_list`, a user's `capabilities`
-  and `registered_date`, a term's `taxonomy`, and what a plugin adds. It leaves out what WordPress
-  works out afresh for each answer rather than keeps: `_links`, the `rendered` halves of the fields
-  above, and Yoast's `yoast_head` and `yoast_head_json`; and the local `modified`, which
-  `modified_at` already says. Yoast's head carries the modified time too, so keeping either would
-  make an item that was only saved again look changed to `MishkaCmsMigration.Source.Item.hash/1`.
-  A row without the fields its kind needs, such as one read with `_fields`, is refused as
-  `:unreadable`.
+  and `registered_date`, a term's `taxonomy`, a file's `media_details` (its sizes among them), and
+  what a plugin adds. It leaves out what WordPress works out afresh for each answer rather than
+  keeps: `_links`, the `rendered` halves of the fields above, and Yoast's `yoast_head` and
+  `yoast_head_json`; and the local `modified`, which `modified_at` already says. Yoast's head
+  carries the modified time too, so keeping either would make an item that was only saved again
+  look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
+  such as one read with `_fields`, is refused as `:unreadable`.
 
-  Nothing is written yet: no target takes these kinds, so a dry run reports every item as skipped
-  (`"no_target"`). Writing posts, pages and terms to the Blog comes next
-  (mishka_cms_migration#5), then authors (mishka_cms_migration#6).
+  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), pages as
+  the CMS's own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
+  users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
+  `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
+  `MishkaCmsMigration.Targets.BlogPost`, their comments
+  (`MishkaCmsMigration.Targets.BlogComment`), and each post's old address as a 301 to the post
+  (`MishkaCmsMigration.Targets.PostRedirect`).
 
   Requests go through `Req`. `req_options` in the application environment are merged into every
   request, which is how the suite replays what a real WordPress answered
@@ -86,7 +143,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   use MishkaCmsMigration.Source, id: "wordpress", label: "WordPress"
   use Gettext, backend: MishkaCmsCore.Gettext
 
-  @kinds ["user", "category", "tag", "page", "post"]
+  alias MishkaCmsCore.Runtime.Redirects
+  alias MishkaCmsMigration.Sources.WordPress.Content
+
+  @kinds ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
 
   @form_fields [
     [
@@ -115,11 +175,19 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "user" => {"/wp/v2/users", []},
     "category" => {"/wp/v2/categories", []},
     "tag" => {"/wp/v2/tags", []},
+    "media" => {"/wp/v2/media", []},
     "page" => {"/wp/v2/pages", [status: "any"]},
-    "post" => {"/wp/v2/posts", [status: "any"]}
+    "post" => {"/wp/v2/posts", [status: "any"]},
+    "comment" => {"/wp/v2/comments", [status: "all", type: "all"]},
+    "post_redirect" =>
+      {"/wp/v2/posts", [status: "any", _fields: "id,title,status,link,modified_gmt"]}
   }
 
   @per_page 100
+
+  @linked_fields [status: "any", _fields: "id,slug,link"]
+  @media_fields [_fields: "id,source_url,media_details"]
+  @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
 
   @rendered ~w(_links yoast_head yoast_head_json)
 
@@ -128,10 +196,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
                   menu_order sticky format template)
   @entry_read ~w(id title content excerpt modified modified_gmt) ++ @entry_attrs ++ @rendered
 
+  @media_attrs ~w(slug source_url mime_type media_type alt_text post date_gmt)
+  @media_read ~w(id title caption description filesize modified modified_gmt) ++
+                @media_attrs ++ @rendered
+
   @term_attrs ~w(slug description parent count link)
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+
+  @comment_attrs ~w(post author author_name author_email status type date_gmt)
+  @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
   @impl MishkaCmsMigration.Source
   def kinds, do: @kinds
@@ -146,7 +221,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          {:ok, index} <- index(req),
          {:ok, req} <- signed(req, Map.get(connection, "user"), secret),
          {:ok, user} <- signed_in(req) do
-      {:ok, %{req: req, index: index, user: user}}
+      {:ok, %{req: req, index: index, user: user, read: &read(req, &1, &2)}}
     end
   end
 
@@ -176,19 +251,75 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def normalize(
         %{"id" => id, "title" => %{"raw" => title}, "content" => %{"raw" => html}} = row,
         kind,
-        _context
+        context
       )
       when kind in @entries do
+    content = Content.call(html, fetch(context))
+
+    {:ok,
+     %{
+       source_id: id,
+       title: title,
+       parent: parent(row),
+       modified_at: Map.get(row, "modified_gmt"),
+       attrs:
+         row
+         |> entry_attrs()
+         |> decoded_slug()
+         |> Map.put("media", media(html, content, context))
+         |> Map.merge(links(html, context)),
+       extra: Map.drop(row, @entry_read),
+       content: content
+     }}
+  end
+
+  def normalize(
+        %{"id" => id, "title" => %{"raw" => title}, "source_url" => url} = row,
+        "media",
+        _context
+      )
+      when is_binary(url) do
     {:ok,
      %{
        source_id: id,
        title: title,
        modified_at: Map.get(row, "modified_gmt"),
-       attrs: entry_attrs(row),
-       extra: Map.drop(row, @entry_read),
-       content: [%{html: html}]
+       attrs:
+         row
+         |> Map.take(@media_attrs)
+         |> decoded_slug()
+         |> Map.merge(%{
+           "filename" => url |> URI.parse() |> file_name(),
+           "filesize" => filesize(row),
+           "caption" => raw(row["caption"]),
+           "description" => raw(row["description"])
+         }),
+       extra: Map.drop(row, @media_read)
      }}
   end
+
+  def normalize(%{"id" => id, "content" => %{"raw" => raw}} = row, "comment", _context)
+      when is_binary(raw) do
+    {:ok,
+     %{
+       source_id: id,
+       title: row["author_name"],
+       parent: parent(row),
+       attrs: row |> Map.take(@comment_attrs) |> Map.put("post_type", post_type(row)),
+       extra: Map.drop(row, @comment_read),
+       content: [%{html: raw}]
+     }}
+  end
+
+  def normalize(%{"id" => id, "title" => %{"raw" => title}} = row, "post_redirect", _context),
+    do:
+      {:ok,
+       %{
+         source_id: id,
+         title: title,
+         modified_at: Map.get(row, "modified_gmt"),
+         attrs: %{"from" => old_path(row)}
+       }}
 
   def normalize(%{"id" => id, "name" => name} = row, kind, _context)
       when is_map_key(@named, kind) do
@@ -198,13 +329,225 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      %{
        source_id: id,
        title: name,
-       attrs: Map.take(row, attrs),
+       parent: parent(row),
+       attrs: row |> Map.take(attrs) |> decoded_slug(),
        extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered)
      }}
   end
 
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
+  defp fetch(_context), do: fn _route, _ids -> %{} end
+
+  defp read(req, route, params),
+    do:
+      req
+      |> Req.get(url: route, params: [context: "edit", per_page: @per_page] ++ params)
+      |> by_id()
+
+  defp links(html, %{conn: %{read: read, index: %{"home" => home}}}) when is_binary(home) do
+    asked =
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("a[href]")
+      |> LazyHTML.attribute("href")
+      |> Enum.uniq()
+      |> Enum.flat_map(&asked(&1, URI.parse(home)))
+
+    posts = linked(read, "/wp/v2/posts", asked)
+    pages = linked(read, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))
+
+    %{
+      "links" =>
+        for({href, %{"slug" => slug}} <- posts, slug != "", into: %{}, do: {href, decoded(slug)}),
+      "pages" =>
+        for({href, %{"link" => link}} <- pages, is_binary(link), into: %{}, do: {href, link})
+    }
+  end
+
+  defp links(_html, _context), do: %{"links" => %{}, "pages" => %{}}
+
+  defp asked(href, home) do
+    uri = href |> String.trim() |> URI.parse()
+
+    with true <- on_site?(uri, home),
+         {_by, _value} = reference <- reference(uri, href) do
+      [{href, reference}]
+    else
+      _not_a_post -> []
+    end
+  end
+
+  defp on_site?(%URI{scheme: scheme, host: nil, path: "/" <> _}, _home)
+       when scheme in [nil, "http", "https"],
+       do: true
+
+  defp on_site?(%URI{scheme: scheme, host: host}, %URI{host: home})
+       when scheme in [nil, "http", "https"] and is_binary(host) and is_binary(home),
+       do: String.downcase(host) == String.downcase(home)
+
+  defp on_site?(_uri, _home), do: false
+
+  defp reference(%URI{query: query}, href), do: query |> query_id() |> by_id_or_path(href)
+
+  defp query_id(query) when is_binary(query) do
+    params = URI.decode_query(query)
+    Integer.parse(params["p"] || params["page_id"] || "")
+  end
+
+  defp query_id(_no_query), do: :error
+
+  defp by_id_or_path({id, ""}, _href) when id > 0, do: {:include, id}
+  defp by_id_or_path(_no_id, href), do: href |> Redirects.normalize_path() |> by_path()
+
+  defp by_path({:ok, "/" <> rest = path}) when rest != "", do: {:slug, path}
+  defp by_path(_root_or_not_a_path), do: nil
+
+  defp linked(read, route, asked) do
+    rows =
+      Enum.flat_map([:include, :slug], fn by ->
+        asked_rows(
+          read,
+          {route, @linked_fields},
+          {by, for({_href, {^by, value}} <- asked, do: asked_value(by, value))}
+        )
+      end)
+
+    for {href, reference} <- asked,
+        row = Enum.find(rows, &links_to?(&1, reference)),
+        into: %{},
+        do: {href, row}
+  end
+
+  defp asked_rows(_read, _route, {_by, []}), do: []
+
+  defp asked_rows(read, {route, fields}, {by, values}),
+    do: route |> read.([{by, values |> Enum.uniq() |> Enum.join(",")} | fields]) |> Map.values()
+
+  defp media(html, content, %{conn: %{read: read, index: %{"home" => home}}})
+       when is_binary(home) do
+    files = content |> addresses() |> Enum.filter(&file?(&1, URI.parse(home)))
+
+    rows =
+      Enum.flat_map(
+        [include: image_ids(html), slug: Enum.flat_map(files, &file_slugs/1)],
+        &asked_rows(read, {"/wp/v2/media", @media_fields}, &1)
+      )
+
+    for href <- files, id = file_of(rows, href), into: %{}, do: {href, id}
+  end
+
+  defp media(_html, _content, _context), do: %{}
+
+  defp addresses(content) do
+    tree =
+      LazyHTML.from_fragment(
+        for %{html: html} when is_binary(html) <- content, into: "", do: html
+      )
+
+    for attribute <- ["src", "href"],
+        address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
+        uniq: true,
+        do: address
+  end
+
+  defp file?(href, home), do: href |> String.trim() |> URI.parse() |> file_on?(home)
+
+  defp file_on?(%URI{path: "/" <> _ = path} = uri, home),
+    do: on_site?(uri, home) and Path.extname(path) != ""
+
+  defp file_on?(_uri, _home), do: false
+
+  defp image_ids(html),
+    do:
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("img[class]")
+      |> LazyHTML.attribute("class")
+      |> Enum.flat_map(&String.split/1)
+      |> Enum.flat_map(&image_id/1)
+
+  defp image_id("wp-image-" <> id), do: id |> Integer.parse() |> whole_id()
+  defp image_id(_class), do: []
+
+  defp whole_id({id, ""}) when id > 0, do: [id]
+  defp whole_id(_not_an_id), do: []
+
+  defp file_slugs(href) do
+    name =
+      href |> String.trim() |> URI.parse() |> file_name() |> Path.rootname() |> String.downcase()
+
+    Enum.uniq([name, String.replace(name, @sized, "")])
+  end
+
+  defp file_of(rows, href) do
+    path = href |> String.trim() |> URI.parse() |> Map.get(:path)
+    Enum.find_value(rows, &(path in file_paths(&1) and &1["id"]))
+  end
+
+  defp file_paths(row),
+    do:
+      for(
+        url <- [row["source_url"] | Enum.map(sizes(row), & &1["source_url"])],
+        is_binary(url),
+        do: URI.parse(url).path
+      )
+
+  defp sizes(%{"media_details" => %{"sizes" => %{} = sizes}}), do: Map.values(sizes)
+  defp sizes(_row), do: []
+
+  defp file_name(%URI{path: path}) when is_binary(path), do: Path.basename(path)
+  defp file_name(_uri), do: ""
+
+  defp filesize(%{"filesize" => size}) when is_integer(size), do: size
+  defp filesize(%{"media_details" => %{"filesize" => size}}) when is_integer(size), do: size
+  defp filesize(_row), do: nil
+
+  defp raw(%{"raw" => raw}) when is_binary(raw), do: raw
+  defp raw(_none), do: nil
+
+  defp asked_value(:include, id), do: id
+  defp asked_value(:slug, path), do: path |> String.split("/") |> List.last()
+
+  defp links_to?(%{"id" => id}, {:include, id}), do: true
+
+  defp links_to?(%{"link" => link}, {:slug, path}) when is_binary(link),
+    do: Redirects.normalize_path(link) == {:ok, path}
+
+  defp links_to?(_post, _reference), do: false
+
+  defp by_id({:ok, %Req.Response{status: 200, body: rows}}) when is_list(rows),
+    do: Map.new(rows, &{&1["id"], &1})
+
+  defp by_id(_unanswered), do: %{}
+
+  defp old_path(%{"status" => "publish", "link" => link}) when is_binary(link),
+    do: link |> URI.parse() |> own_path()
+
+  defp old_path(_not_public), do: nil
+
+  defp own_path(%URI{path: "/" <> rest = path}) when rest != "", do: path
+  defp own_path(_no_path), do: nil
+
+  defp post_type(%{"_links" => %{"up" => [%{"post_type" => type} | _]}}), do: type
+  defp post_type(_row), do: nil
+
+  defp parent(%{"parent" => parent}) when is_integer(parent) and parent > 0, do: parent
+  defp parent(_row), do: nil
+
+  defp decoded_slug(%{"slug" => slug} = attrs) when is_binary(slug),
+    do: %{attrs | "slug" => decoded(slug)}
+
+  defp decoded_slug(attrs), do: attrs
+
+  defp decoded(slug), do: slug |> URI.decode() |> text_or(slug)
+
+  defp text_or(decoded, slug), do: text_or(String.valid?(decoded), decoded, slug)
+
+  defp text_or(true, decoded, _slug), do: decoded
+  defp text_or(false, _decoded, slug), do: slug
 
   defp entry_attrs(%{"excerpt" => %{"raw" => excerpt}} = row),
     do: row |> Map.take(@entry_attrs) |> Map.put("excerpt", excerpt)

@@ -50,11 +50,11 @@ defmodule MishkaCmsMigration.Source do
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
   event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`,
   an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself, a
-  `host/1` that reads the connection's `"url"`, and a `form_fields/0` that asks for an address and
-  a secret, which a source overrides to ask for what it connects with. A source
-  registers once it is supervised: an extension that ships one lists the module among the children
-  of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this
-  extension's. Which sources are installed is read from mishka_installer's own registry
+  `host/1` that reads the connection's `"url"`, a `form_fields/0` that asks for an address and a
+  secret, which a source overrides to ask for what it connects with, and a `file?/0` that answers
+  `false`, which a source that reads a file overrides. A source registers once it is supervised:
+  an extension that ships one lists the module among the children of its own application's
+  supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this extension's. Which sources are installed is read from mishka_installer's own registry
   (`installed/2`), so a source an operator stops in the installer is no longer offered and a run of
   it is refused.
 
@@ -67,9 +67,10 @@ defmodule MishkaCmsMigration.Source do
   in the order the source gives them, and pages through each with `list/3` until it answers no
   cursor. The walk does not sort the kinds: a source lists them in the order they must be imported,
   a kind before any kind that points at it, so authors come before the posts that name them. Each
-  listed row goes through `normalize/3` and `MishkaCmsMigration.Source.Item.build/1`. An error from
-  `connect/2` or `list/3` fails the run; an error from `normalize/3` fails only that item, and the
-  report says why.
+  listed row goes through `normalize/3`, which is handed the connection `connect/2` answered to read
+  more of the source when a row needs it (`t:context/0`), and then
+  `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails the run; an
+  error from `normalize/3` fails only that item, and the report says why.
 
   ## Its connection form
 
@@ -93,6 +94,16 @@ defmodule MishkaCmsMigration.Source do
   `use` asks for an Address (`:url`, required, `https://example.com` as its placeholder) and a
   Password or key (`:secret`, a required `:password` key). `form_fields/1` reads the keys of the
   source a form was opened for.
+
+  ## A source that reads a file
+
+  A source that reads a file a site exported, rather than the site itself, answers `true` to
+  `file?/0` (`MishkaCmsMigration.Sources.WordPressFile` does) and names no keys in `form_fields/0`.
+  The New import form then asks for the file instead of a Connection, and the run keeps it in a
+  private folder until it ends (see "The source's file" in `MishkaCmsMigration.MigrationRun`):
+  `host/1` and `connect/2` get its path as the connection's `"file"`, and a refusal is shown on the
+  form's file. `file?/1` tells whether the source a form was opened for is one. `use` answers
+  `false`.
   """
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -129,12 +140,17 @@ defmodule MishkaCmsMigration.Source do
     ]
   ]
 
-  @typedoc "What `normalize/3` is told: the run's site, its source host and its options."
+  @typedoc """
+  What `normalize/3` is told: the run's site, its source host and its options, and the connection
+  `connect/2` answered, for a row that names more of the source to read, such as the reusable
+  blocks and gallery images a WordPress post names.
+  """
   @type context :: %{
           site_id: String.t(),
           run_id: String.t(),
           source_host: String.t(),
-          options: map()
+          options: map(),
+          conn: conn()
         }
 
   @doc "The source's id, stored on a run."
@@ -178,6 +194,12 @@ defmodule MishkaCmsMigration.Source do
   address and a secret.
   """
   @callback form_fields() :: [form_field()]
+
+  @doc """
+  Whether the source reads a file the admin uploads, handed to it as the connection's `"file"`,
+  rather than a site it connects to (see "A source that reads a file"). `use` answers `false`.
+  """
+  @callback file?() :: boolean()
 
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
@@ -228,7 +250,10 @@ defmodule MishkaCmsMigration.Source do
       @impl MishkaCmsMigration.Source
       def form_fields, do: unquote(@form_fields)
 
-      defoverridable extra: 1, host: 1, form_fields: 0
+      @impl MishkaCmsMigration.Source
+      def file?, do: false
+
+      defoverridable extra: 1, host: 1, form_fields: 0, file?: 0
     end
   end
 
@@ -267,12 +292,26 @@ defmodule MishkaCmsMigration.Source do
       end
   """
   @spec form_fields(map() | String.t() | nil) :: [form_field()]
-  def form_fields(%{defaults: %{source: id}}), do: form_fields(id)
-  def form_fields(id) when is_binary(id), do: id |> fetch() |> fields_of()
-  def form_fields(_no_source), do: []
+  def form_fields(state_or_id), do: asked(state_or_id, & &1.form_fields(), [])
 
-  defp fields_of({:ok, source}), do: source.form_fields()
-  defp fields_of({:error, :not_installed}), do: []
+  @doc """
+  Whether the installed source a form names (`defaults: %{source: id}`), or the source whose id is
+  given, reads a file (`c:file?/0`): what shows the New import form's file. `false` for a form
+  opened for no source and for a source that is not installed.
+
+      field :file, :upload do
+        visible fn state -> MishkaCmsMigration.Source.file?(state) end
+      end
+  """
+  @spec file?(map() | String.t() | nil) :: boolean()
+  def file?(state_or_id), do: asked(state_or_id, & &1.file?(), false)
+
+  defp asked(%{defaults: %{source: id}}, ask, none), do: asked(id, ask, none)
+  defp asked(id, ask, none) when is_binary(id), do: id |> fetch() |> answered(ask, none)
+  defp asked(_no_source, _ask, none), do: none
+
+  defp answered({:ok, source}, ask, _none), do: ask.(source)
+  defp answered({:error, :not_installed}, _ask, none), do: none
 
   @doc """
   The host of a connection's `"url"`, lower-cased and with its port when it is not the scheme's
@@ -297,6 +336,28 @@ defmodule MishkaCmsMigration.Source do
 
   defp port_suffix(port, port), do: ""
   defp port_suffix(port, _default), do: ":#{port}"
+
+  @doc """
+  Connects with `source` (`c:connect/2`) and answers what it answers: how the New import form's
+  check and each job connect. A refusal is also told on `[:mishka_cms_migration, :connect,
+  :refused]`, with `metadata`, the source's id and the reason in words (see "Telemetry" in
+  `MishkaCmsMigration.Workers`).
+  """
+  @spec connect(module(), map(), String.t() | nil, map()) :: {:ok, conn()} | {:error, term()}
+  def connect(source, connection, secret, metadata),
+    do: connection |> source.connect(secret) |> connected(source, metadata)
+
+  defp connected({:error, reason} = refused, source, metadata) do
+    :telemetry.execute(
+      [:mishka_cms_migration, :connect, :refused],
+      %{system_time: System.system_time()},
+      Map.merge(metadata, %{source: source.id(), reason: MishkaCmsMigration.Report.reason(reason)})
+    )
+
+    refused
+  end
+
+  defp connected(answer, _source, _metadata), do: answer
 
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
@@ -351,7 +412,7 @@ defmodule MishkaCmsMigration.Source.Item do
 
   It lives with the source behaviour because it is the source's answer, held only while a job
   runs. What is kept of it afterwards is `MishkaCmsMigration.MigrationItem`: the CMS record it was
-  written to, its hash and what the last run did with it, not its content.
+  written to, its title, its `extra`, its hash and what the last run did with it, not its content.
 
     * `:kind` — what the item is, such as `"post"`, `"page"` or `"user"`. A target is chosen by it
       (`MishkaCmsMigration.Target`).
@@ -359,6 +420,10 @@ defmodule MishkaCmsMigration.Source.Item do
       Together with the run's `source_host` and `:kind` it is how a re-run finds what an earlier run
       wrote.
     * `:title` — what the report calls the item.
+    * `:parent` — the source id of the item of the same kind this one sits under, such as a
+      category's parent category, kept as a string; `nil` for none. The walk writes the parent
+      first, whichever the source lists first, and the target is handed the CMS record it was
+      written to (`MishkaCmsMigration.Target`'s context, `parent_id`).
     * `:modified_at` — when the source last changed it: a `DateTime`, a `NaiveDateTime` taken as
       UTC, or an ISO 8601 string.
     * `:attrs` — everything else the target needs, as the source names it. Its keys are never
@@ -392,6 +457,8 @@ defmodule MishkaCmsMigration.Source.Item do
     field :title, String.t(),
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=1000])"
 
+    field :parent, String.t(), validator: {MishkaCmsMigration.Source.Item, :reference}
+
     field :modified_at, DateTime.t(), validator: {MishkaCmsMigration.Source.Item, :datetime}
 
     dynamic_field :attrs
@@ -417,7 +484,7 @@ defmodule MishkaCmsMigration.Source.Item do
   """
   @spec hash(t()) :: String.t()
   def hash(%__MODULE__{} = item) do
-    {item.kind, item.source_id, item.title, item.attrs, item.extra,
+    {item.kind, item.source_id, item.title, item.parent, item.attrs, item.extra,
      Enum.map(item.content || [], &piece/1)}
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
@@ -435,6 +502,10 @@ defmodule MishkaCmsMigration.Source.Item do
   def identifier(field, value) when is_integer(value), do: {:ok, field, Integer.to_string(value)}
   def identifier(field, value) when is_binary(value), do: {:ok, field, value}
   def identifier(field, _value), do: {:error, field, "must be a string or an integer"}
+
+  @doc false
+  def reference(field, nil), do: {:ok, field, nil}
+  def reference(field, value), do: identifier(field, value)
 
   @doc false
   def datetime(field, nil), do: {:ok, field, nil}

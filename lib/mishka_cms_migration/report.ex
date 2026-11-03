@@ -17,19 +17,31 @@ defmodule MishkaCmsMigration.Report do
       }
 
   The outcome of an entry is one of `outcomes/0`. In an import it is what was done. In a dry run it
-  is the plan, from what the source and earlier runs say; a dry run asks no plugin and does not run
+  is the plan, from what the source and earlier runs say, which the dry run also records on each
+  item (`MishkaCmsMigration.MigrationItem`'s `plan`); a dry run asks no plugin and does not run
   the CMS action, so an item a `migration:item:before_import` plugin would skip, or one the CMS
   would refuse (an address another source already took, a value its validations reject), reads as
   created or updated in the dry run and as skipped or failed in the import.
 
-  `reason` says why an item was skipped or failed:
+  `reason` says why an item was skipped or failed, and, for an item created or updated, what was
+  written otherwise than the source has it (`MishkaCmsMigration.Workers.Helpers.Writer`), `nil` when
+  nothing was: its target's note (`MishkaCmsMigration.Target`'s `note/1`, such as
+  `"draft_from_pending"`), then the pieces of its content no plugin converted, kept as escaped text
+  (`"unconverted: "` and their names), joined by `"; "`. For a skipped or failed item:
 
+    * `"left_out_by_admin"` — an admin left the item out on the Items page; a CMS record an
+      import wrote for it is kept as it is.
+    * `"parent_left_out"` — the item sits under one an admin left out, however deep; a CMS record an
+      import wrote for it is kept as it is.
+    * `"mapped_missing"` — an admin mapped the item to a CMS record that has since been deleted.
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.
     * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays
       deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
+    * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
+      never written), so it is left out until a run writes the parent.
     * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
       of the plugins of that event, or of `migration:content:convert` for an item with a piece to
       convert, is not loaded; `"plugins_failed"` when one of them raised or answered something that
@@ -38,9 +50,10 @@ defmodule MishkaCmsMigration.Report do
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
-  `entries` are the last 1,000 items met (`max_entries/0`), in the order they were met, so a report
-  stays small however large the site: the items left out number the sum of `counts` less the
-  length of `entries`, and every item is still recorded (`MishkaCmsMigration.MigrationItem`).
+  `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
+  that waits for its parent comes right after it), so a report stays small however large the site:
+  the items left out number the sum of `counts` less the length of `entries`, and every item is
+  still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
   @outcomes [:created, :updated, :skipped, :failed]

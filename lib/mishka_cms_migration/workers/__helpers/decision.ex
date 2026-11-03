@@ -6,11 +6,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @moduledoc """
   What a dry run or an import does with each item of a page (`call/3`), against what earlier runs
   recorded for the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the
-  item's kind and its source id:
+  item's kind and its source id. An admin's choice on the item comes first, before anything the
+  source or the CMS says:
 
-    * none, or one never written — `{:created, target, nil}`;
+    * the admin left it out (`left_out`) — `{:skipped, "left_out_by_admin"}`, whatever the source
+      changed and whatever the CMS holds; a CMS record an import wrote for it is kept as it is;
+    * the admin mapped it to a CMS record (`mapped_id`) — `{:mapped, target, record}`, the record,
+      which the import connects it to and never writes, whatever the source changed, what an
+      earlier run wrote for it and what the target's `existing/2` would find; when that record is
+      gone, `{:skipped, "mapped_missing"}`.
+
+  Then, what earlier runs recorded:
+
+    * none, or one never written — `{:created, target, nil}`, unless the target finds it in the
+      CMS already (`MishkaCmsMigration.Target`'s `existing/2`): `{:connected, target, record}`, the
+      CMS record it is, or `{:skipped, reason}`, why it is left out;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
+    * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
+      record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
       it in the CMS — `{:skipped, "edited_in_cms"}`;
     * otherwise — `{:updated, target, record}`, the CMS record to write over.
@@ -25,7 +39,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   never meet: the same id from two hosts is two items, each with its own CMS record.
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
-  CMS records they were written to.
+  CMS records they were written to; and its items no run has written are handed to the target's
+  `existing/2` together, once.
   """
 
   require Ash.Query
@@ -33,9 +48,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
 
-  @typedoc "What to do with an item: write a new record, write over `record`, or leave it, and why."
+  @typedoc """
+  What to do with an item: write a new record, write over `record`, record it against `record` the
+  CMS already held, or leave it, and why.
+  """
   @type plan ::
-          {:created, module(), nil} | {:updated, module(), struct()} | {:skipped, String.t()}
+          {:created, module(), nil}
+          | {:updated, module(), struct()}
+          | {:connected, module(), struct()}
+          | {:mapped, module(), struct()}
+          | {:skipped, String.t()}
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
@@ -48,12 +70,30 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp plans(state, target, kind, items) do
     known = known(state, kind, items)
-    records = known |> Map.values() |> Enum.flat_map(&target_id/1) |> current(target, state)
+    records = known |> Map.values() |> Enum.flat_map(&record_ids/1) |> current(target, state)
 
-    Map.new(items, fn item ->
-      {item.source_id, plan(target, item, Map.get(known, item.source_id), records)}
+    items
+    |> Map.new(&{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records)})
+    |> existing(target, items, state)
+  end
+
+  defp existing(plans, target, items, state) do
+    new = for item <- items, match?({:created, _target, nil}, plans[item.source_id]), do: item
+    ids = Enum.map(new, & &1.source_id)
+
+    new
+    |> found(target, state)
+    |> Map.take(ids)
+    |> Enum.reduce(plans, fn {source_id, found}, plans ->
+      Map.put(plans, source_id, connected(target, found))
     end)
   end
+
+  defp found([], _target, _state), do: %{}
+  defp found(items, target, state), do: target.existing(items, state.context)
+
+  defp connected(target, {:connected, record}), do: {:connected, target, record}
+  defp connected(_target, {:skipped, reason}) when is_binary(reason), do: {:skipped, reason}
 
   defp current([], _target, _state), do: %{}
 
@@ -64,6 +104,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     |> Map.new(&{&1.id, &1})
   end
 
+  defp plan(_target, _item, %{left_out: true}, _records), do: {:skipped, "left_out_by_admin"}
+
+  defp plan(target, _item, %{mapped_id: id}, records) when is_binary(id),
+    do: records |> Map.get(id) |> mapped(target)
+
   defp plan(target, _item, nil, _records), do: {:created, target, nil}
   defp plan(target, _item, %{target_id: nil}, _records), do: {:created, target, nil}
 
@@ -72,6 +117,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+  defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
   defp decide(target, known, _hash, record),
     do: record |> edited?(known) |> updated(target, record)
@@ -84,8 +130,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp edited?(_record, _known), do: true
 
-  defp target_id(%{target_id: nil}), do: []
-  defp target_id(%{target_id: id}), do: [id]
+  defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
+  defp mapped(record, target), do: {:mapped, target, record}
+
+  defp record_ids(item), do: Enum.reject([item.target_id, item.mapped_id], &is_nil/1)
 
   defp known(_state, _kind, []), do: %{}
 

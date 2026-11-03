@@ -13,8 +13,9 @@ defmodule MishkaCmsMigration.Application do
   `MishkaCmsMigration.Target`) it ships; the one that makes it installable on a site,
   `MishkaCmsMigration.Provision`; the two that open the chains of the events deciding what is
   written, `MishkaCmsMigration.Events.BeforeImportGuard` and
-  `MishkaCmsMigration.Events.ConvertGuard`; and the admin page's sidebar entry,
-  `MishkaCmsMigrationWeb.SidebarMenu`.
+  `MishkaCmsMigration.Events.ConvertGuard`; the admin page's sidebar entry,
+  `MishkaCmsMigrationWeb.SidebarMenu`; and the runs' log in the core's activity log
+  (`MishkaCmsMigration.Activity`, on `"activity:sources"`).
 
   At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
   discards (`MishkaCmsMigration.Workers.attach/0`).
@@ -30,11 +31,22 @@ defmodule MishkaCmsMigration.Application do
 
   use Application
 
-  @sources [MishkaCmsMigration.Sources.WordPress]
+  @sources [MishkaCmsMigration.Sources.WordPress, MishkaCmsMigration.Sources.WordPressFile]
 
-  @targets []
+  @core_targets [MishkaCmsMigration.Targets.CmsMedia, MishkaCmsMigration.Targets.CmsPage]
+
+  @blog_targets [
+    MishkaCmsMigration.Targets.BlogBlogger,
+    MishkaCmsMigration.Targets.BlogCollection,
+    MishkaCmsMigration.Targets.BlogTag,
+    MishkaCmsMigration.Targets.BlogPost,
+    MishkaCmsMigration.Targets.BlogComment,
+    MishkaCmsMigration.Targets.PostRedirect
+  ]
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
+
+  @activity_sources [MishkaCmsMigration.Activity]
 
   @provision_plugins [MishkaCmsMigration.Provision]
 
@@ -44,18 +56,29 @@ defmodule MishkaCmsMigration.Application do
   ]
 
   @doc """
-  The sources this extension ships, each a plugin on `"migration:sources"`: WordPress
-  (`MishkaCmsMigration.Sources.WordPress`).
+  The sources this extension ships, each a plugin on `"migration:sources"`: WordPress over its REST
+  API (`MishkaCmsMigration.Sources.WordPress`) and from its export file
+  (`MishkaCmsMigration.Sources.WordPressFile`).
   """
   @spec sources() :: [module()]
   def sources, do: @sources
 
   @doc """
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
-  through an existing CMS action. None yet.
+  through an existing CMS action: files into the CMS's media library
+  (`MishkaCmsMigration.Targets.CmsMedia`), pages into the CMS's pages
+  (`MishkaCmsMigration.Targets.CmsPage`),
+  authors, categories, tags, posts and comments into Mishka Blog
+  (`MishkaCmsMigration.Targets.BlogBlogger`, `MishkaCmsMigration.Targets.BlogCollection`,
+  `MishkaCmsMigration.Targets.BlogTag`, `MishkaCmsMigration.Targets.BlogPost`,
+  `MishkaCmsMigration.Targets.BlogComment`), and each post's old address into a CMS redirect to it
+  (`MishkaCmsMigration.Targets.PostRedirect`).
+
+  Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,
+  so on a node without it they are left out and their kinds are skipped as `"no_target"`.
   """
   @spec targets() :: [module()]
-  def targets, do: @targets
+  def targets, do: @core_targets ++ Enum.filter(@blog_targets, &Code.ensure_loaded?/1)
 
   @doc """
   Every mishka_installer plugin this extension ships, all of which `start/2` supervises. A plugin
@@ -63,7 +86,9 @@ defmodule MishkaCmsMigration.Application do
   """
   @spec plugins() :: [module()]
   def plugins,
-    do: sources() ++ targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus
+    do:
+      sources() ++
+        targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus ++ @activity_sources
 
   @impl true
   def start(_type, _args) do

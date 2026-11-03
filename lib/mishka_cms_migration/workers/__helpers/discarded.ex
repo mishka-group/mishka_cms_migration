@@ -7,8 +7,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
   Fails the run of a migration job Oban discarded — its last attempt timed out or crashed past
   every rescue, so AshOban never ran the trigger's `on_error` — with Oban's reason, which also
   clears the run's secret (`MishkaCmsMigration.MigrationRun`'s `:fail`). It runs outside any job,
-  so it acts as the system (`authorize?: false`). A run no longer dry running or
-  importing is left as it is. Attached to Oban's `[:oban, :job, :exception]` telemetry by
+  so it acts as the system (`authorize?: false`), and hands `:fail` the job as AshOban hands it its
+  trigger's `on_error` (`context.ash_oban.job`), so what the run's steps tell says which step failed
+  (`MishkaCmsMigration.Resources.Notifiers.Steps`). A run no longer dry running or importing is left
+  as it is. Attached to Oban's `[:oban, :job, :exception]` telemetry by
   `MishkaCmsMigration.Workers.attach/0`.
 
   A handler that raises is detached by `:telemetry` for good, so a failure here is logged and the
@@ -24,11 +26,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
   def call(
         _event,
         _measurements,
-        %{job: %{worker: worker, args: args}, state: :discard} = meta,
+        %{job: %{worker: worker} = job, state: :discard} = meta,
         _config
       )
       when worker in @workers do
-    fail(args, meta[:reason])
+    fail(job, meta[:reason])
   rescue
     error ->
       Logger.error(
@@ -40,9 +42,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
 
   def call(_event, _measurements, _meta, _config), do: :ok
 
-  defp fail(%{"primary_key" => %{"id" => run_id}, "tenant" => site_id}, error) do
+  defp fail(%{args: %{"primary_key" => %{"id" => run_id}, "tenant" => site_id}} = job, error) do
     with {:ok, run} <- MishkaCmsMigration.get_run(run_id, tenant: site_id, authorize?: false) do
-      MishkaCmsMigration.fail_run(run, error, authorize?: false)
+      MishkaCmsMigration.fail_run(run, error,
+        authorize?: false,
+        context: %{ash_oban: %{job: job}}
+      )
     end
 
     :ok

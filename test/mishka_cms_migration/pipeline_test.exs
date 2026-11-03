@@ -12,6 +12,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   alias MishkaCmsCore.Runtime.Redirect
   alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.Targets.CmsPage
   alias MishkaCmsMigration.Test.Plugins.{FakeSource, ItemGate, PageTarget}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
@@ -60,7 +61,8 @@ defmodule MishkaCmsMigration.PipelineTest do
   ]
 
   describe "a dry run" do
-    test "reports every item as a create and writes nothing", %{site: site, admin: admin} do
+    test "reports every item as a create, records it as the item's plan, and writes nothing in the CMS",
+         %{site: site, admin: admin} do
       run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
 
       assert run.status == :dry_run
@@ -68,7 +70,64 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert [%{kind: "redirect", created: 3}] = run.report.kinds
       assert Enum.map(run.report.entries, & &1.source_id) == ["1", "2", "3"]
       assert redirects(site) == []
-      assert items(site) == []
+      assert imported_items(site) == []
+
+      assert Enum.map(items(site), &{&1.source_id, &1.title, &1.plan, &1.plan_reason}) == [
+               {"1", nil, :created, nil},
+               {"2", nil, :created, nil},
+               {"3", nil, :created, nil}
+             ]
+
+      assert {run.created_count, run.skipped_count} == {0, 0}
+    end
+
+    test "records why it would skip or fail an item as its plan, and leaves a row with no id out",
+         %{site: site, admin: admin} do
+      items = %{
+        "redirect" => [%{"id" => 1, "unreadable" => true}, %{"from" => "/no-id", "to" => "/x"}],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      site |> create_run!(admin, items) |> dry_run!(admin)
+
+      assert [%{source_kind: "note", source_id: "9", plan: :skipped, plan_reason: "no_target"}] =
+               items(site)
+    end
+
+    test "leaves what an import recorded, and the import keeps the plan", %{
+      site: site,
+      admin: admin
+    } do
+      first = migrate!(site, admin, %{"redirect" => @rows})
+      imported = Map.new(items(site), &{&1.source_id, &1})
+
+      changed =
+        List.replace_at(@rows, 1, %{"id" => 2, "from" => "/old-two", "to" => "/two-moved"})
+
+      later = site |> create_run!(admin, %{"redirect" => changed}) |> dry_run!(admin)
+
+      for item <- items(site) do
+        before = imported[item.source_id]
+
+        assert Map.take(item, [:run_id, :outcome, :reason, :target_id, :content_hash]) ==
+                 Map.take(before, [:run_id, :outcome, :reason, :target_id, :content_hash])
+
+        assert item.run_id == first.id
+      end
+
+      assert Map.new(items(site), &{&1.source_id, {&1.plan, &1.plan_reason}}) == %{
+               "1" => {:skipped, "unchanged"},
+               "2" => {:updated, nil},
+               "3" => {:skipped, "unchanged"}
+             }
+
+      import!(later, admin)
+
+      assert Map.new(items(site), &{&1.source_id, {&1.outcome, &1.plan}}) == %{
+               "1" => {:skipped, :skipped},
+               "2" => {:updated, :updated},
+               "3" => {:skipped, :skipped}
+             }
     end
 
     test "saves its progress page by page, which the run's notifier broadcasts", %{
@@ -92,6 +151,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
     test "walks the kinds in the order the source lists them", %{site: site, admin: admin} do
       items = %{
+        "category" => [%{"id" => 3, "title" => "News", "slug" => "news"}],
         "page" => [%{"id" => 5, "title" => "About", "path" => "/about"}],
         "note" => [%{"id" => 9}],
         "redirect" => [%{"id" => 1, "from" => "/a", "to" => "/b"}]
@@ -116,6 +176,74 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 1}
       assert %{nil => {:failed, "unreadable"}, "9" => {:skipped, "no_target"}} = outcomes(run)
+    end
+  end
+
+  describe "an item an admin left out" do
+    defp item!(site, source_id), do: Enum.find(items(site), &(&1.source_id == source_id))
+
+    defp leave_out!(site, admin, source_id),
+      do:
+        site
+        |> item!(source_id)
+        |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
+
+    test "is skipped by the dry run and the import and never written, until it is brought back",
+         %{
+           site: site,
+           admin: admin
+         } do
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+      leave_out!(site, admin, "2")
+
+      run = dry_run!(run, admin)
+      assert %{"2" => {:skipped, "left_out_by_admin"}, "1" => {:created, nil}} = outcomes(run)
+      assert %{plan: :skipped, plan_reason: "left_out_by_admin"} = item!(site, "2")
+
+      run = import!(run, admin)
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 1, failed: 0}
+      assert Enum.map(redirects(site), & &1.from_path) == ["/old-one", "/old-three"]
+      assert %{outcome: :skipped, reason: "left_out_by_admin", target_id: nil} = item!(site, "2")
+
+      site |> item!("2") |> MishkaCmsMigration.bring_back_item!(actor: admin, tenant: site.id)
+      again = migrate!(site, admin, %{"redirect" => @rows})
+
+      assert %{"2" => {:created, nil}, "1" => {:skipped, "unchanged"}} = outcomes(again)
+      assert length(redirects(site)) == 3
+    end
+
+    test "keeps the CMS record an import wrote, whatever the source and the admin changed since",
+         %{
+           site: site,
+           admin: admin
+         } do
+      migrate!(site, admin, %{"redirect" => @rows})
+      written = Enum.find(redirects(site), &(&1.from_path == "/old-one"))
+      leave_out!(site, admin, "1")
+
+      changed =
+        List.replace_at(@rows, 0, %{"id" => 1, "from" => "/old-one", "to" => "/from-source"})
+
+      run = migrate!(site, admin, %{"redirect" => changed})
+
+      assert %{"1" => {:skipped, "left_out_by_admin"}} = outcomes(run)
+      assert Enum.find(redirects(site), &(&1.id == written.id)).to == "/one"
+
+      assert %{left_out: true, target_id: target_id, outcome: :skipped} = item!(site, "1")
+      assert target_id == written.id
+    end
+
+    test "is reported by kind, so the run's card says how many were left out", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+      for id <- ["1", "3"], do: leave_out!(site, admin, id)
+
+      run = dry_run!(run, admin)
+
+      assert [%{kind: "redirect", created: 1, skipped: 2}] = run.report.kinds
+      assert Enum.count(run.report.entries, &(&1.reason == "left_out_by_admin")) == 2
     end
   end
 
@@ -230,6 +358,27 @@ defmodule MishkaCmsMigration.PipelineTest do
                Enum.find(items(site), &(&1.source_id == "1"))
 
       assert length(redirects(site)) == 2
+    end
+
+    test "keeps each item's title, whether it was written, refused or left out", %{
+      site: site,
+      admin: admin
+    } do
+      items = %{
+        "redirect" => [
+          %{"id" => 1, "title" => "Moved", "from" => "/old", "to" => "/new"},
+          %{"id" => 2, "title" => "Loop", "from" => "/loop", "to" => "/loop"}
+        ],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      migrate!(site, admin, items)
+
+      assert Map.new(items(site), &{&1.source_id, {&1.outcome, &1.title}}) == %{
+               "1" => {:created, "Moved"},
+               "2" => {:failed, "Loop"},
+               "9" => {:skipped, "A note"}
+             }
     end
 
     test "writes a source id listed twice once, on the same page or a later one", %{
@@ -348,6 +497,8 @@ defmodule MishkaCmsMigration.PipelineTest do
          %{
            site: site
          } do
+      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, CmsPage, false)
+      on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(CmsPage, false) end)
       register_plugin!(PageTarget, MishkaCmsMigration.Target.event())
 
       admin =
@@ -391,6 +542,216 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert %{"1" => {:created, nil}} = outcomes(run)
       assert [%{from_path: "/loop", to: "/fixed"}] = redirects(site)
+    end
+  end
+
+  describe "an item under a parent" do
+    setup %{site: site} do
+      %{admin: migration_admin!(site, ["admin:dashboard:migration", "admin:dashboard:blog:post"])}
+    end
+
+    defp category(id, title, parent \\ nil),
+      do: %{"id" => id, "title" => title, "slug" => String.downcase(title), "parent" => parent}
+
+    defp collections(site) do
+      MishkaBlog.Collection
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Map.new(&{&1.name, &1})
+    end
+
+    defp collection!(site, admin, name),
+      do:
+        MishkaBlog.Collection
+        |> Ash.Changeset.for_create(
+          :create,
+          %{
+            name: name,
+            slug: String.downcase(name),
+            status: :active,
+            language: MishkaCmsCore.Runtime.Languages.primary(site.id)
+          },
+          actor: admin,
+          tenant: site.id
+        )
+        |> Ash.create!()
+
+    defp map!(site, admin, source_id, mapped_id),
+      do:
+        site
+        |> item!(source_id)
+        |> MishkaCmsMigration.map_item!(mapped_id, actor: admin, tenant: site.id)
+
+    defp parent_name(collections, name) do
+      parent_id = collections[name].parent_collection_id
+      Enum.find_value(collections, fn {parent, %{id: id}} -> id == parent_id && parent end)
+    end
+
+    test "is written under its parent when the source lists it first, on an earlier page", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [
+        category(3, "Guides", 2),
+        category(4, "Elixir", 3),
+        category(5, "Releases"),
+        category(2, "News")
+      ]
+
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert run.report.counts == %{created: 4, updated: 0, skipped: 0, failed: 0}
+      assert Enum.map(run.report.entries, & &1.source_id) == ["5", "2", "3", "4"]
+
+      collections = collections(site)
+      assert parent_name(collections, "Guides") == "News"
+      assert parent_name(collections, "Elixir") == "Guides"
+      assert is_nil(collections["News"].parent_collection_id)
+      assert is_nil(collections["Releases"].parent_collection_id)
+    end
+
+    test "is skipped while its parent cannot be written, and written once a run writes it", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [category(3, "Guides", 2), %{category(2, "News") | "title" => nil}]
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert %{"2" => {:failed, _reason}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert collections(site) == %{}
+
+      again =
+        migrate!(site, admin, %{"category" => [category(3, "Guides", 2), category(2, "News")]})
+
+      assert %{"2" => {:created, nil}, "3" => {:created, nil}} = outcomes(again)
+      assert parent_name(collections(site), "Guides") == "News"
+    end
+
+    test "under a parent an admin left out is skipped with it, however deep, in the dry run and the import",
+         %{site: site, admin: admin} do
+      rows = [
+        category(4, "Elixir", 3),
+        category(3, "Guides", 2),
+        category(6, "Phoenix", 3),
+        category(2, "News"),
+        category(5, "Releases")
+      ]
+
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      for id <- ["2", "6"], do: leave_out!(site, admin, id)
+
+      run = dry_run!(run, admin)
+
+      assert outcomes(run) == %{
+               "2" => {:skipped, "left_out_by_admin"},
+               "3" => {:skipped, "parent_left_out"},
+               "4" => {:skipped, "parent_left_out"},
+               "6" => {:skipped, "left_out_by_admin"},
+               "5" => {:created, nil}
+             }
+
+      run = import!(run, admin)
+
+      assert %{"3" => {:skipped, "parent_left_out"}, "4" => {:skipped, "parent_left_out"}} =
+               outcomes(run)
+
+      assert Map.keys(collections(site)) == ["Releases"]
+    end
+
+    test "listed before the parent an admin left out follows it too, and keeps its CMS record", %{
+      site: site,
+      admin: admin
+    } do
+      migrate!(site, admin, %{
+        "category" => [category(2, "News"), category(3, "Guides", 2), category(4, "Elixir", 3)]
+      })
+
+      written = Map.new(collections(site), fn {name, c} -> {name, {c.id, c.description}} end)
+      leave_out!(site, admin, "2")
+
+      changed = [
+        Map.put(category(4, "Elixir", 3), "description", "changed at the source"),
+        category(3, "Guides", 2),
+        category(2, "News")
+      ]
+
+      run = migrate!(site, admin, %{"category" => changed})
+
+      assert outcomes(run) == %{
+               "2" => {:skipped, "left_out_by_admin"},
+               "3" => {:skipped, "parent_left_out"},
+               "4" => {:skipped, "parent_left_out"}
+             }
+
+      assert Map.new(collections(site), fn {name, c} -> {name, {c.id, c.description}} end) ==
+               written
+    end
+
+    test "mapped to a Blog category is connected to it, never written, and its children go under it",
+         %{site: site, admin: admin} do
+      topics = collection!(site, admin, "Topics")
+      rows = [category(3, "Guides", 2), category(2, "News"), category(4, "Elixir", 3)]
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      map!(site, admin, "2", topics.id)
+
+      run = run |> dry_run!(admin) |> import!(admin)
+
+      assert %{"2" => {:skipped, "connected"}, "3" => {:created, nil}} = outcomes(run)
+      assert %{target_id: target_id, target_updated_at: nil} = item!(site, "2")
+      assert target_id == topics.id
+
+      collections = collections(site)
+      refute Map.has_key?(collections, "News")
+      assert parent_name(collections, "Guides") == "Topics"
+      assert parent_name(collections, "Elixir") == "Guides"
+      assert collections["Topics"].updated_at == topics.updated_at
+    end
+
+    test "mapped wins over what an import wrote and what the source changed, and unmapped finds its own record again",
+         %{site: site, admin: admin} do
+      migrate!(site, admin, %{"category" => [category(2, "News")]})
+      news = collections(site)["News"]
+      topics = collection!(site, admin, "Topics")
+
+      map!(site, admin, "2", topics.id)
+      changed = [Map.put(category(2, "News"), "description", "changed at the source")]
+      run = migrate!(site, admin, %{"category" => changed})
+
+      assert %{"2" => {:skipped, "connected"}} = outcomes(run)
+      assert collections(site)["News"].description == news.description
+      assert item!(site, "2").target_id == topics.id
+
+      map!(site, admin, "2", nil)
+      assert %{target_id: nil, mapped_id: nil} = item!(site, "2")
+
+      again = migrate!(site, admin, %{"category" => changed})
+      assert %{"2" => {:skipped, "connected"}} = outcomes(again)
+      assert item!(site, "2").target_id == news.id
+    end
+
+    test "mapped under a left-out parent keeps its mapping, and is skipped as mapped_missing once that record is gone",
+         %{site: site, admin: admin} do
+      topics = collection!(site, admin, "Topics")
+      rows = [category(2, "News"), category(3, "Guides", 2)]
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      leave_out!(site, admin, "2")
+      map!(site, admin, "3", topics.id)
+
+      assert %{"2" => {:skipped, "left_out_by_admin"}, "3" => {:skipped, "connected"}} =
+               outcomes(dry_run!(run, admin))
+
+      Ash.destroy!(topics, tenant: site.id, authorize?: false)
+
+      assert %{"3" => {:skipped, "mapped_missing"}} = outcomes(dry_run!(run, admin))
+    end
+
+    test "whose parent the source never lists, or that is its own parent, is settled after the kind",
+         %{site: site, admin: admin} do
+      rows = [category(3, "Guides", 99), category(4, "Loop", 4), category(2, "News")]
+      run = migrate!(site, admin, %{"category" => rows})
+
+      assert %{"2" => {:created, nil}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert %{"4" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert Map.keys(collections(site)) == ["News"]
     end
   end
 
@@ -789,7 +1150,11 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 1}
       assert %{"1" => {:created, nil}, "9" => {:failed, reason}} = outcomes(run)
       assert reason =~ "the skip could not be recorded"
-      assert [%{source_id: "1", outcome: :created}] = items(site)
+
+      assert [
+               %{source_id: "1", outcome: :created},
+               %{source_id: "9", outcome: nil, plan: :skipped}
+             ] = items(site)
     end
   end
 end

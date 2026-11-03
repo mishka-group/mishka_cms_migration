@@ -12,25 +12,39 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
   form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
   Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
-  secret as a masked password input. Its Check connection creates the run once the source answers;
-  the modal then closes and the run shows in the table.
+  secret as a masked password input, or, for a source that reads a file
+  (`MishkaCmsMigration.Source.file?/1`) such as the WordPress export file, its Export file upload
+  instead. Its Check and save creates the run once the source answers, or reads the file; the
+  modal then closes and the run shows in the table.
 
   ## A run's row
 
-  Dry run, Run again and Cancel reach this page as `{:row_action, "dry_run" | "cancel", %{"id" =>
-  id}}`. The page reads the run as the table does, a master's through `:master_get` on any site, a
-  site admin's on their own site alone, and runs `MishkaCmsMigration.start_dry_run/2` or
+  Dry run, Run again, Import and Cancel reach this page as `{:row_action, "dry_run" | "import" |
+  "cancel", %{"id" => id}}`. The page reads the run as the table does, a master's through
+  `:master_get` on any site, a site admin's on their own site alone, and runs
+  `MishkaCmsMigration.start_dry_run/2`, `MishkaCmsMigration.start_import/2` or
   `MishkaCmsMigration.cancel_run/2` as the signed-in admin, on the run's site. It says so in a
   flash; a run it cannot read, such as another site's id sent by hand, or a step the run refuses,
   such as a second dry run while one of the site's runs is running, is said in Gervaz's words for
   a failed row action (`MishkaGervaz.Errors.format_flash_message/2`), and nothing changes.
 
+  Items, on a row, is a link to the run's Items page
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
+
   An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
   `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
-  got there, what its last report found kind by kind and its latest items, how far a running job
-  is, why a failed run stopped, and what its source said of itself and the admin chose. The page
-  keeps which row it last expanded and draws it again on each of that run's notifications, so a
-  dry run moving on, or finishing, shows in it without a reload.
+  got there, what its last report found kind by kind and its latest items, each with links to its
+  CMS record, how far a running job is, why a failed run stopped, and what its source said of
+  itself and the admin chose. The page keeps which row it last expanded and draws it again on each
+  of that run's notifications, so a dry run moving on, or finishing, shows in it without a reload.
+
+  ## Logs
+
+  Logs, beside the table's count, is the core's activity feed
+  (`MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed`, as the runtime pages show theirs) over
+  the runs' log alone (`MishkaCmsMigration.Activity`): each step of a run, newest first, in the
+  sentence the bell says, who took it and on which site. It reads the latest entries the first
+  time it opens and adds each new one as its broadcast arrives.
 
   Who may open it is the sidebar's declaration (`MishkaCmsMigrationWeb.SidebarMenu`), which
   `MishkaCmsCore.Sidebar.PageGuard` reads on every mount.
@@ -38,6 +52,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   use MishkaCmsCore.ExtensionLiveView
 
+  alias MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed
   alias MishkaCmsMigration.{MigrationRun, Source}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
   alias MishkaGervaz.Errors
@@ -56,6 +71,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
        url_state: nil,
        sources: Source.all(),
        expanded_id: nil
+     )
+     |> ActivityFeed.setup(
+       resources: [MigrationRun],
+       sources: [MishkaCmsMigration.Activity],
+       feed_id: "migration-activity"
      )}
   end
 
@@ -86,6 +106,17 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
        &MishkaCmsMigration.start_dry_run/2,
        gettext("Dry run"),
        gettext("Dry run started.")
+     )}
+  end
+
+  def handle_info({:row_action, "import", %{"id" => id}}, socket) do
+    {:noreply,
+     step(
+       socket,
+       id,
+       &MishkaCmsMigration.start_import/2,
+       gettext("Import"),
+       gettext("Import started.")
      )}
   end
 
@@ -134,7 +165,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   defp step(socket, id, action, label, done) do
     user = socket.assigns.current_user
 
-    with {:ok, %MigrationRun{} = run} <- read_run(id, user),
+    with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(id, user),
          {:ok, _run} <- action.(run, actor: user, tenant: run.site_id) do
       put_flash(socket, :info, done)
     else
@@ -148,14 +179,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
     put_flash(socket, :error, Errors.format_flash_message(error))
   end
 
-  defp read_run(id, %{site_id: nil} = user),
-    do: Ash.get(MigrationRun, id, action: :master_get, actor: user, not_found_error?: false)
-
-  defp read_run(id, %{site_id: site_id} = user),
-    do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
-
   defp expand(socket, id) do
-    id |> read_run(socket.assigns.current_user) |> expanded()
+    user = socket.assigns.current_user
+    id |> MigrationRun.fetch(user) |> expanded(user)
     assign(socket, :expanded_id, id)
   end
 
@@ -164,20 +190,24 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   defp refresh(socket, _notification), do: socket
 
-  defp expanded({:ok, %MigrationRun{} = run}),
-    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(run))
+  defp expanded({:ok, %MigrationRun{} = run}, user),
+    do:
+      send_update(MishkaGervaz.Table.Web.Live,
+        id: @table_id,
+        expanded_html: details_html(run, user)
+      )
 
-  defp expanded({:ok, nil}),
+  defp expanded({:ok, nil}, _user),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: :not_found)
 
-  defp expanded({:error, reason}),
+  defp expanded({:error, reason}, _user),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
 
-  defp details_html(run) do
-    assigns = %{run: run}
+  defp details_html(run, user) do
+    assigns = %{run: run, paths: RunDetails.item_paths(run, user)}
 
     ~H"""
-    <RunDetails.panel run={@run} />
+    <RunDetails.panel run={@run} paths={@paths} />
     """
     |> Phoenix.HTML.Safe.to_iodata()
     |> IO.iodata_to_binary()

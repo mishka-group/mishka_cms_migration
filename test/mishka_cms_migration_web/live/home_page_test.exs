@@ -16,10 +16,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.States.SiteState
-  alias MishkaCmsMigration.MigrationRun
-  alias MishkaCmsMigration.Sources.WordPress
+  alias MishkaCmsMigration.{MigrationRun, Report}
   alias MishkaCmsMigration.Test.Plugins.TokenSource
-  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.{Index, RunDetails}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item
   alias MishkaCmsMigrationWeb.SidebarMenu
 
   @page "/admin/dashboard/migration"
@@ -88,6 +88,22 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       [name] = LazyHTML.attribute(input, "name")
       [type] = LazyHTML.attribute(input, "type")
       {name |> String.trim_leading("form[connection][") |> String.trim_trailing("]"), type}
+    end)
+  end
+
+  # The run's choices the form draws, each as `{chosen value, every value offered}` by its key.
+  defp choices(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(~s|#migration-run-form-modal select[name^="form[options]["]|)
+    |> Map.new(fn select ->
+      [name] = LazyHTML.attribute(select, "name")
+      [chosen] = select |> LazyHTML.query("option[selected]") |> LazyHTML.attribute("value")
+      offered = select |> LazyHTML.query("option") |> LazyHTML.attribute("value")
+
+      {name |> String.trim_leading("form[options][") |> String.trim_trailing("]"),
+       {chosen, Enum.reject(offered, &(&1 == ""))}}
     end)
   end
 
@@ -178,9 +194,27 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       refute has_element?(view, ~s|[data-role="migration-no-source"]|)
     end
 
+    test "show WordPress and its export file, each with its own New import", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+
+      assert has_element?(view, ~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-source="wordpress_file"] [data-role="migration-new-run"]|
+             )
+
+      assert has_element?(view, ~s|[data-source="wordpress_file"]|, "WordPress export file")
+    end
+
     test "say so when no source is installed", %{conn: conn, site: site} do
-      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, WordPress, false)
-      on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(WordPress, false) end)
+      for source <- MishkaCmsMigration.Application.sources() do
+        {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, source, false)
+        on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(source, false) end)
+      end
 
       view = open!(conn, migration_admin!(site))
 
@@ -341,6 +375,226 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert html =~ "Type the site&#39;s address, such as https://example.com."
       refute html =~ "must be present"
       assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+
+    test "sent empty by a master, asks for the site once", %{conn: conn} do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      view = open!(conn, master)
+
+      new_import!(view)
+      html = submit!(view, %{"url" => "", "user" => ""}, "")
+
+      assert length(String.split(html, "Pick the site the content moves to.")) == 2
+      refute html =~ "is required"
+      refute html =~ "must be present"
+    end
+
+    test "asks for the run's choices, each at its default, and offers no address it cannot keep",
+         %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+      {:ok, defaults} = MigrationRun.Options.builder(%{})
+
+      assert choices(view) == %{
+               "authors" => {defaults.authors, ["connect", "create"]},
+               "pages" => {defaults.pages, ["draft", "publish"]},
+               "post_address" => {defaults.post_address, ["blog", "blog_without_redirects"]}
+             }
+
+      for label <- ["Choices for this run", "Authors", "Pages", "Post addresses"],
+          do: assert(has_element?(view, "#migration-run-form-modal label", label))
+
+      comments = ~s|#migration-run-form-modal input[name="form[options][comments]"]|
+      assert has_element?(view, comments)
+      refute has_element?(view, comments <> "[checked]")
+      assert has_element?(view, "#migration-run-form-modal", "Bring the comments too")
+
+      assert has_element?(
+               view,
+               "#migration-run-form-modal",
+               "needs the Blog to serve posts there"
+             )
+    end
+
+    test "saves what the admin chose into the run's options, and the default of the rest", %{
+      conn: conn,
+      site: site
+    } do
+      stub!()
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form(~s|#migration-run-form-modal form|, %{
+        "form" => %{
+          "connection" => %{
+            "url" => "http://localhost:8089",
+            "user" => "admin",
+            "secret" => "app password"
+          },
+          "options" => %{"authors" => "create", "post_address" => "blog_without_redirects"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+
+      assert stored(run).options == %{
+               "authors" => "create",
+               "pages" => "draft",
+               "post_address" => "blog_without_redirects",
+               "comments" => false
+             }
+    end
+
+    test "saves the comments choice when it is switched on", %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form(~s|#migration-run-form-modal form|, %{
+        "form" => %{
+          "connection" => %{
+            "url" => "http://localhost:8089",
+            "user" => "admin",
+            "secret" => "app password"
+          },
+          "options" => %{"comments" => "true"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      assert %{"comments" => true, "authors" => "connect"} = stored(run).options
+    end
+  end
+
+  describe "the WordPress export file's New import" do
+    @describetag :tmp_dir
+
+    defp export_input(view, content) do
+      upload =
+        MishkaGervaz.Form.Web.UploadHelpers.namespaced_upload_name(
+          :file,
+          MishkaGervaz.Resource.Info.Form.component_id(MigrationRun)
+        )
+
+      file_input(view, "#migration-run-form-modal form", upload, [
+        %{name: "mishka.WordPress.2026-11-02.xml", content: content, type: "text/xml"}
+      ])
+    end
+
+    defp send_export!(view, content) do
+      view |> export_input(content) |> render_upload("mishka.WordPress.2026-11-02.xml")
+      view |> element("#migration-run-form-modal form") |> render_submit(%{"form" => %{}})
+    end
+
+    test "asks for the export file and no connection, and WordPress's asks for no file", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+
+      new_import!(view, "wordpress_file")
+
+      assert has_element?(view, ~s|#migration-run-form-modal input[type="file"][accept=".xml"]|)
+      assert has_element?(view, "#migration-run-form-modal label", "Export file")
+      assert connection_inputs(view) == []
+      refute has_element?(view, "#migration-run-form-modal label", "Connection")
+
+      new_import!(view)
+      refute has_element?(view, ~s|#migration-run-form-modal input[type="file"]|)
+      assert connection_inputs(view) == @wordpress_inputs
+    end
+
+    test "reads the uploaded export, keeps it for the run, and its dry run reads it; cancelled, the file is gone",
+         %{conn: conn, site: site} do
+      export = File.read!(Path.expand("../../fixtures/wordpress/wxr/all-content.xml", __DIR__))
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      new_import!(view, "wordpress_file")
+      send_export!(view, export)
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      kept = stored(run).connection["file"]
+      on_exit(fn -> File.rm(kept) end)
+
+      assert {run.source, run.source_host, run.extra["name"]} ==
+               {"wordpress_file", "localhost:8089", "Mishka Test Blog"}
+
+      assert File.read!(kept) == export
+      assert settled(view) =~ "Connected to Mishka Test Blog."
+      assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress export file")
+
+      row_action!(view, "dry_run", run)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Map.take(kinds(view), ~w(post page media)) == %{
+               "post" => 21,
+               "page" => 11,
+               "media" => 18
+             }
+
+      row_action!(view, "cancel", run)
+      assert status(run) == :cancelled
+      refute File.exists?(kept)
+    end
+
+    test "refuses a file that is not an export, or that declares entities, under the file and saves nothing",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      for content <- [
+            "Some notes, not an export.",
+            ~s(<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY x SYSTEM "file:///etc/passwd">]>) <>
+              "<rss><channel><link>&x;</link></channel></rss>"
+          ] do
+        new_import!(view, "wordpress_file")
+        html = send_export!(view, content)
+
+        assert html =~ "This is not a WordPress export file, or it is damaged."
+        refute html =~ "root:"
+      end
+
+      assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+
+    @tag capture_log: true
+    test "a run whose export was damaged since says in words why it stopped, and keeps no file",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      staged = Path.join(System.tmp_dir!(), "gervaz_#{System.unique_integer([:positive])}_x.xml")
+      File.cp!(Path.expand("../../fixtures/wordpress/wxr/posts-only.xml", __DIR__), staged)
+      on_exit(fn -> File.rm(staged) end)
+
+      run =
+        MishkaCmsMigration.create_run!(
+          %{source: "wordpress_file", file: [%{path: staged, client_name: "export.xml"}]},
+          actor: admin,
+          tenant: site.id
+        )
+
+      File.write!(run.connection["file"], staged |> File.read!() |> binary_part(0, 500))
+      run = start_dry_run!(run, admin)
+      [job] = assert_triggered(run, :run_dry_run)
+      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-reason"][data-reason="unreadable_file"]|,
+               "The file this run was given is not a WordPress export file, or it is damaged."
+             )
+
+      refute File.exists?(run.connection["file"])
     end
   end
 
@@ -599,7 +853,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       expand!(view, run)
       assert has_element?(view, ~s|[data-role="run-details"][data-status="pending"]|)
       assert has_element?(view, ~s|[data-role="run-details-empty"]|, "No dry run yet")
-      assert detailed(view, "run-details-reads", "data-kind") == ~w(user category tag page post)
+
+      assert detailed(view, "run-details-reads", "data-kind") ==
+               ~w(user category tag media page post comment post_redirect)
+
       assert outcomes(view) == %{}
 
       assert row_action!(view, "dry_run", run) =~ "Dry run started."
@@ -617,15 +874,18 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"skipped" => 57}
-      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
+      assert outcomes(view) == %{"created" => 86, "skipped" => 23}
+      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
                "user" => 5,
                "category" => 9,
                "tag" => 11,
+               "media" => 18,
                "page" => 11,
-               "post" => 21
+               "post" => 21,
+               "comment" => 13,
+               "post_redirect" => 21
              }
 
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
@@ -634,16 +894,20 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "user" => 5,
                "category" => 9,
                "tag" => 11,
+               "media" => 18,
                "page" => 11,
-               "post" => 21
+               "post" => 21,
+               "comment" => 13,
+               "post_redirect" => 21
              }
 
-      assert detailed_counts(view, "run-details-outcome", "data-outcome") == %{"skipped" => 57}
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
+               %{"created" => 86, "skipped" => 23}
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
 
-    test "an expanded run shows why each kind was skipped, its latest items and what the WordPress site said of itself",
+    test "an expanded run shows what each kind would become and why, its latest items and what the WordPress site said of itself",
          %{conn: conn, site: site} do
       stub!()
       admin = migration_admin!(site)
@@ -652,7 +916,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         %{
           source: "wordpress",
           connection: %{"url" => "http://localhost:8089", "user" => "admin"},
-          secret: "app password"
+          secret: "app password",
+          options: %{post_address: "blog_without_redirects"}
         }
         |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
         |> dry_run!(admin)
@@ -660,7 +925,33 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
 
-      for {kind, found} <- [{"user", 5}, {"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+        card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
+
+        assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
+                 %{"created" => found}
+
+        refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
+      end
+
+      media = ~s|[data-role="run-details-kind"][data-kind="media"]|
+
+      assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", media) ==
+               %{"created" => 17, "skipped" => 1}
+
+      assert has_element?(
+               view,
+               ~s|#{media} [data-role="run-details-kind-reason"][data-outcome="skipped"]|,
+               "Media cannot keep this type of file"
+             )
+
+      assert detailed_counts(view, "run-details-kind-reason", "data-outcome", "data-count", media) ==
+               %{"skipped" => 1}
+
+      for {kind, found, why} <- [
+            {"user", 5, "No user with this email on the site"},
+            {"post_redirect", 21, "Left out by this run's choices"}
+          ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -669,8 +960,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         assert has_element?(
                  view,
                  ~s|#{card} [data-role="run-details-kind-reason"][data-outcome="skipped"]|,
-                 "Nothing imports these yet"
+                 why
                )
+
+        assert detailed_counts(
+                 view,
+                 "run-details-kind-reason",
+                 "data-outcome",
+                 "data-count",
+                 card
+               ) ==
+                 %{"skipped" => found}
       end
 
       newest_posts =
@@ -681,10 +981,16 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         |> Enum.reverse()
 
       assert detailed(view, "run-details-item", "data-source-id") == newest_posts
-      assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post", 8)
+      assert detailed(view, "run-details-item", "data-kind") == List.duplicate("post_redirect", 8)
       assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("skipped", 8)
 
-      assert detailed(view, "run-details-items-more", "data-count") == ["49"]
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-item"][data-source-id="34"] [data-role="run-details-item-reason"]|,
+               "Left out by this run's choices"
+             )
+
+      assert detailed(view, "run-details-items-more", "data-count") == ["101"]
 
       for {fact, said} <- [
             {"name", "Mishka Test Blog"},
@@ -705,9 +1011,100 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert detailed(view, "run-details-option", "data-value") == [
                "connect",
                "draft",
-               "blog",
+               "blog_without_redirects",
                "false"
              ]
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-option"][data-option="post_address"]|,
+               "Under /blog, with no redirect from the old addresses"
+             )
+    end
+  end
+
+  describe "a WordPress run's Import" do
+    @blog_admin [
+      "admin:dashboard:migration",
+      "admin:dashboard:blog:post",
+      "admin:dashboard:runtime:page",
+      "admin:dashboard:runtime:redirect",
+      "admin:dashboard:runtime:media"
+    ]
+
+    setup %{site: site} do
+      stub!()
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      {:ok, admin: migration_admin!(site, @blog_admin)}
+    end
+
+    test "queues the job, and once it is done shows the run as Imported with what it created, without a reload",
+         %{conn: conn, site: site, admin: admin} do
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+      assert has_element?(view, ~s|[data-role="run-details"][data-status="dry_run"]|)
+      assert has_element?(view, "#migration-runs-table #{action("import", run)}", "Import")
+      assert Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false) == []
+
+      assert row_action!(view, "import", run) =~ "Import started."
+      assert [_job] = assert_triggered(run, :run_import)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="importing"]|)
+      refute has_element?(view, "#migration-runs-table #{action("import", run)}")
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-status"][data-status="done"]|,
+               "Imported"
+             )
+
+      assert outcomes(view) == %{"created" => 86, "skipped" => 23}
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details"][data-status="done"][data-step="import"]|
+             )
+
+      assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
+               %{"created" => 86, "skipped" => 23}
+
+      for {kind, counts} <- [
+            {"media", %{"created" => 17, "skipped" => 1}},
+            {"category", %{"created" => 9}},
+            {"tag", %{"created" => 11}},
+            {"page", %{"created" => 11}},
+            {"post", %{"created" => 21}},
+            {"post_redirect", %{"created" => 17, "skipped" => 4}}
+          ] do
+        card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
+
+        assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
+                 counts
+      end
+
+      assert length(Ash.read!(MishkaBlog.Tag, tenant: site.id, authorize?: false)) == 11
+
+      assert length(Ash.read!(MishkaCmsCore.Runtime.Page, tenant: site.id, authorize?: false)) ==
+               11
+
+      assert length(Ash.read!(MishkaBlog.BlogPost, tenant: site.id, authorize?: false)) == 21
+
+      assert length(Ash.read!(MishkaCmsCore.Runtime.Redirect, tenant: site.id, authorize?: false)) ==
+               17
+
+      refute has_element?(view, "#migration-runs-table #{action("import", run)}")
     end
   end
 
@@ -728,15 +1125,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       expand!(view, run)
 
       bar = ~s|[data-role="run-details-progress-bar"]|
-      assert has_element?(view, ~s|#{bar}[aria-valuenow="0"][aria-valuemax="3"]|)
+      assert has_element?(view, ~s|#{bar}[aria-valuenow="0"][aria-valuemax="4"]|)
       refute has_element?(view, ~s|#{bar}[data-kind]|)
-      assert detailed(view, "run-details-progress-step", "data-state") == ~w(next next next)
+      assert detailed(view, "run-details-progress-step", "data-state") == ~w(next next next next)
 
       walked!(run, "note", 2)
       settled(view)
 
       assert has_element?(view, ~s|#{bar}[data-kind="note"][aria-valuenow="1"]|)
-      assert detailed(view, "run-details-progress-step", "data-state") == ~w(done current next)
+
+      assert detailed(view, "run-details-progress-step", "data-state") ==
+               ~w(done current next next)
 
       assert detailed(view, "run-details-progress-read", "data-count") == ["2"]
 
@@ -764,6 +1163,47 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert detailed(view, "run-details-item", "data-source-id") == ~w(3 2 1)
       refute has_element?(view, ~s|[data-role="run-details-items-more"]|)
+    end
+
+    test "a kind's card says how many of it failed, else were skipped, and whether one reason covers them",
+         %{site: site, admin: admin} do
+      settled = fn kind, outcome, reason, times ->
+        for id <- 1..times, do: Report.entry(kind, "#{id}", "Item #{id}", outcome, reason)
+      end
+
+      report =
+        [
+          settled.("redirect", :created, nil, 3),
+          settled.("redirect", :skipped, "no_old_address", 2),
+          settled.("media", :skipped, "not_chosen", 2),
+          settled.("media", :skipped, "unchanged", 1),
+          settled.("post", :failed, "Timed out", 2),
+          settled.("post", :skipped, "unchanged", 1)
+        ]
+        |> List.flatten()
+        |> Enum.reduce(Report.new(), &Report.add(&2, &1))
+        |> Report.done()
+
+      run = %{create_run!(site, admin, %{}) | status: :dry_run, report: report}
+
+      panel = LazyHTML.from_fragment(render_component(&RunDetails.panel/1, run: run))
+
+      reason = fn kind ->
+        LazyHTML.query(panel, ~s|[data-kind="#{kind}"] [data-role="run-details-kind-reason"]|)
+      end
+
+      assert reason.("redirect") |> LazyHTML.attribute("data-count") == ["2"]
+      assert reason.("redirect") |> LazyHTML.attribute("data-outcome") == ["skipped"]
+
+      assert reason.("redirect") |> LazyHTML.text() =~
+               "2 skipped: No public address at the source"
+
+      assert reason.("media") |> LazyHTML.attribute("data-count") == ["3"]
+      assert reason.("media") |> LazyHTML.text() =~ "3 skipped, most often: Left out by"
+
+      assert reason.("post") |> LazyHTML.attribute("data-outcome") == ["failed"]
+      assert reason.("post") |> LazyHTML.attribute("data-count") == ["2"]
+      assert reason.("post") |> LazyHTML.text() =~ "2 failed: Timed out"
     end
 
     test "shows an import that is done as the import's, with what it wrote", %{
@@ -896,9 +1336,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert has_element?(view, ~s|#{action("dry_run", pending)}[title="Dry run"]|)
       assert has_element?(view, ~s|#{action("dry_run", ready)}[title="Run again"]|)
+      assert has_element?(view, ~s|#{action("import", ready)}[title="Import"][data-confirm]|)
 
       for run <- [running, done, cancelled],
           do: refute(has_element?(view, action("dry_run", run)))
+
+      for run <- [pending, running, done, cancelled],
+          do: refute(has_element?(view, action("import", run)))
 
       for run <- [pending, ready, running],
           do: assert(has_element?(view, "#{action("cancel", run)}[data-confirm]"))
@@ -961,17 +1405,46 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert status(run) == :cancelled
     end
 
-    test "a site admin cannot start or cancel another site's run by a crafted event", %{
+    test "a master imports a run of any site", %{conn: conn} do
+      other = create_site!()
+
+      run =
+        other |> create_run!(migration_admin!(other), %{}) |> dry_run!(migration_admin!(other))
+
+      view = open!(conn, create_user_with_permissions!(["admin:dashboard:migration"]))
+
+      assert row_action!(view, "import", run) =~ "Import started."
+      assert status(run) == :importing
+      assert [_job] = assert_triggered(run, :run_import)
+    end
+
+    test "a site admin cannot start, import or cancel another site's run by a crafted event", %{
       conn: conn,
       admin: admin
     } do
       other = create_site!()
-      theirs = create_run!(other, migration_admin!(other), %{})
+      other_admin = migration_admin!(other)
+      theirs = create_run!(other, other_admin, %{})
+      their_ready = other |> create_run!(other_admin, %{}) |> dry_run!(other_admin)
       view = open!(conn, admin)
 
       assert crafted!(view, "dry_run", theirs.id) =~ "This record is no longer here."
       assert crafted!(view, "cancel", theirs.id) =~ "This record is no longer here."
+      assert crafted!(view, "import", their_ready.id) =~ "This record is no longer here."
       assert status(theirs) == :pending
+      assert status(their_ready) == :dry_run
+    end
+
+    test "an Import of a run whose dry run is not ready is refused in words", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      pending = create_run!(site, admin, %{})
+      view = open!(conn, admin)
+
+      assert crafted!(view, "import", pending.id) =~ "The run cannot do that while it is pending."
+      assert status(pending) == :pending
     end
   end
 
@@ -981,8 +1454,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       :ok
     end
 
-    # The domain's Tailwind adapter draws a row action as a 30px button, 4px from the next, in a
-    # cell with 16px of padding either side.
+    # The domain's Tailwind adapter draws a row action, a button or a link, as a 30px square, 4px
+    # from the next, in a cell with 16px of padding either side.
     defp actions_width(0), do: 32
     defp actions_width(buttons), do: buttons * 30 + (buttons - 1) * 4 + 32
 
@@ -1051,7 +1524,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         for run <- runs do
           html
           |> LazyHTML.query(
-            ~s|#migration-runs-table [id$="-#{run.id}"] [data-role="gervaz-row-actions"] button|
+            ~s|#migration-runs-table [id$="-#{run.id}"] [data-role="gervaz-row-actions"] :is(button, a)|
           )
           |> Enum.count()
         end
@@ -1060,13 +1533,179 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "the Logs" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    defp open_logs!(view) do
+      view |> element("#migration-runs-table #migration-activity-toggle") |> render_click()
+      render_async(view)
+    end
+
+    test "beside the runs table open the core's feed over the site's run steps, newest first", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+
+      site
+      |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      assert has_element?(view, "#migration-activity-toggle", "Logs")
+      refute has_element?(view, "#migration-activity-panel", "Connected to old.example.com.")
+
+      html = open_logs!(view)
+
+      assert [finished, started, connected] =
+               html
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query(~s|#migration-activity-list > [id^="activity-migration-"]|)
+               |> Enum.map(&LazyHTML.text/1)
+
+      assert finished =~ "Dry run of old.example.com finished: 1 created."
+      assert finished =~ to_string(admin.email)
+      assert started =~ "Dry run of old.example.com started."
+      assert connected =~ "Connected to old.example.com."
+    end
+
+    test "show no other site's steps, and a new step of the site's without a reload", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      other = create_site!()
+      create_run!(other, migration_admin!(other), %{}, %{source_host: "elsewhere.example.com"})
+
+      view = open!(conn, admin)
+      refute open_logs!(view) =~ "elsewhere.example.com"
+
+      create_run!(site, admin, %{})
+
+      assert settled(view) =~ "Connected to old.example.com."
+    end
+  end
+
+  describe "a run's Items link and latest items" do
+    setup %{site: site} do
+      stub!()
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      admin = migration_admin!(site, @blog_admin)
+
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      {:ok, admin: admin, run: run}
+    end
+
+    defp items_link(run), do: ~s|#migration-runs-table a[href="#{MigrationRun.items_path(run)}"]|
+
+    test "every run's row links to its Items page, which the link opens", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      pending =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            source_host: "waiting.example.com",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password"
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin)
+
+      assert has_element?(view, items_link(run))
+      assert has_element?(view, items_link(pending))
+
+      assert {:ok, items, _html} =
+               view
+               |> element(items_link(run))
+               |> render_click()
+               |> follow_redirect(signed_in(conn, admin))
+
+      render_async(items)
+      assert has_element?(items, ~s|[data-role="items-source"][data-run-id="#{run.id}"]|)
+    end
+
+    test "the latest items end with a link to the rest, on the Items page", %{
+      conn: conn,
+      admin: admin,
+      run: run
+    } do
+      run = import!(run, admin)
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert length(detailed(view, "run-details-item", "data-source-id")) == 8
+      assert [more] = detailed(view, "run-details-items-link", "href")
+      assert more == MigrationRun.items_path(run)
+    end
+
+    test "the latest items link to their CMS record, when they have one", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      run = import!(run, admin)
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      items = MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false)
+      panel = LazyHTML.from_fragment(render(view))
+      rows = LazyHTML.query(panel, ~s|#{@details} [data-role="run-details-item"]|)
+
+      linked =
+        for row <- rows do
+          [kind] = LazyHTML.attribute(row, "data-kind")
+          [source_id] = LazyHTML.attribute(row, "data-source-id")
+          item = Enum.find(items, &({&1.source_kind, &1.source_id} == {kind, source_id}))
+
+          hrefs =
+            row |> LazyHTML.query(~s|[data-role="record-admin"]|) |> LazyHTML.attribute("href")
+
+          assert is_nil(item.target_id) == (hrefs == []), "#{kind} #{source_id}"
+          hrefs
+        end
+
+      assert length(linked) == 8
+      assert List.flatten(linked) != []
+
+      assert Enum.all?(
+               List.flatten(linked),
+               &String.starts_with?(&1, "/admin/dashboard/runtime/redirects?")
+             )
+    end
+  end
+
   describe "the sidebar" do
-    test "has one entry, in Plugins, gated by the migration permission" do
-      assert [item] = SidebarMenu.items()
+    test "has one entry, in Plugins, gated by the migration permission, and a page beside it" do
+      assert [item, items] = SidebarMenu.items()
       assert {item.key, item.path, item.group} == {"migration", @page, "plugins"}
+      assert {items.key, items.nav} == {"migration.items", false}
       assert SidebarMenu.permissions("migration") == ["admin:dashboard:migration"]
       assert Enum.any?(MishkaCmsCore.Sidebar.collect().items, &(&1.key == "migration"))
       assert MishkaCmsCore.Sidebar.permissions_for_module(Index) == ["admin:dashboard:migration"]
+
+      assert MishkaCmsCore.Sidebar.permissions_for_module(Item.Index) == [
+               "admin:dashboard:migration"
+             ]
     end
   end
 end

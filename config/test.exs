@@ -22,13 +22,24 @@ config :mishka_cms_migration, ecto_repos: [MishkaCmsMigration.Repo]
 config :mishka_cms_migration, MishkaCmsMigration.Sources.WordPress,
   req_options: [plug: {Req.Test, MishkaCmsMigration.Sources.WordPress}]
 
+# A file of the recorded site is downloaded from the same stub, which serves `dev/wordpress/media`.
+config :mishka_cms_migration, MishkaCmsMigration.Targets.CmsMedia,
+  req_options: [plug: {Req.Test, MishkaCmsMigration.Sources.WordPress}]
+
+# The files an import stores go under `tmp/`, which `test_helper.exs` empties before each run; the
+# rows that name them are rolled back with each test.
+config :mishka_cms_core,
+       :media_static_dir,
+       Path.expand("../tmp/test_media#{System.get_env("MIX_TEST_PARTITION")}", __DIR__)
+
 # This extension's resources reach into accounts and runtime — a run belongs to a site and is started
 # by a user — so the schema this extension tests against has to include those domains, not just its
 # own. Listing them here is what makes `mix ash.codegen` emit their tables into this extension's
-# migrations.
+# migrations. The Blog is listed because the suite imports a site's categories and tags into it.
 config :mishka_cms_migration,
   ash_domains: [
     MishkaCmsMigration,
+    MishkaBlog,
     MishkaCmsCore.Runtime,
     MishkaCmsCore.Accounts,
     MishkaCmsCore.Notify,

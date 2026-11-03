@@ -6,7 +6,7 @@ defmodule MishkaCmsMigration.Events do
   @moduledoc """
   The three `mishka_installer` events an import fires, through `MishkaInstaller.Event.Hook.call/3`.
   Each carries the run it belongs to, and `meta: %{actor: actor, site_id: site_id}` for a plugin
-  that takes `call/2`. A dry run fires none of them: it writes nothing and asks no plugin.
+  that takes `call/2`. A dry run fires none of them: it writes nothing in the CMS and asks no plugin.
 
   ## When a plugin fails
 

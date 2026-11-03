@@ -5,7 +5,7 @@
 defmodule MishkaCmsMigration.MixProject do
   use Mix.Project
 
-  @version "0.0.1-alpha.1"
+  @version "0.0.1-alpha.2"
   @source_url "https://github.com/mishka-group/mishka_cms_migration"
 
   def project do
@@ -52,7 +52,7 @@ defmodule MishkaCmsMigration.MixProject do
     [
       {:decimal, "~> 3.2"},
       {:sourceror, "~> 1.13", only: [:dev, :test]},
-      {:lazy_html, "~> 0.1", only: :test},
+      {:lazy_html, "~> 0.1"},
       {:ash_postgres, "~> 2.15"},
       {:ash_phoenix, "~> 2.3"},
       {:ash, "~> 3.37"},
@@ -64,6 +64,8 @@ defmodule MishkaCmsMigration.MixProject do
       {:igniter, "~> 0.8", only: [:dev, :test]},
       mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.2"),
       mishka_dep(:mishka_gervaz, "~> 0.0.3"),
+      # A site may run without the Blog; its categories and tags are imported only where it is.
+      mishka_dep(:mishka_blog, "~> 0.0.2", optional: true),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.18", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
@@ -79,16 +81,19 @@ defmodule MishkaCmsMigration.MixProject do
   # A Mishka package is its sibling checkout `../<name>` when there is one, and its Hex release
   # otherwise. Only a git checkout counts, so the copy Mix fetched into a host's `deps/` never does,
   # and a `hex.*` task (`mix hex.build`, `mix hex.publish`) always takes Hex, as a package must.
-  # `path_opts` go with the sibling only: `override: true` for a package another dependency takes
-  # from Hex, such as guarded_struct, which mishka_installer and mishka_cms_core take from Hex.
-  defp mishka_dep(name, requirement, path_opts \\ []) do
+  # `opts` go with either, such as `optional: true`. `override: true` goes with the sibling only, for
+  # a package another dependency takes from Hex, such as guarded_struct, which mishka_installer and
+  # mishka_cms_core take from Hex.
+  defp mishka_dep(name, requirement, opts \\ []) do
+    {path_opts, opts} = Keyword.split(opts, [:override])
+
     sibling? =
       File.dir?(Path.expand("../#{name}/.git", __DIR__)) and
         not Enum.any?(System.argv(), &String.starts_with?(&1, "hex."))
 
     case sibling? do
-      true -> {name, [path: "../#{name}"] ++ path_opts}
-      false -> {name, requirement}
+      true -> {name, [path: "../#{name}"] ++ path_opts ++ opts}
+      false -> {name, requirement, opts}
     end
   end
 

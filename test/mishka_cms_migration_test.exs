@@ -9,11 +9,21 @@ defmodule MishkaCmsMigrationTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  test "the application supervises its install plugins, ships WordPress and no target yet" do
+  test "the application supervises its install plugins, ships WordPress, its export file and its targets, the Blog's where it is loaded" do
     assert is_pid(Process.whereis(MishkaCmsMigration.Supervisor))
 
     assert {MishkaCmsMigration.Application.sources(), MishkaCmsMigration.Application.targets()} ==
-             {[MishkaCmsMigration.Sources.WordPress], []}
+             {[MishkaCmsMigration.Sources.WordPress, MishkaCmsMigration.Sources.WordPressFile],
+              [
+                MishkaCmsMigration.Targets.CmsMedia,
+                MishkaCmsMigration.Targets.CmsPage,
+                MishkaCmsMigration.Targets.BlogBlogger,
+                MishkaCmsMigration.Targets.BlogCollection,
+                MishkaCmsMigration.Targets.BlogTag,
+                MishkaCmsMigration.Targets.BlogPost,
+                MishkaCmsMigration.Targets.BlogComment,
+                MishkaCmsMigration.Targets.PostRedirect
+              ]}
 
     for plugin <- MishkaCmsMigration.Application.plugins() do
       assert is_pid(Process.whereis(plugin))
@@ -22,12 +32,13 @@ defmodule MishkaCmsMigrationTest do
     assert MishkaCmsMigration.Provision in MishkaCmsMigration.Application.plugins()
   end
 
-  test "the domain is registered and holds the runs and their items" do
+  test "the domain is registered and holds the runs, their items and their log" do
     assert MishkaCmsMigration in Application.fetch_env!(:mishka_cms_migration, :ash_domains)
 
     assert Ash.Domain.Info.resources(MishkaCmsMigration) == [
              MishkaCmsMigration.MigrationRun,
-             MishkaCmsMigration.MigrationItem
+             MishkaCmsMigration.MigrationItem,
+             MishkaCmsMigration.MigrationLog
            ]
   end
 

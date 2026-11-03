@@ -53,6 +53,15 @@ defmodule MishkaCmsMigration.TargetTest do
     end
   end
 
+  test "a generic action that answers one of the resource's records may be its create, and no other" do
+    assert [{_module, _bytecode} | _] =
+             compile_target(MishkaCmsCore.Runtime.Media, create: :upload)
+
+    assert_raise ArgumentError, ~r/:read is not one of its create actions, nor a generic/, fn ->
+      compile_target(MishkaCmsCore.Runtime.Media, create: :read)
+    end
+  end
+
   test "a module that is not a resource, or an action the resource does not have, is refused" do
     assert_raise ArgumentError, ~r/not an Ash resource/, fn ->
       compile_target(MishkaCmsMigration.Source.Item)

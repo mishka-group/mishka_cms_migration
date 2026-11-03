@@ -19,17 +19,22 @@ defmodule MishkaCmsMigration.MigrationRun do
   `MishkaCmsMigration.MigrationRun.Options`, the struct the `sub_field` generates, with its
   `builder/1`, and hands it to every target:
 
-    * `:authors` — `"connect"` (the default) ties each source author to an existing user, matched by
-      email; `"create"` makes a user and a blog author for each.
+    * `:authors` — `"connect"` (the default) ties each source author to a user of the site, matched
+      by email, and skips one with no match; `"create"` makes a user for one with no match. Either
+      way each becomes that user's blog author (`MishkaCmsMigration.Targets.BlogBlogger`).
     * `:pages` — `"draft"` (the default) brings pages in as drafts; `"publish"` puts them live at
       their old addresses.
-    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>` with a 301 from each
-      old address; `"keep"` keeps the source's own addresses.
-    * `:comments` — whether comments come too; `false` by default.
+    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>`, with a 301 redirect
+      from each old address; `"blog_without_redirects"` serves them there with no redirect.
+      Keeping a source's own address, such as WordPress's `/2025/12/hello/`, needs Mishka Blog to
+      serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
+    * `:comments` — whether comments come too; `false` by default. A comment by a user of the
+      site, or by someone whose email is one, is written on its Blog post; a guest's is left out.
 
-  No target reads them yet: the authors choice is read by the author and post targets, pages by the
-  page target, post addresses by the post and redirect targets and comments by the comment target,
-  as each kind's import comes.
+  The authors choice is read by the Blog's author target and the post addresses by the redirect
+  target (`MishkaCmsMigration.Targets.PostRedirect`), the pages choice by the page target
+  (`MishkaCmsMigration.Targets.CmsPage`) and the comments choice by the comment target
+  (`MishkaCmsMigration.Targets.BlogComment`).
 
   ## Its life
 
@@ -68,10 +73,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run whose job was lost
   with its node.
 
+  Each step is an entry of the run's log (`MishkaCmsMigration.MigrationLog`), and once a dry run or
+  an import ends — it finished, its job failed, or an admin cancelled it while it ran — the run's
+  user and the admin whose job it was are told in the topbar bell
+  (`MishkaCmsMigration.Resources.Notifiers.Steps`).
+
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
-  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run was
-  the last to touch.
+  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run's
+  import was the last to touch; a dry run records only each item's plan, which they do not count.
 
   ## The source's secret
 
@@ -88,6 +98,25 @@ defmodule MishkaCmsMigration.MigrationRun do
   A run with no secret hands the source `nil`. A secret that is stored but cannot be opened —
   `secret_key_base` was rotated since it was sealed — is `{:error, :unreadable_secret}`, which fails
   the run: the admin starts a new run with the secret typed again.
+
+  ## The source's file
+
+  A source that reads a file a site exported (`c:MishkaCmsMigration.Source.file?/0`, such as the
+  WordPress export file) is handed it by the `:create` action's `file` argument: the New import
+  form's upload, a file Gervaz staged (`MishkaCmsCore.Runtime.Media.staged_upload/2`, so a path a
+  request names is never taken). `MishkaCmsMigration.Resources.Changes.SourceFile` puts that staged
+  file's path in the connection's `"file"` while the run is checked, so the source can read the
+  export's host (`c:MishkaCmsMigration.Source.host/1`), and just before the run connects copies it
+  into its own folder (`MishkaCmsMigration.Resources.Changes.SourceFile.files_dir/0`) under a name
+  of its own and points `"file"` there; a run that is then not saved takes its copy with it. A
+  `"file"` a caller types in the connection is always dropped, so a run only ever names a file it
+  was handed.
+
+  That folder is outside the one the CMS serves (`MishkaCmsCore.Runtime.Media.static_dir/0`) and
+  readable by the CMS's own user alone, so the export, with its drafts, private posts and
+  commenters' addresses, is never public. The file is deleted once the run ends: done, failed or
+  cancelled (`:finish_import`, `:fail`, `:cancel`), after the run is saved so. A run left waiting
+  keeps it until an admin cancels it.
 
   ## Who reaches it
 
@@ -113,16 +142,19 @@ defmodule MishkaCmsMigration.MigrationRun do
   running job's progress, show without a reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
-  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, and Cancel (`:cancel`, once the
-  admin confirms) on one that is waiting, dry running, ready or importing. They are `:event` row
-  actions, run by the page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by
-  the domain's Tailwind adapter as the Pages table draws its own: an icon, with the action's name
-  as its tooltip and accessible name. The Actions column is always as wide as the most a row shows,
-  two 30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose
-  status changes its buttons never moves the other columns. A row expands to what its last dry
-  run or import found, kind by kind: the kind in words (`kind_label/1`), how many items the source
-  listed, what was done with them (`result_summary/1`) and why the skipped ones were skipped
-  (`reason_label/1`).
+  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, Import on that same ready run
+  (`:start_import`, once the admin confirms), and Cancel (`:cancel`, once the admin confirms) on
+  one that is waiting, dry running, ready or importing. They are `:event` row actions, run by the
+  page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`). Every row also has Items, a link
+  to the run's Items page (`items_path/1`, `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
+  They are drawn by the domain's Tailwind adapter as the Pages table draws its own: an icon, with
+  the action's name as its tooltip and accessible name. The Actions column is always as wide as
+  the most a row shows, four 30px squares 4px apart with 16px either side (`actions_layout`'s
+  `width`), so a row whose status changes its buttons never moves the other columns. A row
+  expands to what its last dry run or import found, kind by kind: the kind in words
+  (`kind_label/1`), how many items the source listed, what was done with them
+  (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`), and its latest
+  items, each with links to its CMS record (`record_paths/2`, `record_links/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default. Its
   Connection is a `:key_map` whose keys the source names
@@ -130,13 +162,20 @@ defmodule MishkaCmsMigration.MigrationRun do
   read, so each source's New import asks for its own: WordPress's address, user and application
   password, and a plugin's source what its `form_fields/0` names. The secret's key is a masked
   password input that never shows what was typed. The field's description says where WordPress
-  makes an application password, as a Gervaz key carries no description of its own. For a master
-  the form asks for the site the content moves to as well (`:master_create`). Its button, Check
-  connection, creates the run, which connects to the source first
+  makes an application password, as a Gervaz key carries no description of its own. A source that
+  reads a file asks for no Connection: the form shows its Export file instead, a dropzone taking
+  one `.xml` file of up to 100 MB (see "The source's file"), the reason a file is refused under
+  it. Under them,
+  Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
+  the post addresses, each starting at the default the `sub_field` gives it, and a toggle for the
+  comments, off; its description says why a post's old address is redirected rather than kept. For
+  a master the form asks for the site the content moves to as well (`:master_create`). Its button,
+  Check and save, creates the run, which connects to the source first, or reads its file
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
-  refuses the user keeps the form open with the reason, and nothing is saved. A run that is not
-  given a `source_host` takes the host its source reads from the connection
-  (`c:MishkaCmsMigration.Source.host/1`).
+  refuses the user keeps the form open with the reason, and nothing is saved. Gervaz takes a
+  button's label as a string or a function of no arguments, so one label fits a connection and a
+  file alike. A run that is not given a `source_host` takes the host its source reads from the
+  connection (`c:MishkaCmsMigration.Source.host/1`).
   """
 
   use Ash.Resource,
@@ -144,7 +183,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
     extensions: [GuardedStruct.AshResource, AshOban, MishkaGervaz.Resource],
-    notifiers: [Ash.Notifier.PubSub],
+    notifiers: [Ash.Notifier.PubSub, MishkaCmsMigration.Resources.Notifiers.Steps],
     authorizers: [Ash.Policy.Authorizer]
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -153,10 +192,23 @@ defmodule MishkaCmsMigration.MigrationRun do
   import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
+  alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, CheckConnection, EnqueueJob, Reason}
+
+  alias MishkaCmsMigration.Resources.Changes.{
+    CancelJobs,
+    CheckConnection,
+    EnqueueJob,
+    Reason,
+    SourceFile
+  }
+
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
+  alias MishkaGervaz.Table.Web.UrlSync
+
+  # Mishka Blog is optional: its pages are linked only for the kinds its targets write.
+  @compile {:no_warn_undefined, MishkaBlog.Provision}
 
   @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed, :cancelled]
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
@@ -164,6 +216,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @outcomes MishkaCmsMigration.Report.outcomes()
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
+  @type_address dgettext_noop("errors", "Type the site's address, such as https://example.com.")
   @busy dgettext_noop(
           "errors",
           "Another migration of this site is still waiting or running. Try again once it is done."
@@ -209,9 +262,12 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       field :post_address, :string,
         default: "blog",
-        derives: "sanitize(trim) validate(enum=String[blog::keep])"
+        derives: "sanitize(trim) validate(enum=String[blog::blog_without_redirects])"
 
-      field :comments, :boolean, default: false, derives: "validate(boolean)"
+      field :comments, :boolean,
+        default: false,
+        validator: {MishkaCmsMigration.MigrationRun, :switch},
+        derives: "validate(boolean)"
     end
   end
 
@@ -317,7 +373,7 @@ defmodule MishkaCmsMigration.MigrationRun do
           label fn -> dgettext("mishka_gervaz", "From") end
 
           ui do
-            width "minmax(110px,1.1fr)"
+            width "minmax(84px,1.1fr)"
           end
 
           render fn record ->
@@ -476,10 +532,20 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       row_actions do
         actions_layout do
-          width "minmax(96px,max-content)"
+          width "minmax(164px,max-content)"
         end
 
         action :expand, type: :accordion
+
+        action :items do
+          type :link
+          path &MishkaCmsMigration.MigrationRun.items_path/1
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Items") end
+            icon "hero-list-bullet"
+          end
+        end
 
         action :dry_run do
           type :event
@@ -500,6 +566,25 @@ defmodule MishkaCmsMigration.MigrationRun do
           ui do
             label fn -> dgettext("mishka_gervaz", "Run again") end
             icon "hero-arrow-path"
+          end
+        end
+
+        action :import do
+          type :event
+          event "import"
+
+          confirm fn _record ->
+            dgettext(
+              "mishka_gervaz",
+              "Import now? It writes what the dry run found into the CMS."
+            )
+          end
+
+          visible fn record, _state -> record.status == :dry_run end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import") end
+            icon "hero-arrow-down-tray"
           end
         end
 
@@ -572,6 +657,7 @@ defmodule MishkaCmsMigration.MigrationRun do
         field :connection, :key_map do
           required true
           options fn state -> MishkaCmsMigration.Source.form_fields(state) end
+          visible fn state -> MishkaCmsMigration.Source.form_fields(state) != [] end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Connection") end
@@ -584,11 +670,86 @@ defmodule MishkaCmsMigration.MigrationRun do
             end
           end
         end
+
+        field :file, :upload do
+          required true
+          visible fn state -> MishkaCmsMigration.Source.file?(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Export file") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "The .xml file WordPress makes under Tools, Export, with All content chosen. It is kept privately until the run ends, then deleted."
+              )
+            end
+          end
+        end
+
+        field :options, :key_map do
+          default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
+
+          options [
+            [
+              name: :authors,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Authors"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
+                {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
+              ]
+            ],
+            [
+              name: :pages,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Pages"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
+                {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
+              ]
+            ],
+            [
+              name: :post_address,
+              type: :select,
+              label: dgettext_noop("mishka_gervaz", "Post addresses"),
+              options: [
+                {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
+                {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"),
+                 "blog_without_redirects"}
+              ]
+            ],
+            [
+              name: :comments,
+              type: :toggle,
+              label: dgettext_noop("mishka_gervaz", "Bring the comments too")
+            ]
+          ]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Choices for this run") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live. A comment comes only if its author has a user on the site: a guest's is left out."
+              )
+            end
+          end
+        end
       end
 
       groups do
         group :connection do
-          fields [:site_id, :connection]
+          fields [:site_id, :connection, :file]
+
+          ui do
+            columns 1
+          end
+        end
+
+        group :options do
+          fields [:options]
 
           ui do
             columns 1
@@ -596,8 +757,17 @@ defmodule MishkaCmsMigration.MigrationRun do
         end
       end
 
+      uploads do
+        upload :file do
+          accept ~w(.xml)
+          max_entries 1
+          max_file_size 100_000_000
+          style :dropzone
+        end
+      end
+
       submit do
-        create label: fn -> dgettext("mishka_gervaz", "Check connection") end
+        create label: fn -> dgettext("mishka_gervaz", "Check and save") end
         cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
         position :bottom
       end
@@ -658,10 +828,16 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The secret the source signs in with; only its sealed form is kept"
       end
 
+      argument :file, {:array, :map} do
+        allow_nil? true
+        description "The file a source that reads one is handed: the form's staged upload"
+      end
+
       validate {TenantContext, require_master: false}
       change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change {SourceFile, step: :take}
       change CheckConnection
-      validate present(:source_host), only_when_valid?: true
+      validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
@@ -673,7 +849,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
     create :master_create do
       accept [:site_id, :source, :source_host, :connection, :options]
-      allow_nil_input [:source_host]
+      allow_nil_input [:site_id, :source_host]
 
       argument :secret, :string do
         sensitive? true
@@ -681,11 +857,17 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The secret the source signs in with; only its sealed form is kept"
       end
 
+      argument :file, {:array, :map} do
+        allow_nil? true
+        description "The file a source that reads one is handed: the form's staged upload"
+      end
+
       validate {TenantContext, require_master: true}
       validate present(:site_id), message: @pick_site
       change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change {SourceFile, step: :take}
       change CheckConnection
-      validate present(:source_host), only_when_valid?: true
+      validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
 
       change fn changeset, _context ->
@@ -766,6 +948,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :done)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
 
       description "System-internal: saves the import's report"
     end
@@ -779,9 +962,10 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :cancelled)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
       change CancelJobs
 
-      description "Ends a run that is not done: its job is cancelled and its secret cleared"
+      description "Ends a run that is not done: its job is cancelled, its secret and file cleared"
     end
 
     update :record_progress do
@@ -806,6 +990,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :failed)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
 
       description "System-internal: saves why a dry run or an import could not go on"
     end
@@ -995,7 +1180,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     has_many :items, MishkaCmsMigration.MigrationItem do
       destination_attribute :run_id
       public? true
-      description "The items this run was the last to touch"
+      description "The items this run's import was the last to touch"
     end
   end
 
@@ -1026,6 +1211,19 @@ defmodule MishkaCmsMigration.MigrationRun do
       where: expr(status in [:dry_running, :importing]),
       message: @busy
   end
+
+  @doc """
+  The run `id` as `user` may read it: a master's on any site, a site admin's on their own site
+  alone. `{:ok, nil}` for a run that is not there or that `user` may not read.
+  """
+  @spec fetch(String.t(), map()) :: {:ok, struct() | nil} | {:error, term()}
+  def fetch(id, %{site_id: nil} = user),
+    do: Ash.get(__MODULE__, id, action: :master_get, actor: user, not_found_error?: false)
+
+  def fetch(id, %{site_id: site_id} = user),
+    do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
+
+  def fetch(_id, _no_user), do: {:ok, nil}
 
   @doc """
   The source's secret `run` keeps, opened: `{:ok, secret}`, `{:ok, nil}` when it keeps none, or
@@ -1093,6 +1291,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @doc "The heroicon that stands for the source whose id is `id` in the admin's lists."
   @spec source_icon(String.t()) :: String.t()
   def source_icon("wordpress"), do: "hero-globe-alt"
+  def source_icon("wordpress_file"), do: "hero-document-arrow-up"
   def source_icon(_other), do: "hero-server-stack"
 
   @doc """
@@ -1150,8 +1349,11 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("user"), do: "hero-user"
   def kind_icon("category"), do: "hero-folder"
   def kind_icon("tag"), do: "hero-tag"
+  def kind_icon("media"), do: "hero-photo"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
+  def kind_icon("comment"), do: "hero-chat-bubble-left-right"
+  def kind_icon("post_redirect"), do: "hero-arrows-right-left"
   def kind_icon(_other), do: "hero-cube"
 
   @doc """
@@ -1402,9 +1604,17 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("user"), do: dgettext("mishka_gervaz", "users")
   defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
   defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
+  defp kind_noun("media"), do: dgettext("mishka_gervaz", "files")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
+  defp kind_noun("comment"), do: dgettext("mishka_gervaz", "comments")
+  defp kind_noun("post_redirect"), do: dgettext("mishka_gervaz", "redirects")
   defp kind_noun(kind), do: kind
+
+  @doc false
+  def switch(field, "true"), do: {:ok, field, true}
+  def switch(field, "false"), do: {:ok, field, false}
+  def switch(field, value), do: {:ok, field, value}
 
   @doc """
   The items of `kind` as the admin reads them, such as `"Posts"` for `"post"`. A kind this
@@ -1414,30 +1624,249 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("user"), do: dgettext("mishka_gervaz", "Users")
   def kind_label("category"), do: dgettext("mishka_gervaz", "Categories")
   def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
+  def kind_label("media"), do: dgettext("mishka_gervaz", "Media")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
+  def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
+  def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
   def kind_label(kind), do: String.capitalize(kind)
 
   @doc """
-  Why an item was skipped or failed (a `MishkaCmsMigration.Report` entry's `reason`), as the admin
-  reads it. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  Every kind the installed sources list, as `{label, kind}` pairs in the order the sources walk
+  them (`kind_label/1`).
+  """
+  @spec kind_options() :: [{String.t(), String.t()}]
+  def kind_options,
+    do:
+      MishkaCmsMigration.Source.all()
+      |> Enum.flat_map(& &1.kinds())
+      |> Enum.uniq()
+      |> Enum.map(&{kind_label(&1), &1})
+
+  @doc "Every outcome as a `{word, outcome}` pair, in the order the report counts them."
+  @spec outcome_options() :: [{String.t(), atom()}]
+  def outcome_options, do: Enum.map(@outcomes, &{outcome_word(&1), &1})
+
+  @doc "An outcome as its pill reads it, such as Created or Failed."
+  @spec outcome_word(atom()) :: String.t()
+  def outcome_word(:created), do: dgettext("mishka_gervaz", "Created")
+  def outcome_word(:updated), do: dgettext("mishka_gervaz", "Updated")
+  def outcome_word(:skipped), do: dgettext("mishka_gervaz", "Skipped")
+  def outcome_word(:failed), do: dgettext("mishka_gervaz", "Failed")
+
+  @doc "The admin address of the page that lists the items of `run`'s source on its site."
+  @spec items_path(%{id: String.t()}) :: String.t()
+  def items_path(%{id: id}), do: "/admin/dashboard/migration/runs/#{id}/items"
+
+  @doc """
+  Where the CMS record an item of `kind` was written to is, given `record` as its target's resource
+  reads it: `%{admin: path, public: path | nil}`, or `nil` for a kind this extension names no pages
+  for, such as one a source plugin lists.
+
+  The admin has no address for one record: its pages edit in a modal over a list. `admin` is the
+  record's list opened on the record, the way the list's own search writes its address
+  (`MishkaGervaz.Table.Web.UrlSync`): a post, category, tag or blogger by its slug, a page by its
+  path, a file by its name, a redirect by its old address, and a comment on the list of its post's
+  comments. `public` is the record's page on the site where it is live: a published post, an active
+  category, a tag, a blogger's page, an active page and a file; a comment and a redirect have none.
+  """
+  @spec record_paths(String.t(), struct()) :: %{admin: String.t(), public: String.t() | nil} | nil
+  def record_paths("post", post),
+    do: %{
+      admin: listed("/admin/dashboard/blog/posts", post, %{search: post.slug}),
+      public: site_page(:post, post, post.status == :published)
+    }
+
+  def record_paths("category", category),
+    do: %{
+      admin: listed("/admin/dashboard/blog/collections", category, %{search: category.slug}),
+      public: site_page(:category, category, category.status == :active)
+    }
+
+  def record_paths("tag", tag),
+    do: %{
+      admin: listed("/admin/dashboard/blog/tags", tag, %{search: tag.slug}),
+      public: site_page(:tag, tag, true)
+    }
+
+  def record_paths("user", blogger),
+    do: %{
+      admin: listed("/admin/dashboard/blog/bloggers", blogger, %{search: blogger.slug}),
+      public: site_page(:author, blogger, true)
+    }
+
+  def record_paths("comment", comment),
+    do: %{
+      admin: listed("/admin/dashboard/blog/comments", comment, %{post_id: comment.post_id}),
+      public: nil
+    }
+
+  def record_paths("page", page),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/pages", page, %{search: page.path}),
+      public: page_address(page)
+    }
+
+  def record_paths("media", media),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/medias", media, %{search: media.name}),
+      public: media.relative_path
+    }
+
+  def record_paths("post_redirect", redirect),
+    do: %{
+      admin:
+        listed("/admin/dashboard/runtime/redirects", redirect, %{search: redirect.from_path}),
+      public: nil
+    }
+
+  def record_paths(_other, _record), do: nil
+
+  defp listed(path, %resource{}, filters) do
+    config = resource |> MishkaGervaz.Resource.Info.Table.url_sync() |> Map.new()
+    UrlSync.build_path(path, %{filter_values: filters}, config)
+  end
+
+  defp page_address(%{active: true} = page),
+    do: Languages.url(page.path, %{Languages.capture() => page.language}, page.site_id)
+
+  defp page_address(_inactive), do: nil
+
+  defp site_page(key, record, true) do
+    captures = %{
+      Languages.capture() => Map.get(record, :language) || Languages.primary(record.site_id),
+      "slug" => record.slug
+    }
+
+    Languages.url(Map.fetch!(MishkaBlog.Provision.item_paths(), key), captures, record.site_id)
+  end
+
+  defp site_page(_key, _record, false), do: nil
+
+  @doc """
+  The links to the CMS record `paths` (`record_paths/2`) names: an icon link to its place in the
+  admin, and one to its page on the site where it has one. Nothing for `nil`.
+  """
+  def record_links(assigns) do
+    ~H"""
+    <span :if={@paths} data-role="record-links" class="inline-flex items-center gap-[6px]">
+      <a
+        href={@paths.admin}
+        data-role="record-admin"
+        title={dgettext("mishka_gervaz", "Open in the admin")}
+        aria-label={dgettext("mishka_gervaz", "Open in the admin")}
+        class="grid size-[26px] place-items-center rounded-[8px] bg-[#eeedfb] text-[#5b57d6] transition-opacity hover:opacity-80"
+      >
+        <MishkaCmsCore.CoreComponents.icon name="hero-pencil-square" class="size-[14px]" />
+      </a>
+      <a
+        :if={@paths.public}
+        href={@paths.public}
+        target="_blank"
+        rel="noopener"
+        data-role="record-public"
+        title={dgettext("mishka_gervaz", "View on the site")}
+        aria-label={dgettext("mishka_gervaz", "View on the site")}
+        class="grid size-[26px] place-items-center rounded-[8px] bg-[#f2f1ec] text-[#7c7a75] transition-opacity hover:opacity-80"
+      >
+        <MishkaCmsCore.CoreComponents.icon
+          name="hero-arrow-top-right-on-square"
+          class="size-[14px]"
+        />
+      </a>
+    </span>
+    """
+  end
+
+  @doc """
+  Why an item was skipped or failed, or what was written otherwise than the source has it (a
+  `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it, each of its parts (joined by
+  `"; "`) in words. A plugin's own reason, and what a source or the CMS answered, read as they are.
   """
   @spec reason_label(String.t()) :: String.t()
-  def reason_label("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
-  def reason_label("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
-  def reason_label("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+  def reason_label(reason), do: reason |> String.split("; ") |> Enum.map_join("; ", &said/1)
 
-  def reason_label("target_missing"),
-    do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+  defp said("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
+  defp said("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
+  defp said("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
+  defp said("target_missing"), do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+  defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
+  defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+  defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
+  defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")
+  defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")
+  defp said("post_missing"), do: dgettext("mishka_gervaz", "Its post was not imported")
+  defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
+  defp said("left_out_by_admin"), do: dgettext("mishka_gervaz", "Left out by you")
+  defp said("parent_left_out"), do: dgettext("mishka_gervaz", "Its parent is left out")
 
-  def reason_label("duplicate_in_source"),
-    do: dgettext("mishka_gervaz", "Listed twice by the source")
+  defp said("mapped_missing"),
+    do: dgettext("mishka_gervaz", "The record it was mapped to is gone")
 
-  def reason_label("plugins_cannot_run"),
+  defp said("guest_comment"),
+    do: dgettext("mishka_gervaz", "A guest's comment, which Blog cannot keep yet (#21)")
+
+  defp said("page_comment"),
+    do: dgettext("mishka_gervaz", "A comment on a page, which Blog cannot keep")
+
+  defp said("not_a_comment"),
+    do: dgettext("mishka_gervaz", "A pingback or trackback, which Blog does not keep")
+
+  defp said("spam_or_trash"),
+    do: dgettext("mishka_gervaz", "Spam or in the trash at the source, so left out")
+
+  defp said("author_missing"),
+    do: dgettext("mishka_gervaz", "Its author was not imported, so it has none")
+
+  defp said("featured_image_missing"),
+    do: dgettext("mishka_gervaz", "Its featured image was not imported, so it has none")
+
+  defp said("connected"),
+    do: dgettext("mishka_gervaz", "Already in the CMS, so linked and kept as it is")
+
+  defp said("plugins_cannot_run"),
     do: dgettext("mishka_gervaz", "A plugin it needs is not loaded")
 
-  def reason_label("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
-  def reason_label(reason), do: reason
+  defp said("plugins_failed"), do: dgettext("mishka_gervaz", "A plugin failed on it")
+
+  defp said("draft_from_pending"),
+    do: dgettext("mishka_gervaz", "Pending review at the source, so a draft")
+
+  defp said("draft_from_private"),
+    do: dgettext("mishka_gervaz", "Private at the source, so a draft")
+
+  defp said("draft_from_password"),
+    do: dgettext("mishka_gervaz", "Password-protected at the source, so a draft")
+
+  defp said("draft_from_future"),
+    do: dgettext("mishka_gervaz", "Scheduled at the source, so a draft")
+
+  defp said("path_taken"),
+    do: dgettext("mishka_gervaz", "The site already has a page at this address, so it is kept")
+
+  defp said("path_made_ascii"),
+    do: dgettext("mishka_gervaz", "Its address was made ASCII, so the old address is not served")
+
+  defp said("not_on_source"),
+    do: dgettext("mishka_gervaz", "Its file is not on the source's own site, so it is left there")
+
+  defp said("type_not_allowed"),
+    do: dgettext("mishka_gervaz", "Media cannot keep this type of file")
+
+  defp said("wrong_type"),
+    do: dgettext("mishka_gervaz", "The source says this file is another type than its name")
+
+  defp said("too_big"), do: dgettext("mishka_gervaz", "Larger than Media takes")
+
+  defp said("wrong_bytes"),
+    do: dgettext("mishka_gervaz", "The file is not the type its name says, so it is left out")
+
+  defp said("not_downloaded"), do: dgettext("mishka_gervaz", "The source did not send the file")
+
+  defp said("unconverted: " <> names),
+    do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
+
+  defp said(reason), do: reason
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the
