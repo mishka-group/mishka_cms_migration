@@ -179,6 +179,74 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
   end
 
+  describe "an item an admin left out" do
+    defp item!(site, source_id), do: Enum.find(items(site), &(&1.source_id == source_id))
+
+    defp leave_out!(site, admin, source_id),
+      do:
+        site
+        |> item!(source_id)
+        |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
+
+    test "is skipped by the dry run and the import and never written, until it is brought back",
+         %{
+           site: site,
+           admin: admin
+         } do
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+      leave_out!(site, admin, "2")
+
+      run = dry_run!(run, admin)
+      assert %{"2" => {:skipped, "left_out_by_admin"}, "1" => {:created, nil}} = outcomes(run)
+      assert %{plan: :skipped, plan_reason: "left_out_by_admin"} = item!(site, "2")
+
+      run = import!(run, admin)
+      assert run.report.counts == %{created: 2, updated: 0, skipped: 1, failed: 0}
+      assert Enum.map(redirects(site), & &1.from_path) == ["/old-one", "/old-three"]
+      assert %{outcome: :skipped, reason: "left_out_by_admin", target_id: nil} = item!(site, "2")
+
+      site |> item!("2") |> MishkaCmsMigration.bring_back_item!(actor: admin, tenant: site.id)
+      again = migrate!(site, admin, %{"redirect" => @rows})
+
+      assert %{"2" => {:created, nil}, "1" => {:skipped, "unchanged"}} = outcomes(again)
+      assert length(redirects(site)) == 3
+    end
+
+    test "keeps the CMS record an import wrote, whatever the source and the admin changed since",
+         %{
+           site: site,
+           admin: admin
+         } do
+      migrate!(site, admin, %{"redirect" => @rows})
+      written = Enum.find(redirects(site), &(&1.from_path == "/old-one"))
+      leave_out!(site, admin, "1")
+
+      changed =
+        List.replace_at(@rows, 0, %{"id" => 1, "from" => "/old-one", "to" => "/from-source"})
+
+      run = migrate!(site, admin, %{"redirect" => changed})
+
+      assert %{"1" => {:skipped, "left_out_by_admin"}} = outcomes(run)
+      assert Enum.find(redirects(site), &(&1.id == written.id)).to == "/one"
+
+      assert %{left_out: true, target_id: target_id, outcome: :skipped} = item!(site, "1")
+      assert target_id == written.id
+    end
+
+    test "is reported by kind, so the run's card says how many were left out", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+      for id <- ["1", "3"], do: leave_out!(site, admin, id)
+
+      run = dry_run!(run, admin)
+
+      assert [%{kind: "redirect", created: 1, skipped: 2}] = run.report.kinds
+      assert Enum.count(run.report.entries, &(&1.reason == "left_out_by_admin")) == 2
+    end
+  end
+
   describe "an import" do
     test "writes every item through the target as the admin and records it", %{
       site: site,

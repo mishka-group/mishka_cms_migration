@@ -22,7 +22,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsCore.PlainText
   alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
   alias MishkaCmsCore.Settings
-  alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.Events
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag, PostRedirect}

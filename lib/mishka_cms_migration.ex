@@ -88,6 +88,8 @@ defmodule MishkaCmsMigration do
       define :record_item, action: :record
       define :record_item_outcome, action: :record_outcome
       define :record_item_plan, action: :record_plan
+      define :leave_out_item, action: :leave_out
+      define :bring_back_item, action: :bring_back
     end
 
     resource MishkaCmsMigration.MigrationLog do

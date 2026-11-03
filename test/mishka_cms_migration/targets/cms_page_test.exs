@@ -16,7 +16,6 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Page
-  alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
 

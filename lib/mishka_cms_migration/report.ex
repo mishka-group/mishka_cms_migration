@@ -29,6 +29,8 @@ defmodule MishkaCmsMigration.Report do
   `"draft_from_pending"`), then the pieces of its content no plugin converted, kept as escaped text
   (`"unconverted: "` and their names), joined by `"; "`. For a skipped or failed item:
 
+    * `"left_out_by_admin"` — an admin left the item out on the Items page; a CMS record an
+      import wrote for it is kept as it is.
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.
     * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays

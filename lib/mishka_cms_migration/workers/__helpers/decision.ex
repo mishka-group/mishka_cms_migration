@@ -6,7 +6,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @moduledoc """
   What a dry run or an import does with each item of a page (`call/3`), against what earlier runs
   recorded for the site (`MishkaCmsMigration.MigrationItem`), found by the run's source host, the
-  item's kind and its source id:
+  item's kind and its source id. An admin's choice on the item comes first, before anything the
+  source or the CMS says:
+
+    * the admin left it out (`left_out`) — `{:skipped, "left_out_by_admin"}`, whatever the source
+      changed and whatever the CMS holds; a CMS record an import wrote for it is kept as it is.
+
+  Then, what earlier runs recorded:
 
     * none, or one never written — `{:created, target, nil}`, unless the target finds it in the
       CMS already (`MishkaCmsMigration.Target`'s `existing/2`): `{:connected, target, record}`, the
@@ -93,6 +99,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     |> Map.new(&{&1.id, &1})
   end
 
+  defp plan(_target, _item, %{left_out: true}, _records), do: {:skipped, "left_out_by_admin"}
   defp plan(target, _item, nil, _records), do: {:created, target, nil}
   defp plan(target, _item, %{target_id: nil}, _records), do: {:created, target, nil}
 

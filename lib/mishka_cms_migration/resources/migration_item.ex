@@ -30,8 +30,23 @@ defmodule MishkaCmsMigration.MigrationItem do
   for every item it meets, which sets its title and plan and nothing an import recorded; an
   import's `:record` after its CMS record was written, and `:record_outcome` after an item was
   skipped or failed, which keeps what the last write recorded. No import write touches the plan,
-  so an item shows what the last dry run would do beside what the last import did. Read by whoever
-  may read the site's runs (`MishkaCmsMigration.MigrationRun`).
+  so an item shows what the last dry run would do beside what the last import did, and none of them
+  touches an admin's choices (below). Read by whoever may read the site's runs
+  (`MishkaCmsMigration.MigrationRun`).
+
+  ## An admin's choices
+
+  Before an import, an admin decides what it brings, item by item. `:leave_out` sets `left_out`:
+  every later dry run and import skips the item as `"left_out_by_admin"`, whatever the source
+  changed, and leaves the CMS record an earlier import wrote for it as it is, never deleting it.
+  `:bring_back` clears it, so the next run plans the item again. Each makes that one change. The
+  master actions (`:master_leave_out`, `:master_bring_back`) do the same on any site.
+
+  A choice takes the same permission and the same site as reading the items, and is refused while
+  one of the site's runs is dry running or importing
+  (`MishkaCmsMigration.Resources.Validations.SiteIdle`). Each one is broadcast on
+  `"migration_item:<site_id>:updated"`, for the Items table to draw the item again; what the jobs
+  record is never broadcast.
 
   ## In the admin
 
@@ -42,9 +57,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   with its source id under it, its Plan (`plan_cell/1`): what the last dry run would do with it, as
   a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), its Last
   import (`last_import_cell/1`): what the last import did with it, the same way, or Not imported,
-  links to its CMS record (`record_paths`, below) and when a run last met it. It filters by kind,
-  plan and last import, searches the title and the source id, and keeps them in the address under
-  `items`. A row expands to what is kept of the item, as JSON.
+  links to its CMS record (`record_paths`, below) and when a run or a choice last changed it. It
+  filters by kind, plan and last import, searches the title and the source id, and keeps them in
+  the address under `items`. A row expands to what is kept of the item, as JSON.
+
+  A row's Leave out or Bring back makes that choice (Gervaz's `:update` row actions), and so do the
+  bulk actions of the same names for the rows picked with the checkboxes (`choose/3`), Leave out
+  once the admin confirms. The Plan cell shows the choice before the plan.
 
   `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
   (`MishkaCmsMigration.MigrationRun.record_paths/2`), `nil` for an item with no record or whose
@@ -56,6 +75,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
     extensions: [GuardedStruct.AshResource, MishkaGervaz.Resource],
+    notifiers: [Ash.Notifier.PubSub],
     authorizers: [Ash.Policy.Authorizer]
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -68,6 +88,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
   alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Resources.Calculations.RecordPaths
+  alias MishkaCmsMigration.Resources.Validations.SiteIdle
+  alias MishkaGervaz.Table.Web.{DataLoader, State}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
   @source [:source_host, :source_kind, :source_id]
@@ -195,7 +217,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
         column :planned do
           static true
-          requires [:plan, :plan_reason]
+          requires [:plan, :plan_reason, :left_out]
           label fn -> dgettext("mishka_gervaz", "Plan") end
 
           ui do
@@ -239,7 +261,7 @@ defmodule MishkaCmsMigration.MigrationItem do
         column :last_run do
           static true
           requires [:updated_at]
-          label fn -> dgettext("mishka_gervaz", "Last run") end
+          label fn -> dgettext("mishka_gervaz", "Updated") end
           sortable true
           sort_field [:updated_at]
 
@@ -314,8 +336,85 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
       end
 
+      row do
+        selectable true
+      end
+
       row_actions do
+        actions_layout do
+          width "minmax(62px,max-content)"
+        end
+
         action :expand, type: :accordion
+
+        action :leave_out do
+          type :update
+          action {:master_leave_out, :leave_out}
+          visible fn item, _state -> not item.left_out end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Leave out") end
+            icon "hero-eye-slash"
+          end
+        end
+
+        action :bring_back do
+          type :update
+          action {:master_bring_back, :bring_back}
+          visible fn item, _state -> item.left_out end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Bring back") end
+            icon "hero-arrow-uturn-left"
+          end
+        end
+      end
+
+      bulk_actions do
+        action :leave_out do
+          handler fn ids, state ->
+            MishkaCmsMigration.MigrationItem.choose(:leave_out, ids, state)
+          end
+
+          confirm dgettext_noop(
+                    "mishka_gervaz",
+                    "Leave out {count} items? Import will not write them."
+                  )
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Leave out") end
+            icon "hero-eye-slash"
+          end
+        end
+
+        action :bring_back do
+          handler fn ids, state ->
+            MishkaCmsMigration.MigrationItem.choose(:bring_back, ids, state)
+          end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Bring back") end
+            icon "hero-arrow-uturn-left"
+          end
+        end
+      end
+
+      hooks do
+        on_realtime fn notification, socket ->
+          {:halt, MishkaCmsMigration.MigrationItem.followed(notification, socket)}
+        end
+
+        on_bulk_action_success [:leave_out, :bring_back], fn _result, _state, socket ->
+          MishkaCmsMigration.MigrationItem.reloaded(socket)
+        end
+      end
+
+      realtime do
+        prefix "migration_item"
+
+        visible fn item, user ->
+          is_nil(user.site_id) or item.site_id == user.site_id
+        end
       end
 
       url_sync do
@@ -400,6 +499,56 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "System-internal: an item an import skipped or failed, keeping what was last written"
     end
 
+    update :leave_out do
+      accept []
+      require_atomic? false
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+
+      change set_attribute(:left_out, true)
+
+      description "Leaves the item out of every later dry run and import, keeping its CMS record"
+    end
+
+    update :master_leave_out do
+      accept []
+      multitenancy :bypass
+      require_atomic? false
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+
+      change set_attribute(:left_out, true)
+
+      description "Leaves an item of any site out of every later dry run and import (masters)"
+    end
+
+    update :bring_back do
+      accept []
+      require_atomic? false
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+
+      change set_attribute(:left_out, false)
+
+      description "Brings a left out item back into the next dry run and import"
+    end
+
+    update :master_bring_back do
+      accept []
+      multitenancy :bypass
+      require_atomic? false
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+
+      change set_attribute(:left_out, false)
+
+      description "Brings a left out item of any site back (masters)"
+    end
+
     create :record_plan do
       accept @source ++ [:title, :plan, :plan_reason]
       upsert? true
@@ -421,17 +570,24 @@ defmodule MishkaCmsMigration.MigrationItem do
       forbid_if always()
     end
 
-    policy action_type(:read) do
+    policy action_type([:read, :update]) do
       access_type :strict
 
       authorize_if {AccessPermissions,
                     permissions: ["admin:dashboard:migration", "admin:api:migration"]}
     end
 
-    policy action_type(:read) do
+    policy action_type([:read, :update]) do
       authorize_if actor_attribute_equals(:site_id, nil)
       authorize_if expr(site_id == ^actor(:site_id))
     end
+  end
+
+  pub_sub do
+    module Application.compile_env!(:mishka_cms_core, :endpoint)
+    prefix "migration_item"
+
+    publish_all :update, [[nil, :site_id], "updated"]
   end
 
   multitenancy do
@@ -509,6 +665,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "What the last import that met the item did with it; nil before any import did"
     end
 
+    attribute :left_out, :boolean do
+      allow_nil? false
+      public? true
+      default false
+
+      description "Whether an admin left the item out: no dry run or import writes it until brought back"
+    end
+
     attribute :plan, :atom do
       allow_nil? true
       public? true
@@ -577,17 +741,85 @@ defmodule MishkaCmsMigration.MigrationItem do
   end
 
   @doc """
+  The item `id` as `user` may read it: a master's on any site, a site admin's on their own site
+  alone. `{:ok, nil}` for an item that is not there or that `user` may not read.
+  """
+  @spec fetch(String.t(), map()) :: {:ok, struct() | nil} | {:error, term()}
+  def fetch(id, %{site_id: nil} = user),
+    do: Ash.get(__MODULE__, id, action: :master_get, actor: user, not_found_error?: false)
+
+  def fetch(id, %{site_id: site_id} = user),
+    do: Ash.get(__MODULE__, id, actor: user, tenant: site_id, not_found_error?: false)
+
+  @doc """
+  The Items table's bulk Leave out and Bring back: runs `action` (`:leave_out` or `:bring_back`)
+  on the rows `selected` names, as the table's admin, under the run's site. `selected` is a list of
+  ids, or every row the table's filters find (`:all`, or `{:all_except, ids}`): the rows are read
+  with the table's own query, its path params and filters, so a selection never reaches past the
+  run's site and source host. Says how many it changed in a flash, and answers the table's state
+  with the selection cleared, or the first error, which the table says in words; the table then
+  reloads its rows (`reloaded/1`).
+  """
+  @spec choose(atom(), list() | :all | {:all_except, list()}, State.t()) ::
+          {:ok, State.t()} | {:error, term()}
+  def choose(action, selected, %State{path_params: %{site_id: site_id}} = state) do
+    state
+    |> DataLoader.QueryBuilder.Default.build_query()
+    |> Ash.Query.unload(State.get_preloads(state))
+    |> selected(selected)
+    |> Ash.bulk_update(action, %{},
+      actor: state.current_user,
+      tenant: site_id,
+      strategy: [:stream],
+      return_records?: true,
+      return_errors?: true,
+      notify?: false
+    )
+    |> chosen(action, state)
+  end
+
+  @doc """
+  What the Items table does with an item's PubSub notification (`pub_sub` below, an admin's
+  choice): an item of the run's site and source host is read again as the table reads its rows,
+  with what the table preloads, and drawn in its place, in the rows a template keeps too; any other
+  is left alone.
+  """
+  @spec followed(Ash.Notifier.Notification.t(), Phoenix.LiveView.Socket.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def followed(
+        %{data: %{site_id: site_id, source_host: host} = item},
+        %{assigns: %{table_state: %{path_params: %{site_id: site_id, source_host: host}} = state}} =
+          socket
+      ) do
+    item
+    |> Ash.load(State.get_preloads(state), actor: state.current_user, tenant: site_id)
+    |> drawn(socket, state)
+  end
+
+  def followed(_notification, socket), do: socket
+
+  @doc """
+  The Items table's rows read again, in one read: every page it has loaded where it keeps its
+  loaded rows, its first page otherwise.
+  """
+  @spec reloaded(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def reloaded(%{assigns: %{table_state: state}} = socket),
+    do: DataLoader.load_async(socket, state, page: loaded_pages(state), reset: true)
+
+  @doc """
   The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
   (`data-role="item-plan"`, its `data-plan` the plan, or `connected` for an item the dry run
   connected to a record the CMS already held), the reason in words under it
   (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/1`). A dash before
-  the item's first dry run.
+  the item's first dry run. An admin's choice is shown before the plan: Left out by you
+  (`left_out`) for an item left out, and Brought back for one brought back since the last dry run
+  left it out.
   """
   @spec plan_cell(map()) :: Phoenix.LiveView.Rendered.t()
   def plan_cell(item),
     do:
-      item.plan
-      |> planned(item.plan_reason)
+      item
+      |> planned()
       |> Map.merge(%{role: "item-plan", reason_role: "item-plan-reason"})
       |> pill()
 
@@ -634,9 +866,73 @@ defmodule MishkaCmsMigration.MigrationItem do
     """
   end
 
-  defp planned(nil, _reason), do: none("", dgettext("mishka_gervaz", "No dry run yet"))
+  defp selected(query, :all), do: query
+  defp selected(query, {:all_except, ids}), do: Ash.Query.filter(query, id not in ^ids)
+  defp selected(query, ids) when is_list(ids), do: Ash.Query.filter(query, id in ^ids)
 
-  defp planned(:skipped, "connected"),
+  defp chosen(%Ash.BulkResult{status: :success} = result, action, state) do
+    send(
+      self(),
+      {:put_flash, :info, chosen_words(action, result.records |> List.wrap() |> length())}
+    )
+
+    {:ok,
+     State.update(state,
+       selected_ids: MapSet.new(),
+       excluded_ids: MapSet.new(),
+       select_all?: false
+     )}
+  end
+
+  defp chosen(%Ash.BulkResult{errors: [error | _]}, _action, _state), do: {:error, error}
+  defp chosen(%Ash.BulkResult{} = result, _action, _state), do: {:error, result}
+
+  defp chosen_words(:leave_out, count),
+    do: dngettext("mishka_gervaz", "%{count} item left out.", "%{count} items left out.", count)
+
+  defp chosen_words(:bring_back, count),
+    do:
+      dngettext(
+        "mishka_gervaz",
+        "%{count} item brought back.",
+        "%{count} items brought back.",
+        count
+      )
+
+  defp drawn({:ok, item}, socket, state) do
+    rows = Enum.map(state.loaded_records, &if(&1.id == item.id, do: item, else: &1))
+
+    socket
+    |> Phoenix.LiveView.stream_insert(state.static.stream_name, item)
+    |> Phoenix.Component.assign(:table_state, State.update(state, loaded_records: rows))
+  end
+
+  defp drawn({:error, _unreadable}, socket, _state), do: socket
+
+  defp loaded_pages(%State{static: %{keep_loaded_records: true}, page: page}), do: page
+  defp loaded_pages(_state), do: 1
+
+  defp planned(%{left_out: true}),
+    do: %{
+      key: "left_out",
+      word: dgettext("mishka_gervaz", "Left out by you"),
+      class: "bg-[#f2f1ec] text-[#6d6a63]",
+      icon: "hero-eye-slash",
+      reason: nil
+    }
+
+  defp planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
+    do: %{
+      key: "brought_back",
+      word: dgettext("mishka_gervaz", "Brought back"),
+      class: "bg-[#f7f6f2] text-[#8a877f]",
+      icon: "hero-arrow-uturn-left",
+      reason: dgettext("mishka_gervaz", "Run a dry run again to see its plan")
+    }
+
+  defp planned(%{plan: nil}), do: none("", dgettext("mishka_gervaz", "No dry run yet"))
+
+  defp planned(%{plan: :skipped, plan_reason: "connected"}),
     do: %{
       key: "connected",
       word: dgettext("mishka_gervaz", "Connected"),
@@ -645,7 +941,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: nil
     }
 
-  defp planned(plan, reason), do: said(plan, plan_word(plan), reason)
+  defp planned(%{plan: plan, plan_reason: reason}), do: said(plan, plan_word(plan), reason)
 
   defp imported(nil, _reason), do: none("", dgettext("mishka_gervaz", "Not imported"))
   defp imported(outcome, reason), do: said(outcome, MigrationRun.outcome_word(outcome), reason)

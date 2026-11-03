@@ -6,7 +6,8 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
   @moduledoc """
   Who reaches a run and its items. A site user acts only on its own site, even one holding `"*"`;
   a master (a user whose `site_id` is nil) reaches every site; anyone without the migration area is
-  refused, and nobody but the system records an item.
+  refused, nobody but the jobs records an item, and only the site's own admins, or a master, leave
+  one out or bring it back.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -126,22 +127,111 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
     assert {site_b_id, master_id} == {site_b.id, master.id}
   end
 
-  test "nobody records an item but the import job", %{site_a: site_a, admin_a: admin_a, run: run} do
+  test "nobody records an item but the jobs", %{site_a: site_a, admin_a: admin_a, run: run} do
     master = create_user_with_permissions!(["*"])
+    item = %{source_host: "old.example.com", source_kind: "redirect", source_id: "99"}
 
     for actor <- [admin_a, master] do
       assert {:error, %Ash.Error.Forbidden{}} =
                MishkaCmsMigration.record_item(
-                 %{
-                   source_host: "old.example.com",
-                   source_kind: "redirect",
-                   source_id: "99",
-                   run_id: run.id,
-                   outcome: :created
-                 },
+                 Map.merge(item, %{run_id: run.id, outcome: :created}),
                  actor: actor,
                  tenant: site_a.id
                )
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.record_item_plan(Map.put(item, :plan, :created),
+                 actor: actor,
+                 tenant: site_a.id
+               )
+    end
+  end
+
+  describe "an admin's choice on an item" do
+    setup %{site_a: site_a} do
+      [item] = Ash.read!(MigrationItem, tenant: site_a.id, authorize?: false)
+      %{item: item}
+    end
+
+    test "is made by the site's admin, and by a master through the master actions", %{
+      site_a: site_a,
+      admin_a: admin_a,
+      item: item
+    } do
+      assert {:ok, %{left_out: true}} =
+               MishkaCmsMigration.leave_out_item(item, actor: admin_a, tenant: site_a.id)
+
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      {:ok, as_master} = MigrationItem.fetch(item.id, master)
+
+      assert {:ok, %{left_out: false}} =
+               Ash.update(as_master, %{}, action: :master_bring_back, actor: master)
+
+      assert {:ok, %{left_out: true}} =
+               MishkaCmsMigration.leave_out_item(item, actor: master, tenant: site_a.id)
+    end
+
+    test "is refused to another site's admin, to a user without the area and to nobody", %{
+      site_a: site_a,
+      site_b: site_b,
+      admin_b: admin_b,
+      item: item
+    } do
+      writer =
+        create_user_with_permissions!(["admin:dashboard:runtime:redirect"], site_id: site_a.id)
+
+      for {actor, tenant} <- [{admin_b, site_a.id}, {admin_b, site_b.id}, {writer, site_a.id}] do
+        assert {:error, %Ash.Error.Forbidden{}} =
+                 MishkaCmsMigration.leave_out_item(item, actor: actor, tenant: tenant)
+      end
+
+      {:ok, as_master} =
+        MigrationItem.fetch(item.id, create_user_with_permissions!(["admin:dashboard:migration"]))
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Ash.update(as_master, %{}, action: :master_leave_out, actor: admin_b)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.leave_out_item(item, tenant: site_a.id)
+
+      assert [%{left_out: false}] = Ash.read!(MigrationItem, tenant: site_a.id, authorize?: false)
+    end
+
+    test "is refused while one of the site's runs is dry running or importing, and not after", %{
+      site_a: site_a,
+      admin_a: admin_a,
+      item: item
+    } do
+      running =
+        site_a
+        |> create_run!(admin_a, %{"redirect" => [redirect_row(1, "/old", "/new")]})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin_a, tenant: site_a.id)
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{message: message}]}} =
+               MishkaCmsMigration.leave_out_item(item, actor: admin_a, tenant: site_a.id)
+
+      assert message =~ "is running"
+
+      MishkaCmsMigration.cancel_run!(running, actor: admin_a, tenant: site_a.id)
+
+      assert {:ok, %{left_out: true}} =
+               MishkaCmsMigration.leave_out_item(item, actor: admin_a, tenant: site_a.id)
+    end
+
+    test "is not held by another site's run", %{
+      site_a: site_a,
+      site_b: site_b,
+      admin_a: admin_a,
+      item: item
+    } do
+      admin = migration_admin!(site_b)
+
+      site_b
+      |> create_run!(admin, %{})
+      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site_b.id)
+
+      assert {:ok, %{left_out: true}} =
+               MishkaCmsMigration.leave_out_item(item, actor: admin_a, tenant: site_a.id)
     end
   end
 end

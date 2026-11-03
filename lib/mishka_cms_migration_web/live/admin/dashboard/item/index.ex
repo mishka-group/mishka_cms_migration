@@ -16,6 +16,16 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   and a site admin's table never reads another site's items. The table is scoped to the run's site
   and host by the page, as path params no filter can clear.
 
+  ## An admin's choices
+
+  A row's Leave out and Bring back, and the same for the rows picked with the checkboxes, leave an
+  item out of every later dry run and import, or bring it back (`MishkaCmsMigration.MigrationItem`'s
+  `:leave_out` and `:bring_back`); the bulk ones ask first how many they change. Picking every row
+  picks what the filters find, of the run's site and source host alone. A choice is refused while a
+  dry run or an import of the site is running, in Gervaz's words for a failed action. Each choice
+  is broadcast, and this page hands the item's notifications on to the table, which draws the item
+  again in its place, in every tab open on it.
+
   An expanded row (`{:expand_row, id}`) shows what is kept of the item as JSON: its stored
   attributes and its `extra`, the source's fields the CMS has no home for, with the value of
   anything named like a secret hidden. The item's content and its other fields are not kept, and
@@ -45,6 +55,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     :plan_reason,
     :outcome,
     :reason,
+    :left_out,
     :run_id,
     :inserted_at,
     :updated_at
@@ -90,7 +101,18 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   @impl true
   def handle_info({:expand_row, id}, socket) do
-    id |> read_item(socket.assigns.current_user) |> expanded()
+    id |> MigrationItem.fetch(socket.assigns.current_user) |> expanded()
+    {:noreply, socket}
+  end
+
+  def handle_info(
+        %Phoenix.Socket.Broadcast{
+          topic: "migration_item" <> _rest,
+          payload: %Ash.Notifier.Notification{} = notification
+        },
+        socket
+      ) do
+    send_update(MishkaGervaz.Table.Web.Live, id: @table_id, pubsub_notification: notification)
     {:noreply, socket}
   end
 
@@ -98,12 +120,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: {:noreply, put_flash(socket, kind, message)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
-
-  defp read_item(id, %{site_id: nil} = user),
-    do: Ash.get(MigrationItem, id, action: :master_get, actor: user, not_found_error?: false)
-
-  defp read_item(id, %{site_id: site_id} = user),
-    do: Ash.get(MigrationItem, id, actor: user, tenant: site_id, not_found_error?: false)
 
   defp expanded({:ok, %MigrationItem{} = item}),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(item))

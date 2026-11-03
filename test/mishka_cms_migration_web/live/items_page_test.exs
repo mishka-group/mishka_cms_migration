@@ -143,6 +143,46 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     |> String.to_integer()
   end
 
+  defp item!(item), do: Ash.get!(MigrationItem, item.id, tenant: item.site_id, authorize?: false)
+
+  defp migrate_run!(run, admin), do: run |> dry_run!(admin) |> import!(admin)
+
+  defp row_button(action, item),
+    do: ~s|#{@table} [phx-value-event="#{action}"][phx-value-id="#{item.id}"]|
+
+  defp row_action!(view, action, item) do
+    view |> element(row_button(action, item)) |> render_click()
+    settled(view)
+  end
+
+  defp pick!(view, item) do
+    view
+    |> element(~s|#{@table} [phx-click="toggle_select"][phx-value-id="#{item.id}"]|)
+    |> render_click()
+
+    settled(view)
+  end
+
+  defp pick_all!(view) do
+    view |> element("#{@table} input[name=select_all]") |> render_click()
+    settled(view)
+  end
+
+  defp bulk!(view, action) do
+    view
+    |> element(~s|#{@table} [phx-click="bulk_action"][phx-value-action="#{action}"]|)
+    |> render_click()
+
+    settled(view)
+  end
+
+  defp plan_of(view, item) do
+    view
+    |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-plan"]|)
+    |> LazyHTML.attribute("data-plan")
+    |> List.first()
+  end
+
   defp json(view),
     do: view |> parts(~s|#{@table} [data-role="item-json"]|) |> LazyHTML.text() |> Jason.decode!()
 
@@ -257,6 +297,145 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       filter!(view, %{"plan" => "", "this_run" => "true"})
       assert total(view) == 0
+    end
+  end
+
+  describe "leaving out" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    test "a row's Leave out leaves the item out, and Bring back brings it back, in every open tab",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+      other_tab = open!(conn, admin, run)
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag"))
+      for tab <- [view, other_tab], do: filter!(tab, %{"source_kind" => "tag"})
+
+      row_action!(view, "leave_out", tag)
+
+      assert %{left_out: true} = item!(tag)
+      assert plan_of(view, tag) == "left_out"
+      refute has_element?(view, row_button("leave_out", tag))
+      settled(other_tab)
+      assert plan_of(other_tab, tag) == "left_out"
+
+      row_action!(view, "bring_back", tag)
+
+      assert %{left_out: false} = item!(tag)
+      assert plan_of(view, tag) == "created"
+      settled(other_tab)
+      assert plan_of(other_tab, tag) == "created"
+    end
+
+    test "the picked rows are left out together, and the rest are not", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      [one, two | rest] = Enum.filter(stored(site), &(&1.source_kind == "tag"))
+      filter!(view, %{"source_kind" => "tag"})
+
+      for item <- [one, two], do: pick!(view, item)
+      html = bulk!(view, "leave_out")
+
+      assert html =~ "2 items left out."
+      assert Enum.map([one, two], &item!(&1).left_out) == [true, true]
+      assert Enum.all?(rest, &(not item!(&1).left_out))
+      assert view |> attributes("item-plan", "data-plan") |> Enum.count(&(&1 == "left_out")) == 2
+      refute has_element?(view, "#{@table} input[name=select_row][checked]")
+
+      for item <- [one, two], do: pick!(view, item)
+      bulk!(view, "bring_back")
+      assert Enum.all?(stored(site), &(not &1.left_out))
+    end
+
+    test "picking every row leaves out what the filters find, of this run's source and site alone",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      migrate!(site, admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      other = create_site!()
+      other_admin = migration_admin!(other)
+
+      theirs =
+        create_run!(other, other_admin, %{"redirect" => [redirect_row(2, "/c", "/d")]}, %{
+          source_host: run.source_host
+        })
+
+      migrate_run!(theirs, other_admin)
+
+      for user <- [admin, create_user_with_permissions!(["admin:dashboard:migration"])] do
+        view = open!(conn, user, run)
+        filter!(view, %{"source_kind" => "tag"})
+        pick_all!(view)
+        assert bulk!(view, "leave_out") =~ "11 items left out."
+
+        left_out = Enum.filter(stored(site) ++ stored(other), & &1.left_out)
+
+        assert Enum.all?(
+                 left_out,
+                 &({&1.site_id, &1.source_host, &1.source_kind} ==
+                     {site.id, run.source_host, "tag"})
+               )
+
+        assert length(left_out) == 11
+
+        pick_all!(view)
+        bulk!(view, "bring_back")
+        assert Enum.all?(stored(site), &(not &1.left_out))
+      end
+    end
+
+    test "is refused while a dry run of the site is running, and changes nothing", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag"))
+      filter!(view, %{"source_kind" => "tag"})
+
+      site
+      |> later_run!(admin, run)
+      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      assert row_action!(view, "leave_out", tag) =~ "is running"
+      pick!(view, tag)
+      assert bulk!(view, "leave_out") =~ "is running"
+
+      assert %{left_out: false} = item!(tag)
+      assert plan_of(view, tag) == "created"
+    end
+
+    test "Run again then says on the run's card how many the admin left out", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+      pick_all!(view)
+      bulk!(view, "leave_out")
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+
+      card =
+        (&MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails.panel/1)
+        |> render_component(run: later)
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query(~s|[data-kind="tag"] [data-role="run-details-kind-reason"]|)
+
+      assert LazyHTML.attribute(card, "data-count") == ["11"]
+      assert LazyHTML.text(card) =~ "11 skipped: Left out by you"
+
+      assert Enum.all?(
+               stored(site),
+               &(&1.source_kind != "tag" or &1.plan_reason == "left_out_by_admin")
+             )
     end
   end
 

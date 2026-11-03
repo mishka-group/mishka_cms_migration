@@ -1797,6 +1797,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")
   defp said("post_missing"), do: dgettext("mishka_gervaz", "Its post was not imported")
   defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
+  defp said("left_out_by_admin"), do: dgettext("mishka_gervaz", "Left out by you")
 
   defp said("guest_comment"),
     do: dgettext("mishka_gervaz", "A guest's comment, which Blog cannot keep yet (#21)")
