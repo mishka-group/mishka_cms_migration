@@ -32,6 +32,8 @@ defmodule MishkaCmsMigration.Application do
 
   @sources [MishkaCmsMigration.Sources.WordPress]
 
+  @core_targets [MishkaCmsMigration.Targets.CmsPage]
+
   @blog_targets [
     MishkaCmsMigration.Targets.BlogBlogger,
     MishkaCmsMigration.Targets.BlogCollection,
@@ -58,16 +60,17 @@ defmodule MishkaCmsMigration.Application do
 
   @doc """
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
-  through an existing CMS action: authors, categories, tags and posts into Mishka Blog
-  (`MishkaCmsMigration.Targets.BlogBlogger`, `MishkaCmsMigration.Targets.BlogCollection`,
-  `MishkaCmsMigration.Targets.BlogTag`, `MishkaCmsMigration.Targets.BlogPost`), and each post's old
-  address into a CMS redirect to it (`MishkaCmsMigration.Targets.PostRedirect`).
+  through an existing CMS action: pages into the CMS's pages (`MishkaCmsMigration.Targets.CmsPage`),
+  authors, categories, tags and posts into Mishka Blog (`MishkaCmsMigration.Targets.BlogBlogger`,
+  `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
+  `MishkaCmsMigration.Targets.BlogPost`), and each post's old address into a CMS redirect to it
+  (`MishkaCmsMigration.Targets.PostRedirect`).
 
   Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,
   so on a node without it they are left out and their kinds are skipped as `"no_target"`.
   """
   @spec targets() :: [module()]
-  def targets, do: Enum.filter(@blog_targets, &Code.ensure_loaded?/1)
+  def targets, do: @core_targets ++ Enum.filter(@blog_targets, &Code.ensure_loaded?/1)
 
   @doc """
   Every mishka_installer plugin this extension ships, all of which `start/2` supervises. A plugin

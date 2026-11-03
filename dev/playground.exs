@@ -18,8 +18,9 @@ defmodule Playground do
       Playground.import([%{"id" => 1, "from" => "/old", "to" => "/from-source"}]).report.entries
 
   `Playground.help/0` lists the functions. `rows` is a list of the source's redirect rows, each a
-  map with an `"id"` and the `"from"` and `"to"` addresses, or a map of kind to rows. Only redirects
-  have a target here, so `"note"` and `"page"` rows are reported as skipped (`no_target`). A run
+  map with an `"id"` and the `"from"` and `"to"` addresses, or a map of kind to rows. Redirects are
+  what it writes here: a `"note"` row is reported as skipped (`no_target`), and a `"page"` row goes
+  to the CMS page target (`MishkaCmsMigration.Targets.CmsPage`), which this admin may not use. A run
   created here is the admin's and goes through the domain's own actions and policies, and its job
   runs inline with its retries, so a run that fails ends as `:failed` with its reason.
   """

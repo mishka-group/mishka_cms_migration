@@ -31,8 +31,9 @@ defmodule MishkaCmsMigration.MigrationRun do
     * `:comments` — whether comments come too; `false` by default.
 
   The authors choice is read by the Blog's author target and the post addresses by the redirect
-  target (`MishkaCmsMigration.Targets.PostRedirect`); pages will be read by the page target and
-  comments by the comment target, as each kind's import comes.
+  target (`MishkaCmsMigration.Targets.PostRedirect`), the pages choice by the page target
+  (`MishkaCmsMigration.Targets.CmsPage`); comments will be read by the comment target, as that
+  kind's import comes.
 
   ## Its life
 
@@ -652,7 +653,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. The Pages choice is kept for when pages can be imported."
+                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live."
               )
             end
           end
@@ -1541,6 +1542,15 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("draft_from_password"),
     do: dgettext("mishka_gervaz", "Password-protected at the source, so a draft")
+
+  defp said("draft_from_future"),
+    do: dgettext("mishka_gervaz", "Scheduled at the source, so a draft")
+
+  defp said("path_taken"),
+    do: dgettext("mishka_gervaz", "The site already has a page at this address, so it is kept")
+
+  defp said("path_made_ascii"),
+    do: dgettext("mishka_gervaz", "Its address was made ASCII, so the old address is not served")
 
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)

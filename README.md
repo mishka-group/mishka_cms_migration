@@ -45,7 +45,7 @@ lib/
     ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
     ├── sources/                      the sources it ships: WordPress, and how a post's content becomes HTML
     ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
-    ├── targets/                      the targets it ships: authors, categories, tags and posts into Mishka Blog, where it runs
+    ├── targets/                      the targets it ships: pages into the CMS's pages, and authors, categories, tags and posts into Mishka Blog, where it runs
     ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished
     ├── report.ex                     what a dry run or an import did with each item
     ├── provision.ex                  installing the extension on a site: its permission names

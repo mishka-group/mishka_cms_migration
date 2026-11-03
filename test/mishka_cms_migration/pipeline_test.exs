@@ -12,6 +12,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   alias MishkaCmsCore.Runtime.Redirect
   alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.Targets.CmsPage
   alias MishkaCmsMigration.Test.Plugins.{FakeSource, ItemGate, PageTarget}
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
@@ -349,6 +350,8 @@ defmodule MishkaCmsMigration.PipelineTest do
          %{
            site: site
          } do
+      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, CmsPage, false)
+      on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(CmsPage, false) end)
       register_plugin!(PageTarget, MishkaCmsMigration.Target.event())
 
       admin =

@@ -75,14 +75,14 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaBlog.Provision
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
-    alias MishkaCmsMigration.Targets.Helpers.BySlug
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Status}
 
     @drafted ["pending", "private", "password"]
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
       item
-      |> status()
+      |> Status.call()
       |> dated(date(item.attrs["date_gmt"]))
       |> Map.merge(%{
         title: item.title,
@@ -115,16 +115,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
-      [item |> status() |> drafted(), authored(item, context)]
+      [item |> Status.call() |> drafted(), authored(item, context)]
       |> Enum.reject(&is_nil/1)
       |> noted()
     end
-
-    defp status(%Item{extra: %{"password" => password}})
-         when is_binary(password) and password != "",
-         do: "password"
-
-    defp status(%Item{attrs: attrs}), do: attrs["status"]
 
     defp dated("publish", date),
       do: %{status: :published, published_at: date, scheduled_publish_at: nil}
