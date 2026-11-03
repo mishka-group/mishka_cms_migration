@@ -72,8 +72,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run whose job was lost
   with its node.
 
-  Once a dry run or an import ends — it finished, its job failed, or an admin cancelled it while it
-  ran — the run's user and the admin whose job it was are told in the topbar bell
+  Each step is an entry of the run's log (`MishkaCmsMigration.MigrationLog`), and once a dry run or
+  an import ends — it finished, its job failed, or an admin cancelled it while it ran — the run's
+  user and the admin whose job it was are told in the topbar bell
   (`MishkaCmsMigration.Resources.Notifiers.Steps`).
 
   Running again means a new run; the items earlier runs wrote

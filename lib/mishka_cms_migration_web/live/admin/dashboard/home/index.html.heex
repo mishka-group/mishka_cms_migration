@@ -75,6 +75,10 @@ SPDX-License-Identifier: Apache-2.0
       resource={MishkaCmsMigration.MigrationRun}
       current_user={@current_user}
       url_state={@url_state}
-    />
+    >
+      <:filter_actions>
+        <MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed.feed setup={@activity_feed} />
+      </:filter_actions>
+    </.live_component>
   </div>
 </div>

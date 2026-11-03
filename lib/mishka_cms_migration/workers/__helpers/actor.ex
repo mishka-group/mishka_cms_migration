@@ -11,8 +11,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Actor do
   fails the attempt.
 
   `lookup/1` reads the user as the system (`authorize?: false`): there is no actor yet to read as,
-  since finding one is what it is for. It is one of the two places the extension acts as the
-  system, with `MishkaCmsMigration.Workers.Helpers.Discarded`, which runs outside any job.
+  since finding one is what it is for. It is one of the places the extension acts as the system,
+  with `MishkaCmsMigration.Workers.Helpers.Discarded`, which runs outside any job, and
+  `MishkaCmsMigration.Resources.Notifiers.Steps`, which writes a run's log.
   """
 
   use AshOban.ActorPersister

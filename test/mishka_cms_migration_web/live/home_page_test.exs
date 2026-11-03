@@ -1308,6 +1308,62 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "the Logs" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    defp open_logs!(view) do
+      view |> element("#migration-runs-table #migration-activity-toggle") |> render_click()
+      render_async(view)
+    end
+
+    test "beside the runs table open the core's feed over the site's run steps, newest first", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+
+      site
+      |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      assert has_element?(view, "#migration-activity-toggle", "Logs")
+      refute has_element?(view, "#migration-activity-panel", "Connected to old.example.com.")
+
+      html = open_logs!(view)
+
+      assert [finished, started, connected] =
+               html
+               |> LazyHTML.from_fragment()
+               |> LazyHTML.query(~s|#migration-activity-list > [id^="activity-migration-"]|)
+               |> Enum.map(&LazyHTML.text/1)
+
+      assert finished =~ "Dry run of old.example.com finished: 1 created."
+      assert finished =~ to_string(admin.email)
+      assert started =~ "Dry run of old.example.com started."
+      assert connected =~ "Connected to old.example.com."
+    end
+
+    test "show no other site's steps, and a new step of the site's without a reload", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      other = create_site!()
+      create_run!(other, migration_admin!(other), %{}, %{source_host: "elsewhere.example.com"})
+
+      view = open!(conn, admin)
+      refute open_logs!(view) =~ "elsewhere.example.com"
+
+      create_run!(site, admin, %{})
+
+      assert settled(view) =~ "Connected to old.example.com."
+    end
+  end
+
   describe "the sidebar" do
     test "has one entry, in Plugins, gated by the migration permission" do
       assert [item] = SidebarMenu.items()

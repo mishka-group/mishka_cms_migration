@@ -33,12 +33,21 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   keeps which row it last expanded and draws it again on each of that run's notifications, so a
   dry run moving on, or finishing, shows in it without a reload.
 
+  ## Logs
+
+  Logs, beside the table's count, is the core's activity feed
+  (`MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed`, as the runtime pages show theirs) over
+  the runs' log alone (`MishkaCmsMigration.Activity`): each step of a run, newest first, in the
+  sentence the bell says, who took it and on which site. It reads the latest entries the first
+  time it opens and adds each new one as its broadcast arrives.
+
   Who may open it is the sidebar's declaration (`MishkaCmsMigrationWeb.SidebarMenu`), which
   `MishkaCmsCore.Sidebar.PageGuard` reads on every mount.
   """
 
   use MishkaCmsCore.ExtensionLiveView
 
+  alias MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed
   alias MishkaCmsMigration.{MigrationRun, Source}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
   alias MishkaGervaz.Errors
@@ -57,6 +66,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
        url_state: nil,
        sources: Source.all(),
        expanded_id: nil
+     )
+     |> ActivityFeed.setup(
+       resources: [MigrationRun],
+       sources: [MishkaCmsMigration.Activity],
+       feed_id: "migration-activity"
      )}
   end
 

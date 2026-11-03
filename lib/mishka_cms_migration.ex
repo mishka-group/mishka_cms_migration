@@ -12,6 +12,8 @@ defmodule MishkaCmsMigration do
       report.
     * `MishkaCmsMigration.MigrationItem` — what was written for each item of a source, so a re-run
       updates instead of duplicating and keeps what an admin changed in the CMS.
+    * `MishkaCmsMigration.MigrationLog` — a run's log: each step of its life, which the Migration
+      page's Logs and the core's activity log show (`MishkaCmsMigration.Activity`).
 
   A source is a plugin behind `MishkaCmsMigration.Source`, each kind of item is written through an
   existing CMS action by a `MishkaCmsMigration.Target`, the jobs are the run's AshOban triggers
@@ -84,6 +86,10 @@ defmodule MishkaCmsMigration do
 
       define :record_item, action: :record
       define :record_item_outcome, action: :record_outcome
+    end
+
+    resource MishkaCmsMigration.MigrationLog do
+      define :record_log, action: :record
     end
   end
 end

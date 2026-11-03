@@ -31,12 +31,13 @@ defmodule MishkaCmsMigrationTest do
     assert MishkaCmsMigration.Provision in MishkaCmsMigration.Application.plugins()
   end
 
-  test "the domain is registered and holds the runs and their items" do
+  test "the domain is registered and holds the runs, their items and their log" do
     assert MishkaCmsMigration in Application.fetch_env!(:mishka_cms_migration, :ash_domains)
 
     assert Ash.Domain.Info.resources(MishkaCmsMigration) == [
              MishkaCmsMigration.MigrationRun,
-             MishkaCmsMigration.MigrationItem
+             MishkaCmsMigration.MigrationItem,
+             MishkaCmsMigration.MigrationLog
            ]
   end
 

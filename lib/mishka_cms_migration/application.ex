@@ -13,8 +13,9 @@ defmodule MishkaCmsMigration.Application do
   `MishkaCmsMigration.Target`) it ships; the one that makes it installable on a site,
   `MishkaCmsMigration.Provision`; the two that open the chains of the events deciding what is
   written, `MishkaCmsMigration.Events.BeforeImportGuard` and
-  `MishkaCmsMigration.Events.ConvertGuard`; and the admin page's sidebar entry,
-  `MishkaCmsMigrationWeb.SidebarMenu`.
+  `MishkaCmsMigration.Events.ConvertGuard`; the admin page's sidebar entry,
+  `MishkaCmsMigrationWeb.SidebarMenu`; and the runs' log in the core's activity log
+  (`MishkaCmsMigration.Activity`, on `"activity:sources"`).
 
   At boot it also attaches the Oban telemetry handler that fails the run of a migration job Oban
   discards (`MishkaCmsMigration.Workers.attach/0`).
@@ -43,6 +44,8 @@ defmodule MishkaCmsMigration.Application do
   ]
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
+
+  @activity_sources [MishkaCmsMigration.Activity]
 
   @provision_plugins [MishkaCmsMigration.Provision]
 
@@ -80,7 +83,9 @@ defmodule MishkaCmsMigration.Application do
   """
   @spec plugins() :: [module()]
   def plugins,
-    do: sources() ++ targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus
+    do:
+      sources() ++
+        targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus ++ @activity_sources
 
   @impl true
   def start(_type, _args) do
