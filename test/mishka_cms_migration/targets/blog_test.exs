@@ -1005,6 +1005,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert classic |> LazyHTML.query("video") |> LazyHTML.attribute("src") == [files["sample"]]
 
+      video = posts["A post with a gallery and a video"] |> content() |> LazyHTML.query("video")
+
+      assert {LazyHTML.attribute(video, "src"), LazyHTML.attribute(video, "poster")} ==
+               {[files["sample"]], [files["gallery-2"]]}
+
       located =
         posts
         |> Map.values()

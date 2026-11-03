@@ -71,8 +71,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     as an SVG or one that failed, is written with none, and the import's report says so
     (`"featured_image_missing"`); a dry run, which writes no file, does not.
 
-    Its `"media"` name the addresses of its content that are files of the source, and each `src`
-    and `href` of them points at the file's Media address instead
+    Its `"media"` name the addresses of its content that are files of the source, and each `src`,
+    `href` and video `poster` of them points at the file's Media address instead
     (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
     file that was not written is kept as it is.

@@ -74,8 +74,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   ## Its pictures and files
 
-  Its `"media"` name the addresses of its content that are files of the source, and each `src`
-  and `href` of them points at the Media address of the file the same run, or an earlier one,
+  Its `"media"` name the addresses of its content that are files of the source, and each `src`,
+  `href` and video `poster` of them points at the Media address of the file the same run, or an earlier one,
   wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
   too. The address of a file that was not written is kept as it is, and so is every other link.
 
