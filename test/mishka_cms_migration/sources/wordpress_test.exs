@@ -815,8 +815,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert Enum.any?(run.report.entries, &(&1.title == "نصب وردپرس روی سرور"))
 
-      assert MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false) ==
-               []
+      assert imported_items(site) == []
     end
   end
 end

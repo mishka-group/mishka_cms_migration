@@ -329,8 +329,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert counts(file) ==
                Map.update!(counts(rest), "comment", &%{&1 | skipped: &1.skipped + pingbacks})
 
-      assert MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false) ==
-               []
+      assert imported_items(site) == []
     end
   end
 end

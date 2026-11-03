@@ -61,7 +61,8 @@ defmodule MishkaCmsMigration.PipelineTest do
   ]
 
   describe "a dry run" do
-    test "reports every item as a create and writes nothing", %{site: site, admin: admin} do
+    test "reports every item as a create, records it as the item's plan, and writes nothing in the CMS",
+         %{site: site, admin: admin} do
       run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
 
       assert run.status == :dry_run
@@ -69,7 +70,64 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert [%{kind: "redirect", created: 3}] = run.report.kinds
       assert Enum.map(run.report.entries, & &1.source_id) == ["1", "2", "3"]
       assert redirects(site) == []
-      assert items(site) == []
+      assert imported_items(site) == []
+
+      assert Enum.map(items(site), &{&1.source_id, &1.title, &1.plan, &1.plan_reason}) == [
+               {"1", nil, :created, nil},
+               {"2", nil, :created, nil},
+               {"3", nil, :created, nil}
+             ]
+
+      assert {run.created_count, run.skipped_count} == {0, 0}
+    end
+
+    test "records why it would skip or fail an item as its plan, and leaves a row with no id out",
+         %{site: site, admin: admin} do
+      items = %{
+        "redirect" => [%{"id" => 1, "unreadable" => true}, %{"from" => "/no-id", "to" => "/x"}],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      site |> create_run!(admin, items) |> dry_run!(admin)
+
+      assert [%{source_kind: "note", source_id: "9", plan: :skipped, plan_reason: "no_target"}] =
+               items(site)
+    end
+
+    test "leaves what an import recorded, and the import keeps the plan", %{
+      site: site,
+      admin: admin
+    } do
+      first = migrate!(site, admin, %{"redirect" => @rows})
+      imported = Map.new(items(site), &{&1.source_id, &1})
+
+      changed =
+        List.replace_at(@rows, 1, %{"id" => 2, "from" => "/old-two", "to" => "/two-moved"})
+
+      later = site |> create_run!(admin, %{"redirect" => changed}) |> dry_run!(admin)
+
+      for item <- items(site) do
+        before = imported[item.source_id]
+
+        assert Map.take(item, [:run_id, :outcome, :reason, :target_id, :content_hash]) ==
+                 Map.take(before, [:run_id, :outcome, :reason, :target_id, :content_hash])
+
+        assert item.run_id == first.id
+      end
+
+      assert Map.new(items(site), &{&1.source_id, {&1.plan, &1.plan_reason}}) == %{
+               "1" => {:skipped, "unchanged"},
+               "2" => {:updated, nil},
+               "3" => {:skipped, "unchanged"}
+             }
+
+      import!(later, admin)
+
+      assert Map.new(items(site), &{&1.source_id, {&1.outcome, &1.plan}}) == %{
+               "1" => {:skipped, :skipped},
+               "2" => {:updated, :updated},
+               "3" => {:skipped, :skipped}
+             }
     end
 
     test "saves its progress page by page, which the run's notifier broadcasts", %{
@@ -884,7 +942,11 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 1}
       assert %{"1" => {:created, nil}, "9" => {:failed, reason}} = outcomes(run)
       assert reason =~ "the skip could not be recorded"
-      assert [%{source_id: "1", outcome: :created}] = items(site)
+
+      assert [
+               %{source_id: "1", outcome: :created},
+               %{source_id: "9", outcome: nil, plan: :skipped}
+             ] = items(site)
     end
   end
 end

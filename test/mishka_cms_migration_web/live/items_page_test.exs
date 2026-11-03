@@ -132,6 +132,9 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   defp kept(items), do: Enum.map(items, &{&1.source_kind, &1.source_id, to_string(&1.outcome)})
 
+  defp planned(%{plan: :skipped, plan_reason: "connected"}), do: "connected"
+  defp planned(item), do: to_string(item.plan)
+
   # How many items the table says it holds, whatever it has loaded so far.
   defp total(view) do
     ~r/(\d+)\s*$/
@@ -192,6 +195,68 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       later = later_run!(site, admin, run)
 
       assert total(open!(conn, admin, later)) == length(stored(site))
+    end
+  end
+
+  describe "the plan" do
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      :ok
+    end
+
+    test "shows what the last dry run would do with each item, beside what the last import did",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+      view = open!(conn, admin, later)
+      items = stored(site)
+
+      for {kind, of_kind} <- Enum.group_by(items, & &1.source_kind), length(of_kind) <= 20 do
+        filter!(view, %{"source_kind" => kind})
+
+        assert view |> attributes("item-plan", "data-plan") |> Enum.sort() ==
+                 of_kind |> Enum.map(&planned/1) |> Enum.sort()
+
+        assert view |> attributes("item-outcome", "data-outcome") |> Enum.sort() ==
+                 of_kind |> Enum.map(&to_string(&1.outcome)) |> Enum.sort()
+      end
+
+      filter!(view, %{"source_kind" => "tag"})
+
+      assert Enum.uniq(texts(view, "item-plan-reason")) == [
+               MigrationRun.reason_label("unchanged")
+             ]
+    end
+
+    test "lists the items a dry run met before any import, as not imported yet", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      rows = [redirect_row(1, "/a", "/b"), redirect_row(2, "/c", "/d")]
+
+      run =
+        site
+        |> create_run!(admin, %{"redirect" => rows, "note" => [%{"id" => 9}]})
+        |> dry_run!(admin)
+
+      view = open!(conn, admin, run)
+
+      assert total(view) == 3
+
+      assert Enum.sort(attributes(view, "item-plan", "data-plan")) == [
+               "created",
+               "created",
+               "skipped"
+             ]
+
+      assert attributes(view, "item-outcome", "data-outcome") == ["", "", ""]
+      assert texts(view, "item-plan-reason") == [MigrationRun.reason_label("no_target")]
+
+      filter!(view, %{"plan" => "created"})
+      assert Enum.sort(rows(view)) == [{"redirect", "1", ""}, {"redirect", "2", ""}]
+
+      filter!(view, %{"plan" => "", "this_run" => "true"})
+      assert total(view) == 0
     end
   end
 
@@ -308,7 +373,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     } do
       view = open!(conn, admin, run)
       post = Enum.find(stored(site), &(&1.source_kind == "post" and map_size(&1.extra) > 0))
-      filter!(view, %{"source_kind" => "post"})
+      filter!(view, %{"source_kind" => "post", "search" => post.title})
       expand!(view, post)
 
       assert has_element?(view, ~s|[data-role="item-details"][data-item-id="#{post.id}"]|)

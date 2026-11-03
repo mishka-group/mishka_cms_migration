@@ -42,9 +42,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   ## Dry run and import
 
-  A dry run decides and reports; it writes nothing and fires no event. An import writes each item
-  as the admin who pressed Import, and once every kind is walked its report and the source's facts
-  are saved on the run and the report is handed to `migration:import:finished`
+  A dry run decides and reports; it writes nothing in the CMS and fires no event, and records what
+  it would do with each item as the item's plan (`MishkaCmsMigration.MigrationItem`'s
+  `:record_plan`), which the Items page shows before anything is imported. An import writes each
+  item as the admin who pressed Import, and once every kind is walked its report and the source's
+  facts are saved on the run and the report is handed to `migration:import:finished`
   (`MishkaCmsMigration.Events`).
 
   ## When the job stops

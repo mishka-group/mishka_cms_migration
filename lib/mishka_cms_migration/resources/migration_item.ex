@@ -4,12 +4,15 @@
 
 defmodule MishkaCmsMigration.MigrationItem do
   @moduledoc """
-  What the migration remembers about one item of a source on a site: the CMS record it wrote
-  (`target_resource`, `target_id`), when that record last changed as the migration left it
-  (`target_updated_at`), what the source said about the item then (`title`, `source_modified_at`,
-  `content_hash`, and the fields the CMS has no home for, `extra`), and what the last run that met
-  it did (`outcome`, `reason`, `run_id`). The item's content and its other fields, such as a post's
-  slug, status and author, are not kept: every run reads them from the source again.
+  What the migration remembers about one item of a source on a site: what the last dry run would
+  do with it (`plan`, `plan_reason`), the CMS record the last import wrote (`target_resource`,
+  `target_id`), when that record last changed as the import left it (`target_updated_at`), what the
+  source said about the item then (`title`, `source_modified_at`, `content_hash`, and the fields the
+  CMS has no home for, `extra`), and what the last import that met it did (`outcome`, `reason`,
+  `run_id`). `outcome` is `nil` for an item no import has met yet, so a run's counts
+  (`MishkaCmsMigration.MigrationRun`'s `created_count` and the rest) count what its import did
+  alone. The item's content and its other fields, such as a post's slug, status and author, are
+  not kept: every run reads them from the source again.
 
   An item is one per site, source host, kind and source id (`:unique_source_item`). That is what
   makes running again safe: a second run finds the record the first one wrote and updates it, leaves
@@ -22,22 +25,26 @@ defmodule MishkaCmsMigration.MigrationItem do
   second and that item is recorded as failed with the CMS's reason; the first is never
   overwritten.
 
-  Written by the import job alone, which AshOban's context lets through where every actor is refused
-  (`AshOban.Checks.AshObanInteraction`), as upserts on that identity: `:record` after its CMS record
-  was written, `:record_outcome` after an item was skipped or failed, which keeps what the last
-  write recorded. Read by whoever may read the site's runs (`MishkaCmsMigration.MigrationRun`).
+  Written by the jobs alone, which AshOban's context lets through where every actor is refused
+  (`AshOban.Checks.AshObanInteraction`), as upserts on that identity: a dry run's `:record_plan`
+  for every item it meets, which sets its title and plan and nothing an import recorded; an
+  import's `:record` after its CMS record was written, and `:record_outcome` after an item was
+  skipped or failed, which keeps what the last write recorded. No import write touches the plan,
+  so an item shows what the last dry run would do beside what the last import did. Read by whoever
+  may read the site's runs (`MishkaCmsMigration.MigrationRun`).
 
   ## In the admin
 
   The Items page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`), reached from a run's
   row, lists as a Gervaz table every item of the run's source host on the run's site, whichever
-  run met it last; its "Only this run's" filter narrows them to the ones this run met last. Each row
-  shows the item's kind (`MishkaCmsMigration.MigrationRun.kind_label/1`), title and source id, what
-  the last run did with it as an outcome pill with its reason in words
-  (`MishkaCmsMigration.MigrationRun.reason_label/1`), links to its CMS record (`record_paths`,
-  below) and when the last run met it. It filters by kind and outcome, searches the title and the
-  source id, and keeps them in the address under `items`. A row expands to what is kept of the
-  item, as JSON.
+  run met it last; its "Imported by this run" filter narrows them to the ones this run's import met
+  last. Each row shows the item's kind (`MishkaCmsMigration.MigrationRun.kind_label/1`), its title
+  with its source id under it, its Plan (`plan_cell/1`): what the last dry run would do with it, as
+  a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), its Last
+  import (`last_import_cell/1`): what the last import did with it, the same way, or Not imported,
+  links to its CMS record (`record_paths`, below) and when a run last met it. It filters by kind,
+  plan and last import, searches the title and the source id, and keeps them in the address under
+  `items`. A row expands to what is kept of the item, as JSON.
 
   `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
   (`MishkaCmsMigration.MigrationRun.record_paths/2`), `nil` for an item with no record or whose
@@ -103,6 +110,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     field :reason, :string,
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=2000])"
 
+    field :plan_reason, :string,
+      derives: "sanitize(trim, no_control) validate(optional=[string, max_len=2000])"
+
     field :extra, :map, derives: "validate(optional=[map])"
   end
 
@@ -150,89 +160,61 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
 
         column :title do
+          static true
+          requires [:title, :source_id]
           label fn -> dgettext("mishka_gervaz", "Title") end
           sortable true
-
-          ui do
-            width "minmax(160px,1.6fr)"
-          end
-
-          render fn title ->
-            assigns = %{title: title}
-
-            ~H"""
-            <div
-              data-role="item-title"
-              title={@title}
-              class="min-w-0 truncate text-[13px] font-semibold text-[#17161a]"
-            >
-              {@title || dgettext("mishka_gervaz", "Untitled")}
-            </div>
-            """
-          end
-        end
-
-        column :source_id do
-          label fn -> dgettext("mishka_gervaz", "Source ID") end
-
-          ui do
-            width "minmax(84px,0.5fr)"
-          end
-
-          render fn source_id ->
-            assigns = %{source_id: source_id}
-
-            ~H"""
-            <span
-              data-role="item-source-id"
-              class="font-['Space_Grotesk'] text-[12px] font-medium text-[#7c7a75]"
-            >
-              {"#" <> @source_id}
-            </span>
-            """
-          end
-        end
-
-        column :result do
-          static true
-          requires [:outcome, :reason]
-          label fn -> dgettext("mishka_gervaz", "Outcome") end
+          sort_field [:title]
 
           ui do
             width "minmax(160px,1.6fr)"
           end
 
           render fn item ->
-            assigns = %{
-              outcome: item.outcome,
-              word: MigrationRun.outcome_word(item.outcome),
-              class: MigrationRun.outcome_class(item.outcome),
-              icon: MigrationRun.outcome_icon(item.outcome),
-              reason: item.reason && MigrationRun.reason_label(item.reason)
-            }
+            assigns = %{title: item.title, source_id: item.source_id}
 
             ~H"""
             <div class="min-w-0">
-              <span
-                data-role="item-outcome"
-                data-outcome={@outcome}
-                class={[
-                  "inline-flex w-fit items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
-                  @class
-                ]}
-              >
-                <MishkaCmsCore.CoreComponents.icon name={@icon} class="size-[10px]" />{@word}
-              </span>
               <div
-                :if={@reason}
-                data-role="item-reason"
-                class="mt-[4px] text-[11px] font-medium text-[#a8a5a0]"
+                data-role="item-title"
+                title={@title}
+                class="truncate text-[13px] font-semibold text-[#17161a]"
               >
-                {@reason}
+                {@title || dgettext("mishka_gervaz", "Untitled")}
+              </div>
+              <div
+                data-role="item-source-id"
+                class="mt-[2px] font-['Space_Grotesk'] text-[11px] font-medium text-[#a8a5a0]"
+              >
+                {"#" <> @source_id}
               </div>
             </div>
             """
           end
+        end
+
+        column :planned do
+          static true
+          requires [:plan, :plan_reason]
+          label fn -> dgettext("mishka_gervaz", "Plan") end
+
+          ui do
+            width "minmax(150px,1.3fr)"
+          end
+
+          render fn item -> MishkaCmsMigration.MigrationItem.plan_cell(item) end
+        end
+
+        column :result do
+          static true
+          requires [:outcome, :reason]
+          label fn -> dgettext("mishka_gervaz", "Last import") end
+
+          ui do
+            width "minmax(150px,1.3fr)"
+          end
+
+          render fn item -> MishkaCmsMigration.MigrationItem.last_import_cell(item) end
         end
 
         column :record do
@@ -300,12 +282,21 @@ defmodule MishkaCmsMigration.MigrationItem do
           end
         end
 
+        filter :plan, :select do
+          options fn -> MishkaCmsMigration.MigrationItem.plan_options() end
+
+          ui do
+            prompt dgettext_noop("mishka_gervaz", "Any plan")
+            label fn -> dgettext("mishka_gervaz", "Plan") end
+          end
+        end
+
         filter :outcome, :select do
           options fn -> MigrationRun.outcome_options() end
 
           ui do
             prompt dgettext_noop("mishka_gervaz", "Any outcome")
-            label fn -> dgettext("mishka_gervaz", "Outcome") end
+            label fn -> dgettext("mishka_gervaz", "Last import") end
           end
         end
 
@@ -318,7 +309,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           end
 
           ui do
-            label fn -> dgettext("mishka_gervaz", "Only this run's") end
+            label fn -> dgettext("mishka_gervaz", "Imported by this run") end
           end
         end
       end
@@ -395,7 +386,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
-      description "System-internal: an item whose CMS record a run wrote"
+      description "System-internal: an item whose CMS record an import wrote"
     end
 
     create :record_outcome do
@@ -406,7 +397,18 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
-      description "System-internal: an item a run skipped or failed, keeping what was last written"
+      description "System-internal: an item an import skipped or failed, keeping what was last written"
+    end
+
+    create :record_plan do
+      accept @source ++ [:title, :plan, :plan_reason]
+      upsert? true
+      upsert_identity :unique_source_item
+      upsert_fields [:title, :plan, :plan_reason, :updated_at]
+
+      change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
+
+      description "System-internal: what a dry run would do with an item, keeping what imports recorded"
     end
   end
 
@@ -501,10 +503,25 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     attribute :outcome, :atom do
-      allow_nil? false
+      allow_nil? true
       public? true
       constraints one_of: @outcomes
-      description "What the last run that met the item did with it"
+      description "What the last import that met the item did with it; nil before any import did"
+    end
+
+    attribute :plan, :atom do
+      allow_nil? true
+      public? true
+      constraints one_of: @outcomes
+      description "What the last dry run that met the item would do with it"
+    end
+
+    attribute :plan_reason, :string do
+      allow_nil? true
+      public? true
+      constraints max_length: 2000
+
+      description "Why the last dry run would skip or fail the item, or what it would write otherwise"
     end
 
     attribute :extra, :map do
@@ -519,7 +536,8 @@ defmodule MishkaCmsMigration.MigrationItem do
       allow_nil? true
       public? true
       constraints max_length: 2000
-      description "Why the item was skipped or failed, or what its write left unconverted"
+
+      description "Why the last import skipped or failed the item, or what its write left unconverted"
     end
 
     create_timestamp :inserted_at, public?: true
@@ -538,7 +556,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       allow_nil? true
       attribute_writable? true
       public? true
-      description "The last run that met the item"
+      description "The last import that met the item"
     end
   end
 
@@ -557,4 +575,95 @@ defmodule MishkaCmsMigration.MigrationItem do
       nils_distinct? false
     end
   end
+
+  @doc """
+  The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
+  (`data-role="item-plan"`, its `data-plan` the plan, or `connected` for an item the dry run
+  connected to a record the CMS already held), the reason in words under it
+  (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/1`). A dash before
+  the item's first dry run.
+  """
+  @spec plan_cell(map()) :: Phoenix.LiveView.Rendered.t()
+  def plan_cell(item),
+    do:
+      item.plan
+      |> planned(item.plan_reason)
+      |> Map.merge(%{role: "item-plan", reason_role: "item-plan-reason"})
+      |> pill()
+
+  @doc """
+  The Items table's Last import cell for `item`: what the last import did with it, as a pill
+  (`data-role="item-outcome"`, its `data-outcome` the outcome), the reason in words under it
+  (`data-role="item-reason"`), or Not imported (an empty `data-outcome`) for an item no import has
+  met.
+  """
+  @spec last_import_cell(map()) :: Phoenix.LiveView.Rendered.t()
+  def last_import_cell(item),
+    do:
+      item.outcome
+      |> imported(item.reason)
+      |> Map.merge(%{role: "item-outcome", reason_role: "item-reason"})
+      |> pill()
+
+  @doc "Every plan as a `{words, plan}` pair, in the order the report counts outcomes."
+  @spec plan_options() :: [{String.t(), atom()}]
+  def plan_options, do: Enum.map(@outcomes, &{plan_word(&1), &1})
+
+  defp pill(assigns) do
+    ~H"""
+    <div class="min-w-0">
+      <span
+        data-role={@role}
+        data-plan={@role == "item-plan" && @key}
+        data-outcome={@role == "item-outcome" && @key}
+        class={[
+          "inline-flex w-fit items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
+          @class
+        ]}
+      >
+        <MishkaCmsCore.CoreComponents.icon :if={@icon} name={@icon} class="size-[10px]" />{@word}
+      </span>
+      <div
+        :if={@reason}
+        data-role={@reason_role}
+        class="mt-[4px] text-[11px] font-medium text-[#a8a5a0]"
+      >
+        {@reason}
+      </div>
+    </div>
+    """
+  end
+
+  defp planned(nil, _reason), do: none("", dgettext("mishka_gervaz", "No dry run yet"))
+
+  defp planned(:skipped, "connected"),
+    do: %{
+      key: "connected",
+      word: dgettext("mishka_gervaz", "Connected"),
+      class: "bg-[#eeedfb] text-[#5b57d6]",
+      icon: "hero-link",
+      reason: nil
+    }
+
+  defp planned(plan, reason), do: said(plan, plan_word(plan), reason)
+
+  defp imported(nil, _reason), do: none("", dgettext("mishka_gervaz", "Not imported"))
+  defp imported(outcome, reason), do: said(outcome, MigrationRun.outcome_word(outcome), reason)
+
+  defp said(key, word, reason),
+    do: %{
+      key: to_string(key),
+      word: word,
+      class: MigrationRun.outcome_class(key),
+      icon: MigrationRun.outcome_icon(key),
+      reason: reason && MigrationRun.reason_label(reason)
+    }
+
+  defp none(key, word),
+    do: %{key: key, word: word, class: "bg-[#f7f6f2] text-[#bcb9b2]", icon: nil, reason: nil}
+
+  defp plan_word(:created), do: dgettext("mishka_gervaz", "Would create")
+  defp plan_word(:updated), do: dgettext("mishka_gervaz", "Would update")
+  defp plan_word(:skipped), do: dgettext("mishka_gervaz", "Would skip")
+  defp plan_word(:failed), do: dgettext("mishka_gervaz", "Would fail")
 end

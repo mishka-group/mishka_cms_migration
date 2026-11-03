@@ -74,7 +74,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
   defp files, do: length(recorded("media")) - 1
 
   describe "a dry run" do
-    test "plans every file Media can keep, skips the SVG, downloads nothing and writes nothing",
+    test "plans every file Media can keep, skips the SVG, downloads nothing and writes nothing in the CMS",
          %{site: site, admin: admin} do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 

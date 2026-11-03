@@ -147,7 +147,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   end
 
   describe "a dry run" do
-    test "reports every category and tag as one to create, and writes nothing", %{
+    test "reports every category and tag as one to create, and writes nothing in the CMS", %{
       site: site,
       admin: admin
     } do
@@ -161,7 +161,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert blog(Collection, site) == %{}
       assert blog(Tag, site) == %{}
-      assert Ash.read!(MigrationItem, tenant: site.id, authorize?: false) == []
+      assert imported_items(site) == []
     end
 
     test "skips them as no_target where the Blog targets are stopped", %{site: site, admin: admin} do
@@ -255,7 +255,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   end
 
   describe "terms the site already has" do
-    test "a dry run reports the tag and the category of the same slug as connected, the others as ones to create, and writes nothing",
+    test "a dry run reports the tag and the category of the same slug as connected, the others as ones to create, and writes nothing in the CMS",
          %{site: site, admin: admin} do
       own_terms!(site, admin)
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
@@ -404,7 +404,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   describe "authors" do
     setup %{site: site}, do: %{admin: migration_admin!(site, @people)}
 
-    test "a dry run plans a blogger for the author whose email is a user of the site, skips the others as having no user, and writes nothing",
+    test "a dry run plans a blogger for the author whose email is a user of the site, skips the others as having no user, and writes nothing in the CMS",
          %{site: site, admin: admin} do
       create_user!(email: @editor, site_id: site.id)
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
@@ -665,7 +665,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   end
 
   describe "posts" do
-    test "a dry run reports every post as one to create, says which become drafts and what is left as text, and writes nothing",
+    test "a dry run reports every post as one to create, says which become drafts and what is left as text, and writes nothing in the CMS",
          %{site: site, admin: admin} do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
       outcomes = outcomes(run, "post")
@@ -1251,7 +1251,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert comments(site) == %{}
     end
 
-    test "a dry run plans the comments of the site's users, leaves out a guest's and a page's, and writes nothing",
+    test "a dry run plans the comments of the site's users, leaves out a guest's and a page's, and writes nothing in the CMS",
          %{site: site, admin: admin} do
       members!(site)
       run = site |> wordpress_run!(admin, @on) |> dry_run!(admin)
@@ -1262,7 +1262,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                |> Map.put("15", {:skipped, "page_comment"})
 
       assert comments(site) == %{}
-      assert Ash.read!(MigrationItem, tenant: site.id, authorize?: false) == []
+      assert imported_items(site) == []
     end
 
     test "a dry run under create plans a source user's comment too, since the import makes the user",

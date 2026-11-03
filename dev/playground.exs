@@ -87,15 +87,16 @@ defmodule Playground do
   def redirects, do: Enum.map(read_redirects(), &{&1.from_path, &1.to})
 
   @doc """
-  What the migration recorded for each item, as `{kind, source_id, outcome, reason}`, read as the
-  admin.
+  What the migration recorded for each item, as `{kind, source_id, plan, outcome, reason}`, read as
+  the admin: what the last dry run would do with it, and what the last import did and why (`nil`
+  before an import met it).
   """
-  @spec items() :: [{String.t(), String.t(), atom(), String.t() | nil}]
+  @spec items() :: [{String.t(), String.t(), atom() | nil, atom() | nil, String.t() | nil}]
   def items do
     MigrationItem
     |> Ash.Query.sort(:source_id)
     |> Ash.read!(actor: admin(), tenant: site().id)
-    |> Enum.map(&{&1.source_kind, &1.source_id, &1.outcome, &1.reason})
+    |> Enum.map(&{&1.source_kind, &1.source_id, &1.plan, &1.outcome, &1.reason})
   end
 
   @doc """
@@ -410,7 +411,12 @@ defmodule Playground.Tour do
        {"the report says 3 to create",
         run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0}},
        {"the CMS still has no redirect", Playground.redirects() == []},
-       {"no migration item was recorded", Playground.items() == []}
+       {"each item's plan is recorded, and none is imported",
+        Playground.items() == [
+          {"redirect", "1", :created, nil, nil},
+          {"redirect", "2", :created, nil, nil},
+          {"redirect", "3", :created, nil, nil}
+        ]}
      ]}
   end
 

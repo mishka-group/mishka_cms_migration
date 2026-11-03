@@ -538,7 +538,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         </h4>
         <p class="m-0 mx-auto mt-1 max-w-[440px] text-[12.5px] font-medium leading-[1.5] text-[#8a877f]">
           {gettext(
-            "Run one to see what this site holds. A dry run reads every item and writes nothing."
+            "Run one to see what this site holds. A dry run reads every item and writes nothing in the CMS."
           )}
         </p>
       </div>

@@ -17,7 +17,8 @@ defmodule MishkaCmsMigration.Report do
       }
 
   The outcome of an entry is one of `outcomes/0`. In an import it is what was done. In a dry run it
-  is the plan, from what the source and earlier runs say; a dry run asks no plugin and does not run
+  is the plan, from what the source and earlier runs say, which the dry run also records on each
+  item (`MishkaCmsMigration.MigrationItem`'s `plan`); a dry run asks no plugin and does not run
   the CMS action, so an item a `migration:item:before_import` plugin would skip, or one the CMS
   would refuse (an address another source already took, a value its validations reject), reads as
   created or updated in the dry run and as skipped or failed in the import.

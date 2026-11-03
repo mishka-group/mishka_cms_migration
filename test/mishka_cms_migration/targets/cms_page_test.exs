@@ -109,7 +109,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   end
 
   describe "a dry run" do
-    test "plans every page at its old path, says which are not live at the source, and writes nothing",
+    test "plans every page at its old path, says which are not live at the source, and writes nothing in the CMS",
          %{site: site, admin: admin} do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
@@ -118,10 +118,10 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
       assert %{"31" => {:created, "draft_from_private"}, "3" => {:created, nil}} = outcomes(run)
       assert pages(site) == %{}
-      assert Ash.read!(MigrationItem, tenant: site.id, authorize?: false) == []
+      assert imported_items(site) == []
     end
 
-    test "reports a page whose path the site has as skipped, and writes nothing", %{
+    test "reports a page whose path the site has as skipped, and writes nothing in the CMS", %{
       site: site,
       admin: admin
     } do

@@ -16,8 +16,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
   so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
   its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot be
-  recorded, the item's entry says it failed, with why. A dry run records nothing and writes nothing:
-  it reports the plan.
+  recorded, the item's entry says it failed, with why. A dry run writes nothing in the CMS: it
+  reports the plan and records it on each item (`:record_plan`, its outcome and reason as the
+  item's `plan` and `plan_reason`), which leaves alone what an import recorded.
 
   An item written otherwise than the source has it has its entry and its record say so: its
   target's note (`MishkaCmsMigration.Target`'s `note/2`), then the pieces of its content no plugin
@@ -47,12 +48,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   Settles `item` by `plan` and answers its entry in the report:
 
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
-      in a dry run, with its target's note and the pieces of its content left unconverted as its
-      reason;
+      and recorded as the item's plan in a dry run, with its target's note and the pieces of its
+      content left unconverted as its reason;
     * `{:connected, target, record}` — recorded against `record` in an import, never written, and
       reported as skipped, `"connected"`;
-    * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason in an import; an item
-      whose row could not be read has only its kind and, when the row named one, its source id;
+    * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason, as what an import
+      did or as a dry run's plan; an item whose row could not be read has only its kind and, when
+      the row named one, its source id, and is recorded only with one;
     * `:duplicate` — the source listed its id before: reported, never recorded.
   """
   @spec call(map(), Item.t(), term()) :: Report.entry()
@@ -62,8 +64,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
     do: entry(state, item, outcome, reason)
 
-  def call(%{mode: :dry_run}, %Item{} = item, {:connected, _target, _record}),
-    do: Report.entry(item.kind, item.source_id, item.title, :skipped, "connected")
+  def call(%{mode: :dry_run} = state, %Item{} = item, {:connected, _target, _record}),
+    do: entry(state, item, :skipped, "connected")
 
   def call(%{mode: :import} = state, %Item{} = item, {:connected, target, record}) do
     state
@@ -74,10 +76,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record}),
     do:
-      Report.entry(
-        item.kind,
-        item.source_id,
-        item.title,
+      entry(
+        state,
+        item,
         outcome,
         note(target, item, %{state.context | record: record}, to_convert(item))
       )
@@ -209,6 +210,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                title: item.title,
                outcome: outcome,
                reason: reason
+             },
+             scope: state.scope
+           ),
+         do: :ok
+  end
+
+  defp noted(%{mode: :dry_run} = state, %Item{source_id: source_id} = item, plan, reason)
+       when is_binary(source_id) do
+    with {:ok, _item} <-
+           MishkaCmsMigration.record_item_plan(
+             %{
+               source_host: state.run.source_host,
+               source_kind: item.kind,
+               source_id: source_id,
+               title: item.title,
+               plan: plan,
+               plan_reason: reason
              },
              scope: state.scope
            ),

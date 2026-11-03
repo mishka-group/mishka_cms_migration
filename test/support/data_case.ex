@@ -17,8 +17,8 @@ defmodule MishkaCmsMigration.DataCase do
   sites, users and runtime records of `MishkaCmsCore.Test.Factory`,
   `MishkaCmsCore.Test.VersionHelpers` — and this case adds this extension's fixtures
   (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
-  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), and the SQL a
-  block ran (`queries_while/1`).
+  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), the items an
+  import recorded (`imported_items/1`), and the SQL a block ran (`queries_while/1`).
 
   ## How the suite boots
 
@@ -93,6 +93,16 @@ defmodule MishkaCmsMigration.DataCase do
       })
 
     :ok = MishkaInstaller.Event.EventHandler.do_compile(event, :start, false)
+  end
+
+  @doc """
+  The items of `site` an import recorded: those with an outcome or a CMS record. A dry run records
+  only each item's plan, so after one alone this is `[]`.
+  """
+  def imported_items(site) do
+    MishkaCmsMigration.MigrationItem
+    |> Ash.read!(tenant: site.id, authorize?: false)
+    |> Enum.filter(&(&1.outcome || &1.target_id))
   end
 
   @doc """

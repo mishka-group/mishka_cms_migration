@@ -80,8 +80,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
-  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run was
-  the last to touch.
+  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run's
+  import was the last to touch; a dry run records only each item's plan, which they do not count.
 
   ## The source's secret
 
@@ -1180,7 +1180,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     has_many :items, MishkaCmsMigration.MigrationItem do
       destination_attribute :run_id
       public? true
-      description "The items this run was the last to touch"
+      description "The items this run's import was the last to touch"
     end
   end
 

@@ -6,8 +6,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   @moduledoc """
   A run's Items page, `/admin/dashboard/migration/runs/:run/items`: the items the migration keeps
   of the run's source host on the run's site (`MishkaCmsMigration.MigrationItem`), as the Gervaz
-  table that resource defines. It is every item of that host, whichever run met it last, and its
-  "Only this run's" filter narrows them to the ones this run met last.
+  table that resource defines. It is every item of that host, whichever run met it last, each with
+  what the last dry run would do with it and what the last import did, and its "Imported by this
+  run" filter narrows them to the ones this run's import met last.
 
   The run is read as the Migration page reads it (`MishkaCmsMigration.MigrationRun.fetch/2`): a
   master's on any site, a site admin's on their own. A run the signed-in admin may not read, such
@@ -40,6 +41,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     :target_resource,
     :target_id,
     :target_updated_at,
+    :plan,
+    :plan_reason,
     :outcome,
     :reason,
     :run_id,
