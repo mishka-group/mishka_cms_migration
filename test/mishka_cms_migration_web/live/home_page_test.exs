@@ -16,9 +16,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.States.SiteState
-  alias MishkaCmsMigration.MigrationRun
+  alias MishkaCmsMigration.{MigrationRun, Report}
   alias MishkaCmsMigration.Test.Plugins.TokenSource
-  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.{Index, RunDetails}
   alias MishkaCmsMigrationWeb.SidebarMenu
 
   @page "/admin/dashboard/migration"
@@ -916,6 +916,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Media cannot keep this type of file"
              )
 
+      assert detailed_counts(view, "run-details-kind-reason", "data-outcome", "data-count", media) ==
+               %{"skipped" => 1}
+
       for {kind, found, why} <- [
             {"user", 5, "No user with this email on the site"},
             {"post_redirect", 21, "Left out by this run's choices"}
@@ -930,6 +933,15 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                  ~s|#{card} [data-role="run-details-kind-reason"][data-outcome="skipped"]|,
                  why
                )
+
+        assert detailed_counts(
+                 view,
+                 "run-details-kind-reason",
+                 "data-outcome",
+                 "data-count",
+                 card
+               ) ==
+                 %{"skipped" => found}
       end
 
       newest_posts =
@@ -1122,6 +1134,47 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert detailed(view, "run-details-item", "data-source-id") == ~w(3 2 1)
       refute has_element?(view, ~s|[data-role="run-details-items-more"]|)
+    end
+
+    test "a kind's card says how many of it failed, else were skipped, and whether one reason covers them",
+         %{site: site, admin: admin} do
+      settled = fn kind, outcome, reason, times ->
+        for id <- 1..times, do: Report.entry(kind, "#{id}", "Item #{id}", outcome, reason)
+      end
+
+      report =
+        [
+          settled.("redirect", :created, nil, 3),
+          settled.("redirect", :skipped, "no_old_address", 2),
+          settled.("media", :skipped, "not_chosen", 2),
+          settled.("media", :skipped, "unchanged", 1),
+          settled.("post", :failed, "Timed out", 2),
+          settled.("post", :skipped, "unchanged", 1)
+        ]
+        |> List.flatten()
+        |> Enum.reduce(Report.new(), &Report.add(&2, &1))
+        |> Report.done()
+
+      run = %{create_run!(site, admin, %{}) | status: :dry_run, report: report}
+
+      panel = LazyHTML.from_fragment(render_component(&RunDetails.panel/1, run: run))
+
+      reason = fn kind ->
+        LazyHTML.query(panel, ~s|[data-kind="#{kind}"] [data-role="run-details-kind-reason"]|)
+      end
+
+      assert reason.("redirect") |> LazyHTML.attribute("data-count") == ["2"]
+      assert reason.("redirect") |> LazyHTML.attribute("data-outcome") == ["skipped"]
+
+      assert reason.("redirect") |> LazyHTML.text() =~
+               "2 skipped: No public address at the source"
+
+      assert reason.("media") |> LazyHTML.attribute("data-count") == ["3"]
+      assert reason.("media") |> LazyHTML.text() =~ "3 skipped, most often: Left out by"
+
+      assert reason.("post") |> LazyHTML.attribute("data-outcome") == ["failed"]
+      assert reason.("post") |> LazyHTML.attribute("data-count") == ["2"]
+      assert reason.("post") |> LazyHTML.text() =~ "2 failed: Timed out"
     end
 
     test "shows an import that is done as the import's, with what it wrote", %{

@@ -17,8 +17,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       words for the reasons a source and the job give (`MishkaCmsMigration.Report.reason/1`) and
       as it is for any other.
     * A card for each kind the report counts, with its icon (`kind_icon/1`) and name
-      (`kind_label/1`): how many items of it the source listed, a bar of their outcomes, and the
-      reason most of its failed, else skipped, entries give (`reason_label/1`).
+      (`kind_label/1`): how many items of it the source listed, a bar of their outcomes, and how
+      many of them failed, else were skipped, with the reason most of those entries give
+      (`reason_label/1`): "54 skipped: No public address at the source" when that reason covers all
+      54, "most often" before it when others are among them.
     * The latest items, the report's last entries newest first, and how many more it counted.
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
@@ -256,6 +258,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         :if={@kind.note}
         data-role="run-details-kind-reason"
         data-outcome={@kind.note.outcome}
+        data-count={@kind.note.count}
         title={@kind.note.text}
         class={[
           "m-0 mt-2.5 line-clamp-2 text-[11px] font-medium leading-[1.45]",
@@ -625,14 +628,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         label: MigrationRun.kind_label(kind),
         found: total(counts),
         counts: counts,
-        note: Enum.find_value([:failed, :skipped], &kind_note(entries, kind, &1))
+        note: Enum.find_value([:failed, :skipped], &kind_note(entries, counts, kind, &1))
       }
     end
   end
 
   defp kinds(_no_kinds), do: []
 
-  defp kind_note(entries, kind, outcome) do
+  defp kind_note(entries, counts, kind, outcome) do
     reasons =
       for %{kind: ^kind, outcome: ^outcome, reason: reason} when is_binary(reason) <- entries,
           do: reason
@@ -640,22 +643,31 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     reasons
     |> Enum.frequencies()
     |> Enum.max_by(&elem(&1, 1), fn -> nil end)
-    |> noted(outcome)
+    |> noted(outcome, counts[outcome])
   end
 
-  defp noted(nil, _outcome), do: nil
+  defp noted(nil, _outcome, _count), do: nil
 
-  defp noted({reason, _count}, :failed),
+  defp noted({reason, covered}, outcome, count),
     do: %{
-      outcome: :failed,
-      text: gettext("Failed: %{reason}", reason: MigrationRun.reason_label(reason))
+      outcome: outcome,
+      count: count,
+      text:
+        note_text(outcome, covered == count,
+          count: Localized.number(count),
+          reason: MigrationRun.reason_label(reason)
+        )
     }
 
-  defp noted({reason, _count}, :skipped),
-    do: %{
-      outcome: :skipped,
-      text: gettext("Skipped: %{reason}", reason: MigrationRun.reason_label(reason))
-    }
+  defp note_text(:failed, true, words), do: gettext("%{count} failed: %{reason}", words)
+
+  defp note_text(:failed, false, words),
+    do: gettext("%{count} failed, most often: %{reason}", words)
+
+  defp note_text(:skipped, true, words), do: gettext("%{count} skipped: %{reason}", words)
+
+  defp note_text(:skipped, false, words),
+    do: gettext("%{count} skipped, most often: %{reason}", words)
 
   defp segments(counts) do
     total = total(counts)

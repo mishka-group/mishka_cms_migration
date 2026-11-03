@@ -167,11 +167,12 @@ defmodule MishkaCmsMigration.MigrationRun do
   the post addresses, each starting at the default the `sub_field` gives it; its description says
   why a post's old address is redirected rather than kept. Comments are not asked for until a
   source's comments can be imported. For a master the form asks for the site the content moves to
-  as well (`:master_create`). Its button, Check connection, creates the run, which connects to
-  the source first (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not
-  answer or refuses the user keeps the form open with the reason, and nothing is saved. A run that
-  is not given a `source_host` takes the host its source reads from the connection
-  (`c:MishkaCmsMigration.Source.host/1`).
+  as well (`:master_create`). Its button, Check and save, creates the run, which connects to
+  the source first, or reads its file (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a
+  source that does not answer or refuses the user keeps the form open with the reason, and nothing
+  is saved. Gervaz takes a button's label as a string or a function of no arguments, so one label
+  fits a connection and a file alike. A run that is not given a `source_host` takes the host its
+  source reads from the connection (`c:MishkaCmsMigration.Source.host/1`).
   """
 
   use Ash.Resource,
@@ -740,7 +741,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       submit do
-        create label: fn -> dgettext("mishka_gervaz", "Check connection") end
+        create label: fn -> dgettext("mishka_gervaz", "Check and save") end
         cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
         position :bottom
       end
