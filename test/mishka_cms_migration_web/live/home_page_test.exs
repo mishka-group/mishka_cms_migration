@@ -17,7 +17,6 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsMigration.MigrationRun
-  alias MishkaCmsMigration.Sources.WordPress
   alias MishkaCmsMigration.Test.Plugins.TokenSource
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
   alias MishkaCmsMigrationWeb.SidebarMenu
@@ -194,9 +193,27 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       refute has_element?(view, ~s|[data-role="migration-no-source"]|)
     end
 
+    test "show WordPress and its export file, each with its own New import", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+
+      assert has_element?(view, ~s|[data-source="wordpress"] [data-role="migration-new-run"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-source="wordpress_file"] [data-role="migration-new-run"]|
+             )
+
+      assert has_element?(view, ~s|[data-source="wordpress_file"]|, "WordPress export file")
+    end
+
     test "say so when no source is installed", %{conn: conn, site: site} do
-      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, WordPress, false)
-      on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(WordPress, false) end)
+      for source <- MishkaCmsMigration.Application.sources() do
+        {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, source, false)
+        on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(source, false) end)
+      end
 
       view = open!(conn, migration_admin!(site))
 

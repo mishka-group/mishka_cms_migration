@@ -50,11 +50,11 @@ defmodule MishkaCmsMigration.Source do
   `use` makes the module a plugin on `"migration:sources"` — registering is the declaration; the
   event is never fired, and the plugin's `call/1` hands its state back — and adds `id/0`, `label/0`,
   an `extra/1` that answers `%{}`, which a source overrides to keep facts about itself, a
-  `host/1` that reads the connection's `"url"`, and a `form_fields/0` that asks for an address and
-  a secret, which a source overrides to ask for what it connects with. A source
-  registers once it is supervised: an extension that ships one lists the module among the children
-  of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this
-  extension's. Which sources are installed is read from mishka_installer's own registry
+  `host/1` that reads the connection's `"url"`, a `form_fields/0` that asks for an address and a
+  secret, which a source overrides to ask for what it connects with, and a `file?/0` that answers
+  `false`, which a source that reads a file overrides. A source registers once it is supervised:
+  an extension that ships one lists the module among the children of its own application's
+  supervisor, as `MishkaCmsMigration.Application.plugins/0` lists this extension's. Which sources are installed is read from mishka_installer's own registry
   (`installed/2`), so a source an operator stops in the installer is no longer offered and a run of
   it is refused.
 
@@ -94,6 +94,16 @@ defmodule MishkaCmsMigration.Source do
   `use` asks for an Address (`:url`, required, `https://example.com` as its placeholder) and a
   Password or key (`:secret`, a required `:password` key). `form_fields/1` reads the keys of the
   source a form was opened for.
+
+  ## A source that reads a file
+
+  A source that reads a file a site exported, rather than the site itself, answers `true` to
+  `file?/0` (`MishkaCmsMigration.Sources.WordPressFile` does) and names no keys in `form_fields/0`.
+  The New import form then asks for the file instead of a Connection, and the run keeps it in a
+  private folder until it ends (see "The source's file" in `MishkaCmsMigration.MigrationRun`):
+  `host/1` and `connect/2` get its path as the connection's `"file"`, and a refusal is shown on the
+  form's file. `file?/1` tells whether the source a form was opened for is one. `use` answers
+  `false`.
   """
 
   use Gettext, backend: MishkaCmsCore.Gettext
@@ -185,6 +195,12 @@ defmodule MishkaCmsMigration.Source do
   """
   @callback form_fields() :: [form_field()]
 
+  @doc """
+  Whether the source reads a file the admin uploads, handed to it as the connection's `"file"`,
+  rather than a site it connects to (see "A source that reads a file"). `use` answers `false`.
+  """
+  @callback file?() :: boolean()
+
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
               {:ok, [term()], cursor()} | {:error, term()}
@@ -234,7 +250,10 @@ defmodule MishkaCmsMigration.Source do
       @impl MishkaCmsMigration.Source
       def form_fields, do: unquote(@form_fields)
 
-      defoverridable extra: 1, host: 1, form_fields: 0
+      @impl MishkaCmsMigration.Source
+      def file?, do: false
+
+      defoverridable extra: 1, host: 1, form_fields: 0, file?: 0
     end
   end
 
@@ -273,12 +292,26 @@ defmodule MishkaCmsMigration.Source do
       end
   """
   @spec form_fields(map() | String.t() | nil) :: [form_field()]
-  def form_fields(%{defaults: %{source: id}}), do: form_fields(id)
-  def form_fields(id) when is_binary(id), do: id |> fetch() |> fields_of()
-  def form_fields(_no_source), do: []
+  def form_fields(state_or_id), do: asked(state_or_id, & &1.form_fields(), [])
 
-  defp fields_of({:ok, source}), do: source.form_fields()
-  defp fields_of({:error, :not_installed}), do: []
+  @doc """
+  Whether the installed source a form names (`defaults: %{source: id}`), or the source whose id is
+  given, reads a file (`c:file?/0`): what shows the New import form's file. `false` for a form
+  opened for no source and for a source that is not installed.
+
+      field :file, :upload do
+        visible fn state -> MishkaCmsMigration.Source.file?(state) end
+      end
+  """
+  @spec file?(map() | String.t() | nil) :: boolean()
+  def file?(state_or_id), do: asked(state_or_id, & &1.file?(), false)
+
+  defp asked(%{defaults: %{source: id}}, ask, none), do: asked(id, ask, none)
+  defp asked(id, ask, none) when is_binary(id), do: id |> fetch() |> answered(ask, none)
+  defp asked(_no_source, _ask, none), do: none
+
+  defp answered({:ok, source}, ask, _none), do: ask.(source)
+  defp answered({:error, :not_installed}, _ask, none), do: none
 
   @doc """
   The host of a connection's `"url"`, lower-cased and with its port when it is not the scheme's

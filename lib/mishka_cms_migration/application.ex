@@ -31,7 +31,7 @@ defmodule MishkaCmsMigration.Application do
 
   use Application
 
-  @sources [MishkaCmsMigration.Sources.WordPress]
+  @sources [MishkaCmsMigration.Sources.WordPress, MishkaCmsMigration.Sources.WordPressFile]
 
   @core_targets [MishkaCmsMigration.Targets.CmsMedia, MishkaCmsMigration.Targets.CmsPage]
 
@@ -55,8 +55,9 @@ defmodule MishkaCmsMigration.Application do
   ]
 
   @doc """
-  The sources this extension ships, each a plugin on `"migration:sources"`: WordPress
-  (`MishkaCmsMigration.Sources.WordPress`).
+  The sources this extension ships, each a plugin on `"migration:sources"`: WordPress over its REST
+  API (`MishkaCmsMigration.Sources.WordPress`) and from its export file
+  (`MishkaCmsMigration.Sources.WordPressFile`).
   """
   @spec sources() :: [module()]
   def sources, do: @sources

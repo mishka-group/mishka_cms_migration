@@ -22,7 +22,7 @@
 
 ## 🔌 In a host
 
-The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`); it starts Oban with `AshOban.config/2` over its `ash_domains`, as Mishka CMS does, since the jobs are AshOban triggers on the run. Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it. This extension ships the WordPress source and, where [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) runs beside it, the targets that write a site's authors (as bloggers of the site's users, matched by email, or of new users when the admin chooses), categories (with their parents), tags and posts (their content converted to HTML, each with its author) into the Blog; on a CMS without the Blog those kinds are skipped.
+The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`); it starts Oban with `AshOban.config/2` over its `ash_domains`, as Mishka CMS does, since the jobs are AshOban triggers on the run. Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it. This extension ships the WordPress source, read over its REST API or from the file its Tools ▸ Export makes, and, where [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) runs beside it, the targets that write a site's authors (as bloggers of the site's users, matched by email, or of new users when the admin chooses), categories (with their parents), tags and posts (their content converted to HTML, each with its author) into the Blog; on a CMS without the Blog those kinds are skipped.
 
 ## 🔁 How a migration runs
 
@@ -43,7 +43,7 @@ lib/
     ├── application.ex                the plugins the extension supervises
     ├── repo.ex                       the Postgres repo when the extension runs on its own (the CMS's repo inside the CMS)
     ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
-    ├── sources/                      the sources it ships: WordPress, and how a post's content becomes HTML
+    ├── sources/                      the sources it ships: WordPress and its export file, how a post's content becomes HTML, how an export is streamed
     ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
     ├── targets/                      the targets it ships: pages into the CMS's pages, and authors, categories, tags and posts into Mishka Blog, where it runs
     ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished

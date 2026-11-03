@@ -1,0 +1,336 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+defmodule MishkaCmsMigration.Sources.WordPressFileTest do
+  @moduledoc """
+  The WordPress export file source against the exports the seeded WordPress made
+  (`test/fixtures/wordpress/wxr`) of the same site whose REST answers are recorded beside them: it
+  reads the items the REST API gives, a dry run of the export reports what a dry run over the REST
+  API reports, it pages through a kind, and a file that is not an export, or one that declares
+  entities or a document type, is refused before anything in it is read.
+  """
+  use MishkaCmsMigration.DataCase, async: false
+
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
+
+  alias MishkaCmsMigration.Source
+  alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Sources.{WordPress, WordPressFile}
+
+  @all Path.expand("../../fixtures/wordpress/wxr/all-content.xml", __DIR__)
+  @posts_only Path.expand("../../fixtures/wordpress/wxr/posts-only.xml", __DIR__)
+  @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
+  @connection %{"url" => "http://localhost:8089", "user" => "admin"}
+
+  # What the REST API answers for each kind, as recorded. The source asks for comments of every
+  # type; the recording of all comments was made without, so the pingback is its own recording.
+  @recordings %{
+    "user" => ["users"],
+    "category" => ["categories"],
+    "tag" => ["tags"],
+    "media" => ["media"],
+    "page" => ["pages"],
+    "post" => ["posts"],
+    "comment" => ["comments", "comments-pingback"],
+    "post_redirect" => ["posts"]
+  }
+
+  # What an export does not carry ("Where it differs from the REST API" in the source's docs).
+  @not_exported %{
+    "user" => ~w(avatar_urls description link nickname roles url),
+    "category" => ["link"],
+    "tag" => ["link"]
+  }
+
+  @namespaces ~s(xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:wp="http://wordpress.org/export/1.2/")
+
+  defp built!(source, conn, rows, kind) do
+    Map.new(rows, fn row ->
+      assert {:ok, attrs} = source.normalize(row, kind, Map.put(@context, :conn, conn))
+      assert {:ok, item} = attrs |> Map.put(:kind, kind) |> Item.build()
+      {item.source_id, item}
+    end)
+  end
+
+  defp file_items!(path, kind) do
+    assert {:ok, conn} = WordPressFile.connect(%{"file" => path}, nil)
+    assert {:ok, rows, nil} = WordPressFile.list(conn, kind, nil)
+    built!(WordPressFile, conn, rows, kind)
+  end
+
+  defp rest_items!(kind) do
+    stub!()
+    {:ok, conn} = WordPress.connect(@connection, "app password")
+    built!(WordPress, conn, Enum.flat_map(@recordings[kind], &recorded/1), kind)
+  end
+
+  defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
+
+  # The attrs of an item read from the export and from the REST API, without what an export does
+  # not carry: a draft's GMT date WordPress kept none for among it.
+  defp compared(from_file, from_rest, kind) do
+    left_out = Map.get(@not_exported, kind, []) ++ undated(from_file.attrs)
+    {Map.drop(from_file.attrs, left_out), Map.drop(from_rest.attrs, left_out)}
+  end
+
+  defp undated(%{"date_gmt" => nil}), do: ["date_gmt"]
+  defp undated(_attrs), do: []
+
+  defp ids(items), do: items |> Map.keys() |> Enum.sort()
+
+  defp export!(dir, channel) do
+    path = Path.join(dir, "export-#{System.unique_integer([:positive])}.xml")
+
+    File.write!(path, """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" #{@namespaces}>
+    <channel>
+    <title>Small blog</title>
+    <link>https://small.example.com/</link>
+    <wp:wxr_version>1.2</wp:wxr_version>
+    #{channel}
+    </channel>
+    </rss>
+    """)
+
+    path
+  end
+
+  defp post(id),
+    do: """
+    <item>
+      <title><![CDATA[Post #{id}]]></title>
+      <link>https://small.example.com/post-#{id}/</link>
+      <wp:post_id>#{id}</wp:post_id>
+      <wp:post_name>post-#{id}</wp:post_name>
+      <wp:status>publish</wp:status>
+      <wp:post_type>post</wp:post_type>
+    </item>
+    """
+
+  defp counts(run),
+    do:
+      Map.new(run.report.kinds, &{&1.kind, Map.take(&1, [:created, :updated, :skipped, :failed])})
+
+  defp staged!(path) do
+    staged =
+      Path.join(System.tmp_dir!(), "gervaz_#{System.unique_integer([:positive])}_export.xml")
+
+    File.cp!(path, staged)
+    on_exit(fn -> File.rm(staged) end)
+    staged
+  end
+
+  defp file_run!(site, admin, path) do
+    run =
+      MishkaCmsMigration.create_run!(
+        %{source: "wordpress_file", file: [%{path: staged!(path), client_name: "export.xml"}]},
+        actor: admin,
+        tenant: site.id
+      )
+
+    on_exit(fn -> File.rm(run.connection["file"]) end)
+    run
+  end
+
+  describe "the source" do
+    test "is installed beside WordPress, reads a file and asks for no connection keys" do
+      assert {:ok, WordPressFile} = Source.fetch("wordpress_file")
+      assert Source.file?("wordpress_file")
+      refute Source.file?("wordpress")
+      assert Source.form_fields("wordpress_file") == []
+      assert WordPressFile.kinds() == WordPress.kinds()
+    end
+
+    test "takes the run's host from the export's home, and keeps the site's name and home" do
+      assert WordPressFile.host(%{"file" => @all}) == "localhost:8089"
+      assert WordPressFile.host(%{}) == nil
+
+      assert {:ok, conn} = WordPressFile.connect(%{"file" => @all}, nil)
+
+      assert WordPressFile.extra(conn) == %{
+               "name" => "Mishka Test Blog",
+               "home" => "http://localhost:8089"
+             }
+    end
+
+    @tag :tmp_dir
+    test "is refused without a file, for a file that is not there, and for one that is not a WordPress export",
+         %{tmp_dir: dir} do
+      assert WordPressFile.connect(%{}, nil) == {:error, :no_file}
+
+      assert WordPressFile.connect(%{"file" => Path.join(dir, "gone.xml")}, nil) ==
+               {:error, :no_file}
+
+      text = Path.join(dir, "notes.xml")
+      File.write!(text, "Just some notes, not XML.")
+
+      feed = Path.join(dir, "feed.xml")
+
+      File.write!(
+        feed,
+        ~s(<rss version="2.0"><channel><link>https://feed.example.com/</link></channel></rss>)
+      )
+
+      broken = Path.join(dir, "broken.xml")
+      File.write!(broken, @all |> File.read!() |> binary_part(0, 40_000))
+
+      html = Path.join(dir, "page.xml")
+      File.write!(html, "<html><body><p>A page</p></body></html>")
+
+      for path <- [text, feed, broken, html] do
+        assert WordPressFile.connect(%{"file" => path}, nil) == {:error, :unreadable_file}, path
+      end
+
+      assert WordPressFile.host(%{"file" => text}) == nil
+      assert WordPressFile.host(%{"file" => html}) == nil
+    end
+
+    @tag :tmp_dir
+    test "refuses an export that declares a document type or entities, expanding and fetching none of them",
+         %{tmp_dir: dir} do
+      secret = Path.join(dir, "secret.txt")
+      File.write!(secret, "https://leaked.example.com/")
+
+      dtd = Path.join(dir, "evil.dtd")
+      File.write!(dtd, ~s(<!ENTITY home "https://leaked.example.com/">))
+
+      laughs =
+        Enum.map_join(1..9, "\n", fn level ->
+          ~s(<!ENTITY lol#{level} "#{String.duplicate("&lol#{level - 1};", 10)}">)
+        end)
+
+      for {name, head, link} <- [
+            {"billion laughs", "<!DOCTYPE rss [<!ENTITY lol0 \"lol\">\n#{laughs}]>", "&lol9;"},
+            {"external entity", ~s(<!DOCTYPE rss [<!ENTITY home SYSTEM "file://#{secret}">]>),
+             "&home;"},
+            {"external DTD", ~s(<!DOCTYPE rss SYSTEM "file://#{dtd}">), "&home;"},
+            {"parameter entity",
+             ~s(<!DOCTYPE rss [<!ENTITY % dtd SYSTEM "file://#{dtd}"> %dtd;]>), "&home;"},
+            {"a document type alone", "<!DOCTYPE rss>", "https://small.example.com/"}
+          ] do
+        path = Path.join(dir, "#{System.unique_integer([:positive])}.xml")
+
+        File.write!(path, """
+        <?xml version="1.0" encoding="UTF-8"?>
+        #{head}
+        <rss version="2.0" #{@namespaces}><channel><title>Evil</title><link>#{link}</link>
+        <wp:wxr_version>1.2</wp:wxr_version></channel></rss>
+        """)
+
+        assert WordPressFile.connect(%{"file" => path}, nil) == {:error, :unreadable_file}, name
+        assert WordPressFile.host(%{"file" => path}) == nil, name
+      end
+    end
+  end
+
+  describe "the items it reads" do
+    test "are the ones the REST API gives for the same site: ids, titles, parents, slugs, statuses, every attr an export carries, and the content, converted alike" do
+      for kind <- WordPressFile.kinds() do
+        from_rest = rest_items!(kind)
+        from_file = file_items!(@all, kind)
+
+        assert ids(from_file) == ids(from_rest), kind
+
+        for {id, rest_item} <- from_rest do
+          file_item = from_file[id]
+
+          assert {file_item.title, file_item.parent, file_item.modified_at} ==
+                   {rest_item.title, rest_item.parent, rest_item.modified_at}
+
+          {file_attrs, rest_attrs} = compared(file_item, rest_item, kind)
+          assert file_attrs == rest_attrs, "#{kind} #{id}"
+          assert Item.html(file_item) == Item.html(rest_item), "#{kind} #{id}"
+          assert pieces(file_item) == pieces(rest_item), "#{kind} #{id}"
+        end
+      end
+    end
+
+    test "point at the site's posts, pages and files the content links to, as the REST API's do" do
+      post = file_items!(@all, "post")["35"]
+
+      assert post.attrs["links"] != %{}
+      assert post.attrs["pages"] != %{}
+      assert post.attrs["media"] != %{}
+      assert post.attrs["links"] == rest_items!("post")["35"].attrs["links"]
+    end
+
+    test "carry what an export has of an author, a term and a draft, and every meta field of a post" do
+      author = file_items!(@all, "user")["2"]
+      posts = file_items!(@all, "post")
+
+      assert {author.title, author.attrs["username"], author.attrs["email"], author.attrs["slug"]} ==
+               {"Shahryar Tavakkoli", "shahryar", "shahryar@mishka.tools", "shahryar"}
+
+      assert Map.take(author.attrs, ~w(description avatar_urls)) == %{}
+      refute Map.has_key?(file_items!(@all, "tag")["13"].attrs, "link")
+      assert {posts["39"].attrs["status"], posts["39"].attrs["date_gmt"]} == {"draft", nil}
+
+      assert Map.take(posts["32"].extra["meta"], ["subtitle", "_yoast_wpseo_title"]) == %{
+               "subtitle" => "Start here",
+               "_yoast_wpseo_title" => "Welcome to the Mishka Test Blog | Mishka Test Blog"
+             }
+    end
+
+    test "of an export of posts alone are its posts, with their authors, files and comments, and no page or term" do
+      kinds = Map.new(WordPressFile.kinds(), &{&1, file_items!(@posts_only, &1)})
+      posts = recorded("posts") |> Enum.map(&to_string(&1["id"])) |> Enum.sort()
+
+      assert ids(kinds["post"]) == posts
+      assert ids(kinds["post_redirect"]) == posts
+      assert {kinds["page"], kinds["category"], kinds["tag"]} == {%{}, %{}, %{}}
+      assert ids(kinds["user"]) == ids(file_items!(@all, "user"))
+      assert Enum.all?(Map.values(kinds["media"]), &(to_string(&1.attrs["post"]) in posts))
+      assert Enum.all?(Map.values(kinds["comment"]), &(&1.attrs["post_type"] == "post"))
+
+      assert Enum.all?(
+               Map.values(kinds["post"]),
+               &(&1.attrs["categories"] == [] and &1.attrs["tags"] == [])
+             )
+    end
+
+    @tag :tmp_dir
+    test "are listed 100 a page, each page read from the file again, and a kind it has none of is empty",
+         %{tmp_dir: dir} do
+      path = export!(dir, Enum.map_join(1..205, &post/1))
+      assert {:ok, conn} = WordPressFile.connect(%{"file" => path}, nil)
+
+      assert {:ok, first, 1} = WordPressFile.list(conn, "post", nil)
+      assert {:ok, second, 2} = WordPressFile.list(conn, "post", 1)
+      assert {:ok, third, nil} = WordPressFile.list(conn, "post", 2)
+
+      assert {length(first), length(second), length(third)} == {100, 100, 5}
+      assert Enum.map(first ++ second ++ third, & &1["id"]) == Enum.to_list(1..205)
+      assert WordPressFile.list(conn, "page", nil) == {:ok, [], nil}
+      assert WordPressFile.list(conn, "note", nil) == {:error, {:unknown_kind, "note"}}
+    end
+  end
+
+  describe "a dry run" do
+    test "of the export reports what a dry run over the REST API reports for the same site, the pingback the REST recording left out besides" do
+      stub!()
+      site = create_site!()
+      admin = migration_admin!(site)
+
+      rest =
+        %{source: "wordpress", connection: @connection, secret: "app password"}
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      file = site |> file_run!(admin, @all) |> dry_run!(admin)
+      pingbacks = length(recorded("comments-pingback"))
+
+      assert {file.status, file.source_host, file.extra["name"]} ==
+               {:dry_run, rest.source_host, rest.extra["name"]}
+
+      assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds()
+
+      assert counts(file) ==
+               Map.update!(counts(rest), "comment", &%{&1 | skipped: &1.skipped + pingbacks})
+
+      assert MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false) ==
+               []
+    end
+  end
+end

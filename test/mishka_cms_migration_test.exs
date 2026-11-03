@@ -9,11 +9,11 @@ defmodule MishkaCmsMigrationTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  test "the application supervises its install plugins, ships WordPress and its targets, the Blog's where it is loaded" do
+  test "the application supervises its install plugins, ships WordPress, its export file and its targets, the Blog's where it is loaded" do
     assert is_pid(Process.whereis(MishkaCmsMigration.Supervisor))
 
     assert {MishkaCmsMigration.Application.sources(), MishkaCmsMigration.Application.targets()} ==
-             {[MishkaCmsMigration.Sources.WordPress],
+             {[MishkaCmsMigration.Sources.WordPress, MishkaCmsMigration.Sources.WordPressFile],
               [
                 MishkaCmsMigration.Targets.CmsMedia,
                 MishkaCmsMigration.Targets.CmsPage,

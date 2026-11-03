@@ -17,8 +17,11 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
 
   A refusal is an error on the run's `connection`, in words for the reasons
   `MishkaCmsMigration.Source` names and as the reason itself for any other; a connection the
-  source reads no host from is refused as `:invalid_address`. A run of a source that is not
-  installed is left to `MishkaCmsMigration.Resources.Validations.SourceInstalled`.
+  source reads no host from is refused as `:invalid_address`. For a source that reads a file
+  (`c:MishkaCmsMigration.Source.file?/0`) it is an error on the run's `file`, the form's upload,
+  instead: `:no_file` when the run was handed none and `:unreadable_file` when the source reads no
+  host from it, both put in words as well. A run of a source that is not installed is left to
+  `MishkaCmsMigration.Resources.Validations.SourceInstalled`.
 
       create :create do
         allow_nil_input [:source_host]
@@ -32,13 +35,15 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
 
   It connects in a `before_transaction` hook: once, when the action runs, outside its
   transaction, and never while a form only validates what is typed. The hook opens the secret
-  `seal_secret/2` sealed, so it needs that change in the same action.
+  `seal_secret/2` sealed, so it needs that change in the same action, and for a source that reads
+  a file it needs `MishkaCmsMigration.Resources.Changes.SourceFile` before it, which keeps the file
+  in its own hook first.
   """
 
   use Ash.Resource.Change
   use Gettext, backend: MishkaCmsCore.Gettext
 
-  alias Ash.Error.Changes.InvalidAttribute
+  alias Ash.Error.Changes.{InvalidArgument, InvalidAttribute}
   alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Source
 
@@ -51,6 +56,12 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
       dgettext_noop(
         "errors",
         "%{source} did not accept this user and application password. If both are right, ask your host to let the Authorization header through."
+      ),
+    no_file: dgettext_noop("errors", "Choose the %{source} to read."),
+    unreadable_file:
+      dgettext_noop(
+        "errors",
+        "This is not a %{source}, or it is damaged. Make the export again and choose its .xml file."
       )
   }
 
@@ -82,7 +93,13 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
     do: Ash.Changeset.force_change_attribute(changeset, :source_host, host)
 
   defp host_from(_none, source, changeset),
-    do: Ash.Changeset.add_error(changeset, refused(source, :invalid_address))
+    do: Ash.Changeset.add_error(changeset, refused(source, unread(source.file?(), changeset)))
+
+  defp unread(false, _changeset), do: :invalid_address
+  defp unread(true, changeset), do: changeset |> connection() |> unread_file()
+
+  defp unread_file(%{"file" => _file}), do: :unreadable_file
+  defp unread_file(_no_file), do: :no_file
 
   defp connect(source, changeset) do
     connection = connection(changeset)
@@ -107,10 +124,15 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
       |> Jason.decode!()
 
   defp refused(source, reason) do
-    InvalidAttribute.exception(
-      field: :connection,
+    {error, field} = refused_on(source.file?())
+
+    error.exception(
+      field: field,
       message: Map.get(@messages, reason, @other),
       vars: [source: source.label(), reason: MishkaCmsMigration.Report.reason(reason)]
     )
   end
+
+  defp refused_on(false), do: {InvalidAttribute, :connection}
+  defp refused_on(true), do: {InvalidArgument, :file}
 end

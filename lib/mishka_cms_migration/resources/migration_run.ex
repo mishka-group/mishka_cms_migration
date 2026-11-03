@@ -98,6 +98,25 @@ defmodule MishkaCmsMigration.MigrationRun do
   `secret_key_base` was rotated since it was sealed — is `{:error, :unreadable_secret}`, which fails
   the run: the admin starts a new run with the secret typed again.
 
+  ## The source's file
+
+  A source that reads a file a site exported (`c:MishkaCmsMigration.Source.file?/0`, such as the
+  WordPress export file) is handed it by the `:create` action's `file` argument: the New import
+  form's upload, a file Gervaz staged (`MishkaCmsCore.Runtime.Media.staged_upload/2`, so a path a
+  request names is never taken). `MishkaCmsMigration.Resources.Changes.SourceFile` puts that staged
+  file's path in the connection's `"file"` while the run is checked, so the source can read the
+  export's host (`c:MishkaCmsMigration.Source.host/1`), and just before the run connects copies it
+  into its own folder (`MishkaCmsMigration.Resources.Changes.SourceFile.files_dir/0`) under a name
+  of its own and points `"file"` there; a run that is then not saved takes its copy with it. A
+  `"file"` a caller types in the connection is always dropped, so a run only ever names a file it
+  was handed.
+
+  That folder is outside the one the CMS serves (`MishkaCmsCore.Runtime.Media.static_dir/0`) and
+  readable by the CMS's own user alone, so the export, with its drafts, private posts and
+  commenters' addresses, is never public. The file is deleted once the run ends: done, failed or
+  cancelled (`:finish_import`, `:fail`, `:cancel`), after the run is saved so. A run left waiting
+  keeps it until an admin cancels it.
+
   ## Who reaches it
 
   A run is a site's own. Reading, creating, starting and cancelling one takes
@@ -167,7 +186,15 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.Resources.Changes.{CancelJobs, CheckConnection, EnqueueJob, Reason}
+
+  alias MishkaCmsMigration.Resources.Changes.{
+    CancelJobs,
+    CheckConnection,
+    EnqueueJob,
+    Reason,
+    SourceFile
+  }
+
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
 
@@ -745,8 +772,14 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The secret the source signs in with; only its sealed form is kept"
       end
 
+      argument :file, {:array, :map} do
+        allow_nil? true
+        description "The file a source that reads one is handed: the form's staged upload"
+      end
+
       validate {TenantContext, require_master: false}
       change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change {SourceFile, step: :take}
       change CheckConnection
       validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
@@ -768,9 +801,15 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The secret the source signs in with; only its sealed form is kept"
       end
 
+      argument :file, {:array, :map} do
+        allow_nil? true
+        description "The file a source that reads one is handed: the form's staged upload"
+      end
+
       validate {TenantContext, require_master: true}
       validate present(:site_id), message: @pick_site
       change &MishkaCmsMigration.MigrationRun.take_secret/2
+      change {SourceFile, step: :take}
       change CheckConnection
       validate present(:source_host), only_when_valid?: true, message: @type_address
       validate SourceInstalled, before_action?: true
@@ -853,6 +892,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :done)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
 
       description "System-internal: saves the import's report"
     end
@@ -866,9 +906,10 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :cancelled)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
       change CancelJobs
 
-      description "Ends a run that is not done: its job is cancelled and its secret cleared"
+      description "Ends a run that is not done: its job is cancelled, its secret and file cleared"
     end
 
     update :record_progress do
@@ -893,6 +934,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, :failed)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
       change set_attribute(:connection_secret, nil)
+      change {SourceFile, step: :drop}
 
       description "System-internal: saves why a dry run or an import could not go on"
     end

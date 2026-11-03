@@ -108,6 +108,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
       `/?p=39`, an address no redirect can answer.
 
+  Each of these reads goes through the connection's `read`, a function of a REST route and its
+  query answering the rows by id: `connect/2` answers one that asks the site, and the export file
+  source (`MishkaCmsMigration.Sources.WordPressFile`) one that answers from the file, which hands
+  `normalize/3` rows of the same shape, so both make the same items.
+
   `extra` is every other field of the row: `meta` (Yoast's `_yoast_wpseo_*` fields and every other
   registered meta), `guid`, `password`, `comment_status`, `class_list`, a user's `capabilities`
   and `registered_date`, a term's `taxonomy`, a file's `media_details` (its sizes among them), and
@@ -215,7 +220,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          {:ok, index} <- index(req),
          {:ok, req} <- signed(req, Map.get(connection, "user"), secret),
          {:ok, user} <- signed_in(req) do
-      {:ok, %{req: req, index: index, user: user}}
+      {:ok, %{req: req, index: index, user: user, read: &read(req, &1, &2)}}
     end
   end
 
@@ -332,10 +337,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
 
-  defp fetch(%{conn: %{req: req}}), do: &fetched(req, &1, &2)
+  defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
-
-  defp fetched(req, route, ids), do: read(req, route, include: Enum.join(ids, ","))
 
   defp read(req, route, params),
     do:
@@ -343,7 +346,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> Req.get(url: route, params: [context: "edit", per_page: @per_page] ++ params)
       |> by_id()
 
-  defp links(html, %{conn: %{req: req, index: %{"home" => home}}}) when is_binary(home) do
+  defp links(html, %{conn: %{read: read, index: %{"home" => home}}}) when is_binary(home) do
     asked =
       html
       |> LazyHTML.from_fragment()
@@ -352,8 +355,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> Enum.uniq()
       |> Enum.flat_map(&asked(&1, URI.parse(home)))
 
-    posts = linked(req, "/wp/v2/posts", asked)
-    pages = linked(req, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))
+    posts = linked(read, "/wp/v2/posts", asked)
+    pages = linked(read, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))
 
     %{
       "links" =>
@@ -401,11 +404,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp by_path({:ok, "/" <> rest = path}) when rest != "", do: {:slug, path}
   defp by_path(_root_or_not_a_path), do: nil
 
-  defp linked(req, route, asked) do
+  defp linked(read, route, asked) do
     rows =
       Enum.flat_map([:include, :slug], fn by ->
         asked_rows(
-          req,
+          read,
           {route, @linked_fields},
           {by, for({_href, {^by, value}} <- asked, do: asked_value(by, value))}
         )
@@ -417,22 +420,19 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         do: {href, row}
   end
 
-  defp asked_rows(_req, _route, {_by, []}), do: []
+  defp asked_rows(_read, _route, {_by, []}), do: []
 
-  defp asked_rows(req, {route, fields}, {by, values}),
-    do:
-      req
-      |> read(route, [{by, values |> Enum.uniq() |> Enum.join(",")} | fields])
-      |> Map.values()
+  defp asked_rows(read, {route, fields}, {by, values}),
+    do: route |> read.([{by, values |> Enum.uniq() |> Enum.join(",")} | fields]) |> Map.values()
 
-  defp media(html, content, %{conn: %{req: req, index: %{"home" => home}}})
+  defp media(html, content, %{conn: %{read: read, index: %{"home" => home}}})
        when is_binary(home) do
     files = content |> addresses() |> Enum.filter(&file?(&1, URI.parse(home)))
 
     rows =
       Enum.flat_map(
         [include: image_ids(html), slug: Enum.flat_map(files, &file_slugs/1)],
-        &asked_rows(req, {"/wp/v2/media", @media_fields}, &1)
+        &asked_rows(read, {"/wp/v2/media", @media_fields}, &1)
       )
 
     for href <- files, id = file_of(rows, href), into: %{}, do: {href, id}
