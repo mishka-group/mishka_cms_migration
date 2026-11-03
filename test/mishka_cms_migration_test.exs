@@ -18,6 +18,7 @@ defmodule MishkaCmsMigrationTest do
                 MishkaCmsMigration.Targets.CmsMedia,
                 MishkaCmsMigration.Targets.CmsSetting,
                 MishkaCmsMigration.Targets.CmsPage,
+                MishkaCmsMigration.Targets.CmsLayout,
                 MishkaCmsMigration.Targets.BlogBlogger,
                 MishkaCmsMigration.Targets.BlogCollection,
                 MishkaCmsMigration.Targets.BlogTag,

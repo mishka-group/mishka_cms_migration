@@ -214,6 +214,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
+  @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
   @type_address dgettext_noop("errors", "Type the site's address, such as https://example.com.")
@@ -1355,6 +1356,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("post"), do: "hero-document-text"
   def kind_icon("comment"), do: "hero-chat-bubble-left-right"
   def kind_icon("post_redirect"), do: "hero-arrows-right-left"
+  def kind_icon("menu"), do: "hero-bars-3"
   def kind_icon(_other), do: "hero-cube"
 
   @doc """
@@ -1611,6 +1613,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
   defp kind_noun("comment"), do: dgettext("mishka_gervaz", "comments")
   defp kind_noun("post_redirect"), do: dgettext("mishka_gervaz", "redirects")
+  defp kind_noun("menu"), do: dgettext("mishka_gervaz", "menus")
   defp kind_noun(kind), do: kind
 
   @doc false
@@ -1632,6 +1635,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
   def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
   def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
+  def kind_label("menu"), do: dgettext("mishka_gervaz", "Menus")
   def kind_label(kind), do: String.capitalize(kind)
 
   @doc """
@@ -1670,33 +1674,34 @@ defmodule MishkaCmsMigration.MigrationRun do
   record's list opened on the record, the way the list's own search writes its address
   (`MishkaGervaz.Table.Web.UrlSync`): a post, category, tag or blogger by its slug, a page by its
   path, a file by its name, a redirect by its old address, a comment on the list of its post's
-  comments, and a setting on the Settings page's tab of its category. `public` is the record's page
-  on the site where it is live: a published post, an active category, a tag, a blogger's page, an
-  active page and a file; a comment, a redirect and a setting have none.
+  comments, a setting on the Settings page's tab of its category, and a menu on the layout it is
+  the header's links of. `public` is the record's page on the site where it is live
+  (`record_address/2`): a published post, an active category, a tag, a blogger's page, an active
+  page and a file; a comment, a redirect, a setting and a menu have none.
   """
   @spec record_paths(String.t(), struct()) :: %{admin: String.t(), public: String.t() | nil} | nil
   def record_paths("post", post),
     do: %{
       admin: listed("/admin/dashboard/blog/posts", post, %{search: post.slug}),
-      public: site_page(:post, post, post.status == :published)
+      public: live(post.status == :published, "post", post)
     }
 
   def record_paths("category", category),
     do: %{
       admin: listed("/admin/dashboard/blog/collections", category, %{search: category.slug}),
-      public: site_page(:category, category, category.status == :active)
+      public: live(category.status == :active, "category", category)
     }
 
   def record_paths("tag", tag),
     do: %{
       admin: listed("/admin/dashboard/blog/tags", tag, %{search: tag.slug}),
-      public: site_page(:tag, tag, true)
+      public: live(true, "tag", tag)
     }
 
   def record_paths("user", blogger),
     do: %{
       admin: listed("/admin/dashboard/blog/bloggers", blogger, %{search: blogger.slug}),
-      public: site_page(:author, blogger, true)
+      public: live(true, "user", blogger)
     }
 
   def record_paths("comment", comment),
@@ -1708,7 +1713,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def record_paths("page", page),
     do: %{
       admin: listed("/admin/dashboard/runtime/pages", page, %{search: page.path}),
-      public: page_address(page)
+      public: live(page.active, "page", page)
     }
 
   def record_paths("media", media),
@@ -1730,28 +1735,47 @@ defmodule MishkaCmsMigration.MigrationRun do
       public: nil
     }
 
+  def record_paths("menu", layout),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/layouts", layout, %{search: layout.name}),
+      public: nil
+    }
+
   def record_paths(_other, _record), do: nil
+
+  @doc """
+  Where the site serves the CMS record an item of `kind` was written to, whether it is live yet or
+  not, as the site's own address (`MishkaCmsCore.Runtime.Languages.url/3`): a page at its path, and
+  a post, category, tag or blogger at its page of the Blog (`MishkaBlog.Provision.item_paths/0`), in
+  the record's language, or the site's first for one without. `nil` for a kind with no page of its
+  own. What a menu's links point at (`MishkaCmsMigration.Targets.CmsLayout`).
+  """
+  @spec record_address(String.t(), struct()) :: String.t() | nil
+  def record_address("page", page),
+    do: Languages.url(page.path, %{Languages.capture() => page.language}, page.site_id)
+
+  def record_address(kind, record) when is_map_key(@blog_pages, kind) do
+    captures = %{
+      Languages.capture() => Map.get(record, :language) || Languages.primary(record.site_id),
+      "slug" => record.slug
+    }
+
+    Languages.url(
+      Map.fetch!(MishkaBlog.Provision.item_paths(), Map.fetch!(@blog_pages, kind)),
+      captures,
+      record.site_id
+    )
+  end
+
+  def record_address(_kind, _record), do: nil
 
   defp listed(path, %resource{}, filters) do
     config = resource |> MishkaGervaz.Resource.Info.Table.url_sync() |> Map.new()
     UrlSync.build_path(path, %{filter_values: filters}, config)
   end
 
-  defp page_address(%{active: true} = page),
-    do: Languages.url(page.path, %{Languages.capture() => page.language}, page.site_id)
-
-  defp page_address(_inactive), do: nil
-
-  defp site_page(key, record, true) do
-    captures = %{
-      Languages.capture() => Map.get(record, :language) || Languages.primary(record.site_id),
-      "slug" => record.slug
-    }
-
-    Languages.url(Map.fetch!(MishkaBlog.Provision.item_paths(), key), captures, record.site_id)
-  end
-
-  defp site_page(_key, _record, false), do: nil
+  defp live(true, kind, record), do: record_address(kind, record)
+  defp live(_hidden, _kind, _record), do: nil
 
   @doc """
   The links to the CMS record `paths` (`record_paths/2`) names: an icon link to its place in the
@@ -1891,10 +1915,20 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "The site already has its own, so it is kept")
 
   defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
+
+  defp said("not_main_menu"),
+    do: dgettext("mishka_gervaz", "Not the site's main menu, so it is left out")
+
+  defp said("no_layout"),
+    do: dgettext("mishka_gervaz", "The site's layout has no header to put it in")
+
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
+
+  defp said("old_address: " <> titles),
+    do: dgettext("mishka_gervaz", "Still at its old address: %{titles}", titles: titles)
 
   defp said(reason), do: reason
 

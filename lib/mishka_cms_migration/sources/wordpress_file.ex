@@ -58,7 +58,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     * comment — each `wp:comment` of an item that is not in the trash, approved or held for
       moderation, with its post, parent, author, text, status, type and dates;
     * post_redirect — each post again, its id, title, status, address and modified time, its old
-      address being the path of its `<link>`.
+      address being the path of its `<link>`;
+    * menu — each `nav_menu` term (`wp:term`, which an export may list twice) with its
+      `nav_menu_item` items, whose own fields are their meta (`_menu_item_type`,
+      `_menu_item_object`, `_menu_item_object_id`, `_menu_item_menu_item_parent`,
+      `_menu_item_url`, `_menu_item_target`), read in one pass
+      (`MishkaCmsMigration.Sources.WordPress.menus/2`). An item with no label of its own takes the
+      title of the page or post, or the name of the category or tag, it points at, and its address
+      too; one whose page, post or term the export does not carry is invalid, as WordPress counts
+      it.
 
   ## Where it differs from the REST API
 
@@ -68,7 +76,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       tagline are read;
     * an author has no bio, website, avatar, nickname or roles, so a blogger made from one has
       none, and its slug is made of its login rather than WordPress's own `user_nicename`;
-    * a term has no `link`;
+    * a term has no `link`, so a menu item of a category or a tag has WordPress's plain address of
+      it (`/?cat=<id>`, `/?tag=<slug>`), which WordPress answers whatever its permalinks;
+    * a menu's theme locations are the theme's, which an export does not carry, so the main menu
+      is the first made;
     * a draft, pending or scheduled entry WordPress kept no GMT date for has no `date_gmt` (the
       export gives only the site's own time, not its timezone), and no entry has a `generated_slug`;
     * `meta` holds every meta field of the entry the export carries (custom fields among them,
@@ -114,6 +125,11 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   @indexed_media ~w(id slug link source_url alt_text media_details)
 
+  @menu_found %{home: nil, menus: [], items: [], objects: %{}}
+  @term_links %{"category" => "/?cat=", "post_tag" => "/?tag="}
+  @menu_meta ~w(_menu_item_type _menu_item_object _menu_item_object_id
+                _menu_item_menu_item_parent _menu_item_url _menu_item_target)
+
   @found %{
     site: %{},
     authors: %{},
@@ -150,6 +166,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   @impl MishkaCmsMigration.Source
   def list(conn, "setting", cursor), do: WordPress.list(conn, "setting", cursor)
+
+  def list(%{file: path, index: %{"home" => home}}, "menu", _cursor),
+    do: path |> Export.fold(%{@menu_found | home: home}, &menu_found/3) |> menus_found()
 
   def list(%{file: path} = conn, kind, cursor) when kind in @kinds do
     page = cursor || 0
@@ -341,6 +360,112 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp item_rows(_type, _status, _element, _asked), do: []
 
   defp item_type(element), do: text(element, "wp:post_type")
+
+  defp menu_found("wp:term", element, found),
+    do: {:cont, element |> text("wp:term_taxonomy") |> menu_term(element, found)}
+
+  defp menu_found(name, element, found) when is_map_key(@terms, name) do
+    {taxonomy, slug_key, name_key, _description} = Map.fetch!(@terms, name)
+    id = integer(text(element, "wp:term_id"))
+    asked = term_asked(taxonomy, id, text(element, slug_key))
+    link = found.home <> Map.fetch!(@term_links, taxonomy) <> asked
+
+    {:cont, put_in(found, [:objects, {taxonomy, id}], {text(element, name_key), link})}
+  end
+
+  defp menu_found("item", element, found),
+    do: {:cont, element |> item_type() |> menu_entry(text(element, "wp:status"), element, found)}
+
+  defp menu_found(_name, _element, found), do: {:cont, found}
+
+  defp menu_term("nav_menu", element, found),
+    do: %{
+      found
+      | menus: [
+          %{
+            "id" => integer(text(element, "wp:term_id")),
+            "name" => text(element, "wp:term_name"),
+            "slug" => text(element, "wp:term_slug"),
+            "description" => text(element, "wp:term_description") || "",
+            "locations" => []
+          }
+          | found.menus
+        ]
+    }
+
+  defp menu_term(_taxonomy, _element, found), do: found
+
+  defp menu_entry(_type, status, _element, found) when status in @hidden, do: found
+
+  defp menu_entry("nav_menu_item", _status, element, found),
+    do: %{found | items: [menu_item(element) | found.items]}
+
+  defp menu_entry(type, _status, element, found) when type in @entries,
+    do:
+      put_in(
+        found,
+        [:objects, {type, integer(text(element, "wp:post_id"))}],
+        {text(element, "title"), text(element, "link")}
+      )
+
+  defp menu_entry(_type, _status, _element, found), do: found
+
+  defp menu_item(element) do
+    meta = element |> meta("wp:postmeta") |> Map.take(@menu_meta)
+
+    %{
+      "id" => integer(text(element, "wp:post_id")),
+      "title" => %{"raw" => text(element, "title") || ""},
+      "url" => meta["_menu_item_url"],
+      "type" => meta["_menu_item_type"],
+      "object" => meta["_menu_item_object"],
+      "object_id" => integer(meta["_menu_item_object_id"]),
+      "parent" => integer(meta["_menu_item_menu_item_parent"]) || 0,
+      "menu_order" => integer(text(element, "wp:menu_order")) || 0,
+      "target" => meta["_menu_item_target"] || "",
+      "menu" => menu_slug(element)
+    }
+  end
+
+  defp menu_slug(element),
+    do:
+      Enum.find_value(Export.all(element, "category"), fn reference ->
+        Export.attribute(reference, "domain") == "nav_menu" and
+          Export.attribute(reference, "nicename")
+      end)
+
+  defp term_asked("category", id, _slug), do: to_string(id)
+  defp term_asked("post_tag", _id, slug), do: to_string(slug)
+
+  defp menus_found({:ok, found}) do
+    menus = found.menus |> Enum.reverse() |> Enum.uniq_by(& &1["id"])
+    ids = Map.new(menus, &{&1["slug"], &1["id"]})
+
+    items =
+      for item <- Enum.reverse(found.items),
+          do:
+            item
+            |> Map.delete("menu")
+            |> Map.put("menus", ids[item["menu"]])
+            |> pointed(found.objects)
+
+    {:ok, WordPress.menus(menus, items), nil}
+  end
+
+  defp menus_found(refused), do: refused
+
+  defp pointed(%{"type" => "custom"} = item, _objects), do: item
+
+  defp pointed(%{"object" => object, "object_id" => id} = item, objects),
+    do: objects |> Map.get({object, id}) |> pointed_at(item)
+
+  defp pointed_at({title, url}, %{"title" => %{"raw" => own}} = item),
+    do: %{item | "title" => %{"raw" => labelled(own, title)}, "url" => url}
+
+  defp pointed_at(nil, item), do: Map.put(item, "invalid", true)
+
+  defp labelled("", title), do: title || ""
+  defp labelled(own, _title), do: own
 
   defp user(element) do
     login = text(element, "wp:author_login")

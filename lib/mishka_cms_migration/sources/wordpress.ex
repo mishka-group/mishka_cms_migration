@@ -34,8 +34,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   ## What it reads
 
   `kinds/0` is `["user", "category", "tag", "media", "setting", "page", "post", "comment",
-  "post_redirect"]`: authors, terms and files before the site's settings, pages and posts that point
-  at them, the comments after the posts they are on, and each post's old address after its post.
+  "post_redirect", "menu"]`: authors, terms and files before the site's settings, pages and posts
+  that point at them, the comments after the posts they are on, each post's old address after its
+  post, and the menus after everything their links point at.
   `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
   site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
   when the site has it. `list/3` reads each other kind from its REST route (`/wp/v2/users`,
@@ -47,7 +48,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   (WordPress answers only plain comments unless asked), but not spam and not the trash.
   `"post_redirect"` reads the posts again, only their `id`, `title`, `status`, `link` and
   `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there
-  is one, and `nil` after the last. A list WordPress refuses fails the walk:
+  is one, and `nil` after the last. `"menu"` is one page: every menu (`/wp/v2/menus`, WordPress
+  5.9+) with its items (`/wp/v2/menu-items`), each route read to its last page (`menus/2`). A list
+  WordPress refuses fails the walk:
     * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
       context, or the password was revoked since the run was made;
     * `:unreachable` — nothing answered;
@@ -129,6 +132,16 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
       `/?p=39`, an address no redirect can answer.
+    * menu — one menu: its `source_id` is the menu's id, `title` its name, and `attrs` keeps its
+      `slug`, its theme `locations`, whether it is the site's `main` menu (`menus/2`), and its
+      `items`, nested as WordPress nests them, each in menu order. An item is its label as text
+      (`"title"`), the address WordPress gives it (`"url"`), what it points at as the kind and
+      source id of an item of this source (`"kind"` and `"id"`: a page, a post, a category or a
+      tag, `nil` for any other), whether it opens in a new tab (`"new_tab"`) and its own `"items"`.
+      A custom link of the main menu on the site's own host that names a post or a page, asked for
+      as a post's links to them are, points at that post or page. An item WordPress counts as
+      invalid, whose page or term is gone, is left out, and one whose parent is not in the menu
+      sits at the top.
 
   Each of these reads goes through the connection's `read`, a function of a REST route and its
   query answering the rows by id: `connect/2` answers one that asks the site, and the export file
@@ -147,7 +160,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
   name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
-  own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  own pages (`MishkaCmsMigration.Targets.CmsPage`), the main menu as the links of the site layout's
+  header (`MishkaCmsMigration.Targets.CmsLayout`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
   users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
@@ -179,7 +193,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "page",
     "post",
     "comment",
-    "post_redirect"
+    "post_redirect",
+    "menu"
   ]
 
   @form_fields [
@@ -263,6 +278,16 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "excerpt" => "{{page.description}}"
   }
 
+  @menu_attrs ~w(id name slug locations items main)
+  @menu_objects %{
+    "page" => "page",
+    "post" => "post",
+    "category" => "category",
+    "post_tag" => "tag"
+  }
+  @menu_typed ["post_type", "taxonomy"]
+  @main_location "primary"
+
   @comment_attrs ~w(post author author_name author_email status type date_gmt)
   @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
@@ -312,7 +337,33 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          do: %{"id" => id, "label" => label, "value" => value}
        ), nil}
 
+  def list(%{req: req}, "menu", _cursor) do
+    with {:ok, menus} <- every(req, "/wp/v2/menus", 1, []),
+         {:ok, items} <- every(req, "/wp/v2/menu-items", 1, []) do
+      {:ok, menus(menus, items), nil}
+    end
+  end
+
   def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
+
+  @doc """
+  The rows `list/3` answers for `"menu"`, of the REST API's `menus` and `menu-items` (or rows of the
+  same shape): each menu with its `"items"`, the items whose `menus` is its id but those WordPress
+  counts as `invalid`, and `"main"`, whether it is the site's main menu: the one at the theme's
+  `primary` location, else the first at any location, else the first made (the lowest id).
+  """
+  @spec menus([map()], [map()]) :: [map()]
+  def menus(menus, items) do
+    by_menu = items |> Enum.reject(&(&1["invalid"] == true)) |> Enum.group_by(& &1["menus"])
+    main = menus |> Enum.min_by(&{located(&1["locations"]), &1["id"]}, fn -> %{} end)
+
+    for menu <- menus,
+        do:
+          Map.merge(menu, %{
+            "items" => Map.get(by_menu, menu["id"], []),
+            "main" => menu["id"] == main["id"]
+          })
+  end
 
   @impl MishkaCmsMigration.Source
   def normalize(
@@ -406,17 +457,115 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def normalize(%{"id" => id, "label" => label, "value" => value}, "setting", _context),
     do: {:ok, %{source_id: id, title: label, attrs: %{"value" => value}}}
 
+  def normalize(%{"id" => id, "name" => name, "items" => items} = row, "menu", context)
+      when is_list(items) do
+    main? = row["main"] == true
+
+    {:ok,
+     %{
+       source_id: id,
+       title: name,
+       attrs:
+         row
+         |> Map.take(["slug"])
+         |> decoded_slug()
+         |> Map.merge(%{
+           "locations" => row["locations"] || [],
+           "main" => main?,
+           "items" => menu_items(items, custom_links(items, main?, context))
+         }),
+       extra: Map.drop(row, @menu_attrs ++ @rendered)
+     }}
+  end
+
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
 
-  defp setting(id, value) when id in @texts and is_binary(value),
-    do: value |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim() |> filled()
+  defp setting(id, value) when id in @texts and is_binary(value), do: value |> plain() |> filled()
 
   defp setting(_file, id) when is_integer(id) and id > 0, do: id
   defp setting(_id, _none), do: nil
 
   defp filled(""), do: nil
   defp filled(text), do: text
+
+  defp plain(html) when is_binary(html),
+    do: html |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim()
+
+  defp plain(_none), do: ""
+
+  defp every(req, route, page, rows) do
+    req
+    |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page])
+    |> listed(page)
+    |> every_page(req, route, rows)
+  end
+
+  defp every_page({:ok, rows, nil}, _req, _route, read), do: {:ok, read ++ rows}
+  defp every_page({:ok, rows, next}, req, route, read), do: every(req, route, next, read ++ rows)
+  defp every_page(refused, _req, _route, _read), do: refused
+
+  defp located(locations) when is_list(locations),
+    do: located(@main_location in locations, locations)
+
+  defp located(_none), do: 2
+
+  defp located(true, _locations), do: 0
+  defp located(false, [_ | _]), do: 1
+  defp located(false, []), do: 2
+
+  defp menu_items(items, found) do
+    ids = Map.new(items, &{&1["id"], true})
+
+    items
+    |> Enum.sort_by(&{&1["menu_order"] || 0, &1["id"]})
+    |> Enum.group_by(&menu_parent(&1["parent"], ids))
+    |> branch(0, found)
+  end
+
+  defp menu_parent(parent, ids) when is_map_key(ids, parent), do: parent
+  defp menu_parent(_parent, _ids), do: 0
+
+  defp branch(children, parent, found),
+    do: for(item <- Map.get(children, parent, []), do: menu_item(item, children, found))
+
+  defp menu_item(item, children, found) do
+    {kind, id} = menu_object(item, found)
+
+    %{
+      "title" => item |> Map.get("title") |> raw() |> plain(),
+      "url" => item["url"],
+      "kind" => kind,
+      "id" => id,
+      "new_tab" => item["target"] == "_blank",
+      "items" => branch(children, item["id"], found)
+    }
+  end
+
+  defp menu_object(%{"type" => type, "object" => object, "object_id" => id}, _found)
+       when type in @menu_typed and is_map_key(@menu_objects, object),
+       do: {Map.fetch!(@menu_objects, object), to_string(id)}
+
+  defp menu_object(%{"url" => url}, found) when is_map_key(found, url), do: Map.fetch!(found, url)
+  defp menu_object(_item, _found), do: {nil, nil}
+
+  defp custom_links(items, true, %{conn: %{read: read, index: %{"home" => home}}})
+       when is_binary(home) do
+    {posts, pages} =
+      items
+      |> Enum.flat_map(&custom_url/1)
+      |> linked_entries(read, home)
+
+    Map.merge(found_as(pages, "page"), found_as(posts, "post"))
+  end
+
+  defp custom_links(_items, _main?, _context), do: %{}
+
+  defp custom_url(%{"type" => "custom", "url" => url}) when is_binary(url), do: [url]
+  defp custom_url(_item), do: []
+
+  defp found_as(rows, kind),
+    do: Map.new(rows, fn {href, row} -> {href, {kind, to_string(row["id"])}} end)
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
@@ -428,16 +577,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> by_id()
 
   defp links(html, %{conn: %{read: read, index: %{"home" => home}}}) when is_binary(home) do
-    asked =
+    {posts, pages} =
       html
       |> LazyHTML.from_fragment()
       |> LazyHTML.query("a[href]")
       |> LazyHTML.attribute("href")
-      |> Enum.uniq()
-      |> Enum.flat_map(&asked(&1, URI.parse(home)))
-
-    posts = linked(read, "/wp/v2/posts", asked)
-    pages = linked(read, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))
+      |> linked_entries(read, home)
 
     %{
       "links" =>
@@ -448,6 +593,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   end
 
   defp links(_html, _context), do: %{"links" => %{}, "pages" => %{}}
+
+  defp linked_entries(hrefs, read, home) do
+    asked = hrefs |> Enum.uniq() |> Enum.flat_map(&asked(&1, URI.parse(home)))
+    posts = linked(read, "/wp/v2/posts", asked)
+    {posts, linked(read, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))}
+  end
 
   defp asked(href, home) do
     uri = href |> String.trim() |> URI.parse()

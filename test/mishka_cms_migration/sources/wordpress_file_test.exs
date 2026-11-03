@@ -73,6 +73,11 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     Enum.reject(rows, &(&1["id"] in @unexported_settings))
   end
 
+  defp rest_rows(conn, "menu") do
+    {:ok, rows, nil} = WordPress.list(conn, "menu", nil)
+    rows
+  end
+
   defp rest_rows(_conn, kind), do: Enum.flat_map(@recordings[kind], &recorded/1)
 
   defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
@@ -80,6 +85,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   # The attrs of an item read from the export and from the REST API, without what an export does
   # not carry: a draft's GMT date WordPress kept none for among it. An entry's SEO is compared on
   # its own: the REST API answers what Yoast served, an export what Yoast and Rank Math kept.
+  defp compared(from_file, from_rest, "menu"),
+    do: {unlinked_terms(from_file.attrs), unlinked_terms(from_rest.attrs)}
+
   defp compared(from_file, from_rest, kind) do
     left_out = ["seo" | Map.get(@not_exported, kind, [])] ++ undated(from_file.attrs)
     {Map.drop(from_file.attrs, left_out), Map.drop(from_rest.attrs, left_out)}
@@ -87,6 +95,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
   defp undated(%{"date_gmt" => nil}), do: ["date_gmt"]
   defp undated(_attrs), do: []
+
+  # A term has no link in an export, so a menu's category or tag has WordPress's plain address.
+  defp unlinked_terms(%{"items" => items} = node),
+    do: node |> unlinked() |> Map.put("items", Enum.map(items, &unlinked_terms/1))
+
+  defp unlinked(%{"kind" => kind} = item) when kind in ["category", "tag"],
+    do: Map.delete(item, "url")
+
+  defp unlinked(node), do: node
 
   defp ids(items), do: items |> Map.keys() |> Enum.sort()
 
@@ -267,6 +284,20 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert post.attrs["pages"] != %{}
       assert post.attrs["media"] != %{}
       assert post.attrs["links"] == rest_items!("post")["35"].attrs["links"]
+    end
+
+    test "carry each menu once with its items, a category's address being WordPress's plain one" do
+      menus = file_items!(@all, "menu")
+
+      [news] =
+        for item <- menus["22"].attrs["items"],
+            child <- item["items"],
+            child["id"] == "2",
+            do: child
+
+      assert ids(menus) == ["22", "23"]
+      assert {menus["22"].attrs["main"], menus["23"].attrs["main"]} == {true, false}
+      assert {news["title"], news["url"]} == {"News", "http://localhost:8089/?cat=2"}
     end
 
     test "carry what an export has of an author, a term and a draft, and every meta field of a post" do

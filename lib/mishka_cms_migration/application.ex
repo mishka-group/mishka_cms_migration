@@ -36,7 +36,8 @@ defmodule MishkaCmsMigration.Application do
   @core_targets [
     MishkaCmsMigration.Targets.CmsMedia,
     MishkaCmsMigration.Targets.CmsSetting,
-    MishkaCmsMigration.Targets.CmsPage
+    MishkaCmsMigration.Targets.CmsPage,
+    MishkaCmsMigration.Targets.CmsLayout
   ]
 
   @blog_targets [
@@ -72,7 +73,8 @@ defmodule MishkaCmsMigration.Application do
   through an existing CMS action: files into the CMS's media library
   (`MishkaCmsMigration.Targets.CmsMedia`), the site's name and pictures into its settings
   (`MishkaCmsMigration.Targets.CmsSetting`), pages into the CMS's pages
-  (`MishkaCmsMigration.Targets.CmsPage`),
+  (`MishkaCmsMigration.Targets.CmsPage`), the main menu into the links of the site layout's header
+  (`MishkaCmsMigration.Targets.CmsLayout`),
   authors, categories, tags, posts and comments into Mishka Blog
   (`MishkaCmsMigration.Targets.BlogBlogger`, `MishkaCmsMigration.Targets.BlogCollection`,
   `MishkaCmsMigration.Targets.BlogTag`, `MishkaCmsMigration.Targets.BlogPost`,
