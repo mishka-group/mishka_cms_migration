@@ -666,7 +666,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     defp walked!(run, kind, created) do
       MishkaCmsMigration.record_progress!(
         run,
-        %{kind: kind, counts: %{created: created, updated: 0, skipped: 0, failed: 0}},
+        %{
+          kind: kind,
+          counts: %{created: created, updated: 0, skipped: 0, failed: 0, undecided: 0}
+        },
         tenant: run.site_id,
         authorize?: false
       )

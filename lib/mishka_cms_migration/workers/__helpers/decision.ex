@@ -18,17 +18,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   Then, what earlier runs recorded:
 
-    * none, or one never written — `{:created, target, nil}`, unless the target finds it in the
-      CMS already (`MishkaCmsMigration.Target`'s `existing/2`): `{:connected, target, record}`, the
-      CMS record it is, `{:updated, target, record}`, the CMS record it is written over, or
-      `{:skipped, reason}`, why it is left out;
+    * none, or one never written — `{:created, target, nil, decisions}`, unless the target finds
+      it in the CMS already (`MishkaCmsMigration.Target`'s `existing/2`):
+      `{:connected, target, record}`, the CMS record it is, `{:updated, target, record, decisions}`,
+      the CMS record it is written over, `{:skipped, reason}`, why it is left out, or
+      `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
       record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
       it in the CMS — `{:skipped, "edited_in_cms"}`;
-    * otherwise — `{:updated, target, record}`, the CMS record to write over.
+    * otherwise — `{:updated, target, record, decisions}`, the CMS record to write over.
+
+  `decisions` are the admin's answers to the conflicts the item met
+  (`MishkaCmsMigration.MigrationItem`'s `decisions`), which the target is handed with the item
+  (`MishkaCmsMigration.Target.decision/3`); `existing/2` is handed those of the page's items it is
+  asked about.
 
   The CMS records are read through the target resource's primary read as the admin running the
   job, under the CMS's own policies; a read the CMS refuses fails the attempt, as an error of the
@@ -49,16 +55,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
 
+  @typedoc "An admin's answers to the conflicts an item met, by conflict."
+  @type decisions :: %{String.t() => String.t()}
+
   @typedoc """
   What to do with an item: write a new record, write over `record`, record it against `record` the
-  CMS already held, or leave it, and why.
+  CMS already held, leave it, and why, or wait for an admin's decision on a conflict.
   """
   @type plan ::
-          {:created, module(), nil}
-          | {:updated, module(), struct()}
+          {:created, module(), nil, decisions()}
+          | {:updated, module(), struct(), decisions()}
           | {:connected, module(), struct()}
           | {:mapped, module(), struct()}
           | {:skipped, String.t()}
+          | {:undecided, String.t()}
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
@@ -79,23 +89,39 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   end
 
   defp existing(plans, target, items, state) do
-    new = for item <- items, match?({:created, _target, nil}, plans[item.source_id]), do: item
-    ids = Enum.map(new, & &1.source_id)
+    new =
+      for item <- items,
+          match?({:created, _target, nil, _decided}, plans[item.source_id]),
+          do: item
+
+    decisions =
+      for %{source_id: id} <- new,
+          {:created, _target, nil, decided} = plans[id],
+          decided != %{},
+          into: %{},
+          do: {id, decided}
 
     new
-    |> found(target, state)
-    |> Map.take(ids)
-    |> Enum.reduce(plans, fn {source_id, found}, plans ->
-      Map.put(plans, source_id, connected(target, found))
+    |> found(target, %{state.context | decisions: decisions})
+    |> Map.take(Enum.map(new, & &1.source_id))
+    |> Enum.reduce(plans, fn {id, found}, plans ->
+      Map.update!(plans, id, &connected(target, found, &1))
     end)
   end
 
-  defp found([], _target, _state), do: %{}
-  defp found(items, target, state), do: target.existing(items, state.context)
+  defp found([], _target, _context), do: %{}
+  defp found(items, target, context), do: target.existing(items, context)
 
-  defp connected(target, {:connected, record}), do: {:connected, target, record}
-  defp connected(target, {:updated, record}), do: {:updated, target, record}
-  defp connected(_target, {:skipped, reason}) when is_binary(reason), do: {:skipped, reason}
+  defp connected(target, {:connected, record}, _plan), do: {:connected, target, record}
+
+  defp connected(target, {:updated, record}, {:created, _target, nil, decided}),
+    do: {:updated, target, record, decided}
+
+  defp connected(_target, {:skipped, reason}, _plan) when is_binary(reason),
+    do: {:skipped, reason}
+
+  defp connected(_target, {:undecided, conflict}, _plan) when is_binary(conflict),
+    do: {:undecided, conflict}
 
   defp current([], _target, _state), do: %{}
 
@@ -111,8 +137,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp plan(target, _item, %{mapped_id: id}, records) when is_binary(id),
     do: records |> Map.get(id) |> mapped(target)
 
-  defp plan(target, _item, nil, _records), do: {:created, target, nil}
-  defp plan(target, _item, %{target_id: nil}, _records), do: {:created, target, nil}
+  defp plan(target, _item, nil, _records), do: {:created, target, nil, %{}}
+
+  defp plan(target, _item, %{target_id: nil, decisions: decided}, _records),
+    do: {:created, target, nil, decided}
 
   defp plan(target, item, known, records),
     do: decide(target, known, Item.hash(item), Map.get(records, known.target_id))
@@ -122,10 +150,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
   defp decide(target, known, _hash, record),
-    do: record |> edited?(known) |> updated(target, record)
+    do: record |> edited?(known) |> updated(target, record, known.decisions)
 
-  defp updated(true, _target, _record), do: {:skipped, "edited_in_cms"}
-  defp updated(false, target, record), do: {:updated, target, record}
+  defp updated(true, _target, _record, _decided), do: {:skipped, "edited_in_cms"}
+  defp updated(false, target, record, decided), do: {:updated, target, record, decided}
 
   defp edited?(%{updated_at: %DateTime{} = now}, %{target_updated_at: %DateTime{} = then}),
     do: DateTime.compare(now, then) != :eq

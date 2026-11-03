@@ -50,7 +50,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   defp counts(run, kind) do
     run.report.kinds
     |> Enum.find(&(&1.kind == kind))
-    |> Map.take([:created, :updated, :skipped, :failed])
+    |> Map.take(MishkaCmsMigration.Report.outcomes())
   end
 
   defp outcomes(run, kind) do
@@ -154,10 +154,22 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert counts(run, "category") ==
-               %{created: length(recorded("categories")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("categories")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert counts(run, "tag") ==
-               %{created: length(recorded("tags")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("tags")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert blog(Collection, site) == %{}
       assert blog(Tag, site) == %{}
@@ -174,7 +186,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       for {kind, recording} <- [{"category", "categories"}, {"tag", "tags"}] do
         assert counts(run, kind) ==
-                 %{created: 0, updated: 0, skipped: length(recorded(recording)), failed: 0}
+                 %{
+                   created: 0,
+                   updated: 0,
+                   skipped: length(recorded(recording)),
+                   failed: 0,
+                   undecided: 0
+                 }
 
         assert run |> outcomes(kind) |> Map.values() |> Enum.uniq() == [{:skipped, "no_target"}]
       end
@@ -274,10 +292,22 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin)
 
       assert counts(run, "tag") ==
-               %{created: length(recorded("tags")) - 1, updated: 0, skipped: 1, failed: 0}
+               %{
+                 created: length(recorded("tags")) - 1,
+                 updated: 0,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert counts(run, "category") ==
-               %{created: length(recorded("categories")) - 1, updated: 0, skipped: 1, failed: 0}
+               %{
+                 created: length(recorded("categories")) - 1,
+                 updated: 0,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert slugs(Tag, site)["elixir"] == 1
       assert slugs(Collection, site)["elixir"] == 1
@@ -391,7 +421,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       again = imported!(site, admin)
 
       assert counts(again, "tag") ==
-               %{created: 0, updated: length(recorded("tags")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("tags")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"15" => {:skipped, "edited_in_cms"}} = outcomes(again, "tag")
 
@@ -427,7 +463,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       run = imported!(site, admin)
 
-      assert counts(run, "user") == %{created: 1, updated: 0, skipped: 4, failed: 0}
+      assert counts(run, "user") == %{created: 1, updated: 0, skipped: 4, failed: 0, undecided: 0}
       assert %{"shahryar" => blogger} = bloggers(site)
       assert map_size(bloggers(site)) == 1
       assert blogger.user_id == editor.id
@@ -473,7 +509,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       accounts = accounts(site)
 
       assert counts(run, "user") ==
-               %{created: map_size(wordpress), updated: 0, skipped: 0, failed: 0}
+               %{created: map_size(wordpress), updated: 0, skipped: 0, failed: 0, undecided: 0}
 
       assert accounts[@editor].id == editor.id
 
@@ -671,7 +707,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       outcomes = outcomes(run, "post")
 
       assert counts(run, "post") ==
-               %{created: length(recorded("posts")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("posts")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{
                "32" => {:created, nil},
@@ -939,7 +981,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       third = imported!(site, admin)
 
       assert counts(third, "post") ==
-               %{created: 0, updated: length(recorded("posts")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("posts")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"39" => {:skipped, "edited_in_cms"}} = outcomes(third, "post")
       posts = posts(site)
@@ -1182,7 +1230,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       unpublished = length(recorded("posts")) - length(published())
 
       assert counts(run, "post_redirect") ==
-               %{created: length(published()), updated: 0, skipped: unpublished, failed: 0}
+               %{
+                 created: length(published()),
+                 updated: 0,
+                 skipped: unpublished,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert for({_id, {:skipped, reason}} <- outcomes(run, "post_redirect"), do: reason) ==
                List.duplicate("no_old_address", unpublished)
@@ -1355,7 +1409,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       for run <- [dry, run] do
         assert counts(run, "comment") ==
-                 %{created: 0, updated: 0, skipped: length(recorded("comments")), failed: 0}
+                 %{
+                   created: 0,
+                   updated: 0,
+                   skipped: length(recorded("comments")),
+                   failed: 0,
+                   undecided: 0
+                 }
 
         assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
                  [{:skipped, "not_chosen"}]
@@ -1395,7 +1455,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin, @on)
       comments = comments(site)
 
-      assert counts(run, "comment") == %{created: 9, updated: 0, skipped: 4, failed: 0}
+      assert counts(run, "comment") == %{
+               created: 9,
+               updated: 0,
+               skipped: 4,
+               failed: 0,
+               undecided: 0
+             }
+
       assert map_size(comments) == 9
 
       for id <- [2, 3, 4, 5, 6, 7, 9],

@@ -55,7 +55,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   defp counts(run) do
     run.report.kinds
     |> Enum.find(&(&1.kind == "page"))
-    |> Map.take([:created, :updated, :skipped, :failed])
+    |> Map.take(MishkaCmsMigration.Report.outcomes())
   end
 
   defp outcomes(run) do
@@ -114,7 +114,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert counts(run) ==
-               %{created: length(recorded("pages")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("pages")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"31" => {:created, "draft_from_private"}, "3" => {:created, nil}} = outcomes(run)
       assert pages(site) == %{}
@@ -142,7 +148,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       pages = pages(site)
 
       assert counts(run) ==
-               %{created: length(recorded("pages")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("pages")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert pages |> Map.keys() |> Enum.sort() == @paths |> Map.values() |> Enum.sort()
       assert pages |> Map.values() |> Enum.all?(&(&1.active == false))
@@ -206,7 +218,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       run = imported!(site, admin)
 
       assert %{"29" => {:skipped, "path_taken"}} = outcomes(run)
-      assert counts(run) == %{created: 10, updated: 0, skipped: 1, failed: 0}
+      assert counts(run) == %{created: 10, updated: 0, skipped: 1, failed: 0, undecided: 0}
 
       kept = pages(site)["/contact"]
       assert {kept.id, kept.title, kept.template} == {own.id, "Our own contact", own.template}
@@ -269,7 +281,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       again = imported!(site, admin)
 
       assert counts(again) ==
-               %{created: 0, updated: 0, skipped: length(recorded("pages")), failed: 0}
+               %{
+                 created: 0,
+                 updated: 0,
+                 skipped: length(recorded("pages")),
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert again |> outcomes() |> Map.values() |> Enum.uniq() == [{:skipped, "unchanged"}]
       assert map_size(pages(site)) == length(recorded("pages"))
@@ -291,7 +309,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       third = imported!(site, admin, %{pages: "publish"})
 
       assert counts(third) ==
-               %{created: 0, updated: length(recorded("pages")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("pages")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"24" => {:skipped, "edited_in_cms"}} = outcomes(third)
       pages = pages(site)

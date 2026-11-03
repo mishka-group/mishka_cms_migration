@@ -5,9 +5,9 @@
 defmodule MishkaCmsMigration.Targets.CmsSettingTest do
   @moduledoc """
   A WordPress site's name, logo and icon moved into the run's site's settings, against what the
-  seeded WordPress answered: what a dry run plans, what an import writes and where, that the site's
-  own value is kept, that a logo whose file was not imported is left out, and what a second run
-  does after an admin changed a setting.
+  seeded WordPress answered: what a dry run plans, what an import writes and where, that a setting
+  the site has its own value for waits for an admin's decision and follows it, that a logo whose
+  file was not imported is left out, and what a second run does after an admin changed a setting.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -52,6 +52,18 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
     |> Ash.read!(tenant: site.id, authorize?: false)
     |> Enum.filter(&(&1.site_id == site.id and &1.key == key))
   end
+
+  defp item(site, source_id) do
+    MishkaCmsMigration.MigrationItem
+    |> Ash.read!(tenant: site.id, authorize?: false)
+    |> Enum.find(&(&1.source_kind == "setting" and &1.source_id == source_id))
+  end
+
+  defp decide!(site, admin, source_id, choice),
+    do:
+      site
+      |> item(source_id)
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   defp media(site, name) do
     Media
@@ -98,20 +110,78 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
       assert settings(other) == %{}
     end
 
-    test "keeps a setting the site already has, in the dry run and the import", %{
+    test "leaves a setting the site already has for an admin's decision, in the dry run and the import",
+         %{site: site, admin: admin} do
+      {:ok, _title} = Settings.put("site.title", "The site's own", site_id: site.id)
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run)["title"] == {:undecided, "site_has_own"}
+      assert run.report.counts.undecided == 1
+
+      run = import!(run, admin)
+
+      assert outcomes(run)["title"] == {:undecided, "site_has_own"}
+      assert settings(site)["site.title"] == "The site's own"
+      assert settings(site)["site.logo"] == media(site, "site-logo").relative_path
+
+      assert %{plan: :undecided, outcome: :undecided, reason: "site_has_own", decisions: %{}} =
+               item(site, "title")
+    end
+
+    test "keeps the site's own once an admin decides so, on every later run", %{
       site: site,
       admin: admin
     } do
       {:ok, _title} = Settings.put("site.title", "The site's own", site_id: site.id)
+      imported!(site, admin)
+
+      decide!(site, admin, "title", "keep")
+
+      for _run <- 1..2 do
+        run = site |> wordpress_run!(admin) |> dry_run!(admin)
+        assert outcomes(run)["title"] == {:skipped, "site_own_kept"}
+        assert outcomes(import!(run, admin))["title"] == {:skipped, "site_own_kept"}
+      end
+
+      assert settings(site)["site.title"] == "The site's own"
+    end
+
+    test "writes the WordPress one over the site's own setting once an admin decides so, and says so",
+         %{site: site, admin: admin} do
+      {:ok, _title} = Settings.put("site.title", "The site's own", site_id: site.id)
+      [own] = site_rows(site, "site.title")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      decide!(site, admin, "title", "import")
 
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
-      assert outcomes(run)["title"] == {:skipped, "site_own_kept"}
+      assert outcomes(run)["title"] == {:created, "site_own_replaced"}
+      assert settings(site)["site.title"] == "The site's own"
 
       run = import!(run, admin)
 
-      assert outcomes(run)["title"] == {:skipped, "site_own_kept"}
-      assert settings(site)["site.title"] == "The site's own"
-      assert settings(site)["site.logo"] == media(site, "site-logo").relative_path
+      assert outcomes(run)["title"] == {:created, "site_own_replaced"}
+      assert settings(site)["site.title"] == "Mishka Test Blog"
+      assert [%{id: id}] = site_rows(site, "site.title")
+      assert id == own.id
+      assert outcomes(imported!(site, admin))["title"] == {:skipped, "unchanged"}
+    end
+
+    test "refuses a choice the conflict does not offer, and a decision where nothing waits", %{
+      site: site,
+      admin: admin
+    } do
+      {:ok, _title} = Settings.put("site.title", "The site's own", site_id: site.id)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      for {source_id, choice} <- [{"title", "leave_out"}, {"title", "drop"}, {"icon", "keep"}] do
+        assert {:error, %Ash.Error.Invalid{errors: [%{field: :decision}]}} =
+                 site
+                 |> item(source_id)
+                 |> MishkaCmsMigration.decide_item(choice, actor: admin, tenant: site.id)
+      end
+
+      assert item(site, "title").decisions == %{}
     end
 
     test "leaves out a logo whose file was not imported", %{site: site, admin: admin} do

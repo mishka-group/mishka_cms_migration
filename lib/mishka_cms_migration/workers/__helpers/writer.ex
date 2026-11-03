@@ -29,7 +29,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
   or mapped to one by an admin, is not written: in an import it is recorded against that record,
-  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so.
+  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item whose
+  conflict waits for an admin's decision is not written either: it is recorded as `:undecided`,
+  with the conflict as its reason, and the next run asks again.
+
+  The target is handed the item's decisions (`MishkaCmsMigration.Target`'s context, `decisions`),
+  so what an admin decided on a conflict holds for its note and its write.
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
@@ -48,22 +53,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   @doc """
   Settles `item` by `plan` and answers its entry in the report:
 
-    * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
-      and recorded as the item's plan in a dry run, with its target's note and the pieces of its
-      content left unconverted as its reason;
+    * `{:created, target, nil, decisions}` or `{:updated, target, record, decisions}` — written
+      in an import, reported and recorded as the item's plan in a dry run, with its target's note
+      and the pieces of its content left unconverted as its reason;
     * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
       in an import, never written, and reported as skipped, `"connected"`;
-    * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason, as what an import
-      did or as a dry run's plan; an item whose row could not be read has only its kind and, when
-      the row named one, its source id, and is recorded only with one;
+    * `{:skipped, reason}`, `{:failed, reason}` or `{:undecided, conflict}` — recorded with its
+      reason, as what an import did or as a dry run's plan; an item whose row could not be read
+      has only its kind and, when the row named one, its source id, and is recorded only with one;
     * `:duplicate` — the source listed its id before: reported, never recorded.
   """
   @spec call(map(), Item.t(), term()) :: Report.entry()
   def call(_state, %Item{} = item, :duplicate),
     do: Report.entry(item.kind, item.source_id, item.title, :skipped, "duplicate_in_source")
 
-  def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
-    do: entry(state, item, outcome, reason)
+  def call(state, %Item{} = item, {outcome, reason})
+      when outcome in [:skipped, :failed, :undecided],
+      do: entry(state, item, outcome, reason)
 
   def call(state, %Item{} = item, {:mapped, target, record}),
     do: call(state, item, {:connected, target, record})
@@ -78,18 +84,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> entered(item, :skipped, "connected")
   end
 
-  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record}),
+  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record, decisions}),
     do:
       entry(
         state,
         item,
         outcome,
-        note(target, item, %{state.context | record: record}, to_convert(item))
+        note(target, item, item_context(state, item, record, decisions), to_convert(item))
       )
 
-  def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record}) do
+  def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record, decisions}) do
     state
-    |> written(item, target, outcome, record)
+    |> written(item, {outcome, target, record}, item_context(state, item, record, decisions))
     |> settled(state, item, outcome)
   end
 
@@ -111,17 +117,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp entered({:error, error}, item, _outcome, _reason),
     do: Report.entry(item.kind, item.source_id, item.title, :failed, Report.reason(error))
 
-  defp written(state, source_item, target, outcome, record) do
-    with {:ok, context} <- parented(state, source_item, record),
+  defp written(state, source_item, {outcome, target, _record} = plan, context) do
+    with {:ok, context} <- parented(state, source_item, context),
          {:ok, item, kept} <- convert(state, source_item),
          {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
          note = note(target, item, context, kept),
          {:ok, written} <-
-           target.prepare(
-             item,
-             context,
-             &transacted(state, {source_item, item}, {outcome, target, record}, &1, note)
-           ) do
+           target.prepare(item, context, &transacted(state, {source_item, item}, plan, &1, note)) do
       {:ok, written, note}
     end
   rescue
@@ -146,20 +148,19 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp stored({:ok, _item}), do: :ok
   defp stored({:error, error}), do: {:error, error}
 
-  defp parented(state, %Item{parent: nil}, record),
-    do: {:ok, target_context(state, nil, record)}
+  defp parented(_state, %Item{parent: nil}, context), do: {:ok, context}
 
-  defp parented(state, %Item{kind: kind, parent: parent}, record) do
+  defp parented(state, %Item{kind: kind, parent: parent}, context) do
     state.run.source_host
     |> MishkaCmsMigration.items_by_sources(kind, [parent], scope: state.scope)
-    |> parent_record(state, record)
+    |> parent_record(context)
   end
 
-  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, state, record) when is_binary(id),
-    do: {:ok, target_context(state, id, record)}
+  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, context) when is_binary(id),
+    do: {:ok, %{context | parent_id: id}}
 
-  defp parent_record({:ok, _items}, _state, _record), do: {:skipped, "parent_missing"}
-  defp parent_record({:error, error}, _state, _record), do: {:error, error}
+  defp parent_record({:ok, _items}, _context), do: {:skipped, "parent_missing"}
+  defp parent_record({:error, error}, _context), do: {:error, error}
 
   defp write(target, item, nil, context) do
     target.resource()
@@ -305,6 +306,6 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp target_context(state, parent_id, record),
-    do: %{state.context | parent_id: parent_id, record: record}
+  defp item_context(state, item, record, decisions),
+    do: %{state.context | record: record, decisions: %{item.source_id => decisions}}
 end

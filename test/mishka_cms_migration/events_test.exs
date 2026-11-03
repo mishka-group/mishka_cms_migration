@@ -111,7 +111,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0}
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/skipped")) and is_nil(redirect(site, "/taken"))
       assert redirect(site, "/changed").to == "/renamed"
       assert %{outcome: :skipped, reason: "held back", target_id: nil} = item(site, "1")
@@ -127,7 +127,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0}
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/raised-on"))
       assert %{outcome: :skipped, reason: "plugins_failed", target_id: nil} = item(site, "1")
       assert redirect(site, "/fine")
@@ -146,7 +146,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => [redirect_row(1, "/old", "/new")]})
 
-      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0}
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/old"))
       assert %{outcome: :skipped, target_id: nil} = item(site, "1")
     end
@@ -200,7 +200,7 @@ defmodule MishkaCmsMigration.EventsTest do
           "redirect" => [redirect_row(1, "/old", "/new", %{"content" => content})]
         })
 
-      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0}
+      assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/old"))
       assert %{outcome: :skipped, reason: "plugins_failed"} = item(site, "1")
     end
@@ -218,7 +218,7 @@ defmodule MishkaCmsMigration.EventsTest do
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0}
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/to-convert"))
       assert redirect(site, "/converted").description == "<p>ready</p>"
       assert %{outcome: :skipped, reason: "plugins_cannot_run", target_id: nil} = item(site, "1")

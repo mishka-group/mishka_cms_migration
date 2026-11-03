@@ -254,6 +254,34 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
                )
     end
 
+    test "decides a conflict for the site's admin and a master, only where one waits", %{
+      site_a: site_a,
+      admin_a: admin_a,
+      admin_b: admin_b,
+      item: item
+    } do
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :decision}]}} =
+               MishkaCmsMigration.decide_item(item, "keep", actor: admin_a, tenant: site_a.id)
+
+      waiting =
+        item
+        |> Map.take([:source_host, :source_kind, :source_id])
+        |> Map.merge(%{plan: :undecided, plan_reason: "site_has_own"})
+        |> MishkaCmsMigration.record_item_plan!(tenant: site_a.id, authorize?: false)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.decide_item(waiting, "keep", actor: admin_b, tenant: site_a.id)
+
+      assert {:ok, %{decisions: %{"site_has_own" => "keep"}}} =
+               MishkaCmsMigration.decide_item(waiting, "keep", actor: admin_a, tenant: site_a.id)
+
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      {:ok, as_master} = MigrationItem.fetch(item.id, master)
+
+      assert {:ok, %{decisions: %{"site_has_own" => "import"}}} =
+               Ash.update(as_master, %{decision: "import"}, action: :master_choose, actor: master)
+    end
+
     test "is not held by another site's run", %{
       site_a: site_a,
       site_b: site_b,

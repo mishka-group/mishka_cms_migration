@@ -41,16 +41,30 @@ defmodule MishkaCmsMigration.MigrationItem do
   changed, and leaves the CMS record an earlier import wrote for it as it is, never deleting it.
   `:bring_back` clears it, so the next run plans the item again. Each makes that one change.
 
-  `:map_to` sets `mapped_id`, a record of the CMS resource the item's kind is written to, on its
-  site (`MishkaCmsMigration.Resources.Validations.MappedRecord`), and brings the item back: every
-  later run connects the item to that record and never writes it, whatever the source changed,
-  what an earlier import wrote and what the target would find by its slug; what sits under it in
-  the source goes under that record. Two of the source's terms are merged by mapping both to one
+  `:choose` with a `mapped_id` sets it to a record of the CMS resource the item's kind is written
+  to, on its site (`MishkaCmsMigration.Resources.Validations.MappedRecord`), and brings the item
+  back: every later run connects the item to that record and never writes it, whatever the source
+  changed, what an earlier import wrote and what the target would find by its slug; what sits
+  under it in the source goes under that record. Two of the source's terms are merged by mapping both to one
   record, which the admin makes first. A record deleted since leaves the item skipped as
   `"mapped_missing"`. `nil` imports the item as its own again, and an item an import connected
   through its mapping forgets that record (`unmapped/2`). A mapping made after an import does not
-  link again the posts that import wrote and the source has not changed since. The master actions
-  (`:master_leave_out`, `:master_bring_back`, `:master_map_to`) do the same on any site.
+  link again the posts that import wrote and the source has not changed since.
+
+  An item the import cannot place safely on its own, such as a setting the site already has a
+  value of its own for, waits for a decision: a dry run plans it, and an import records it, as
+  `:undecided`, with the conflict as the reason (`MishkaCmsMigration.Report`), and writes nothing
+  for it. `:choose` with a `decision` answers that conflict (`conflict/1`) with one of the choices
+  it offers (`choices/1`): `"keep"`, the site stays as it is (its own is kept, the item is
+  connected to the record the site has, or it waits); `"import"`, the item is written the import's
+  way; or `"leave_out"`, where the conflict offers it. The answer is kept in `decisions`, by
+  conflict, brings the item back, and holds for every later dry run and import, whose target reads
+  it (`MishkaCmsMigration.Target.decision/3`); a decision made after the item was written changes
+  nothing about it. `:decide_keep` and `:decide_import` give the same answer for the rows an admin
+  picks, and leave the rows whose conflict does not offer it as they are.
+
+  The master actions (`:master_leave_out`, `:master_bring_back`, `:master_choose`,
+  `:master_decide_keep`, `:master_decide_import`) do the same on any site.
 
   A left-out item takes what hangs on it along (`MishkaCmsMigration.Workers.Helpers.Pipeline`): the
   items under it in the source, such as a category's categories, a page's pages and a comment's
@@ -86,8 +100,11 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`chosen/2`). A category's or a tag's Map to… (Gervaz's `:edit` row action, which shows the
   page's modal first) opens this resource's Gervaz form on the item, one `mapped_id` field whose
   choices are the site's records of that kind in the language it leads with, and Import as its own
-  (`map_options/1`). The Plan cell shows the choice before the plan, and the record a mapped item
-  is connected to (`mapped_paths`). The table's other view, Map, draws the items as the source
+  (`map_options/1`). An item with a conflict has Decide… instead, which opens the same form with
+  one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
+  Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
+  picked rows together. The Plan cell shows the choice before the plan, and the record a mapped
+  item is connected to (`mapped_paths`). The table's other view, Map, draws the items as the source
   nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), from the rows it keeps
   loaded.
 
@@ -116,12 +133,15 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
   alias MishkaCmsMigration.{MigrationRun, Target}
   alias MishkaCmsMigration.Resources.Calculations.RecordPaths
+  alias MishkaCmsMigration.Resources.Changes.Decided
   alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
   alias MishkaCmsMigration.Targets.Helpers.Read
   alias MishkaGervaz.Table.Web.Events.{BulkActionHooks, BulkActionResult}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
   @mappable ["category", "tag"]
+  @choices %{"site_has_own" => ["keep", "import"]}
+  @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
   @written [
@@ -256,7 +276,18 @@ defmodule MishkaCmsMigration.MigrationItem do
 
         column :planned do
           static true
-          requires [:plan, :plan_reason, :left_out, :mapped_id, :mapped_paths]
+
+          requires [
+            :plan,
+            :plan_reason,
+            :outcome,
+            :reason,
+            :left_out,
+            :mapped_id,
+            :mapped_paths,
+            :decisions
+          ]
+
           label fn -> dgettext("mishka_gervaz", "Plan") end
 
           ui do
@@ -400,11 +431,26 @@ defmodule MishkaCmsMigration.MigrationItem do
         action :map_to do
           type :edit
           js fn _item -> MishkaCmsCore.CoreComponents.show_modal(@map_modal) end
-          visible fn item, _state -> MishkaCmsMigration.MigrationItem.mappable?(item) end
+
+          visible fn item, _state ->
+            MishkaCmsMigration.MigrationItem.mappable?(item) and
+              is_nil(MishkaCmsMigration.MigrationItem.conflict(item))
+          end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Map to…") end
             icon "hero-link"
+          end
+        end
+
+        action :decide do
+          type :edit
+          js fn _item -> MishkaCmsCore.CoreComponents.show_modal(@map_modal) end
+          visible fn item, _state -> MishkaCmsMigration.MigrationItem.conflict(item) != nil end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Decide…") end
+            icon "hero-hand-raised"
           end
         end
 
@@ -456,12 +502,38 @@ defmodule MishkaCmsMigration.MigrationItem do
             icon "hero-arrow-uturn-left"
           end
         end
+
+        action :decide_keep do
+          type :update
+          action {:master_decide_keep, :decide_keep}
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Keep the site as it is") end
+            icon "hero-shield-check"
+          end
+        end
+
+        action :decide_import do
+          type :update
+          action {:master_decide_import, :decide_import}
+
+          confirm dgettext_noop(
+                    "mishka_gervaz",
+                    "Import {count} items anyway? Each is written the import's way."
+                  )
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import anyway") end
+            icon "hero-arrow-down-tray"
+          end
+        end
       end
 
       hooks do
-        on_bulk_action_success [:leave_out, :bring_back], fn summary, _state, socket ->
-          MishkaCmsMigration.MigrationItem.chosen(summary, socket)
-        end
+        on_bulk_action_success [:leave_out, :bring_back, :decide_keep, :decide_import],
+                               fn summary, _state, socket ->
+                                 MishkaCmsMigration.MigrationItem.chosen(summary, socket)
+                               end
       end
 
       realtime do
@@ -492,7 +564,7 @@ defmodule MishkaCmsMigration.MigrationItem do
         access :create, false
 
         actions do
-          update {:master_map_to, :map_to}
+          update {:master_choose, :choose}
           read {:master_get, :read}
         end
       end
@@ -501,6 +573,7 @@ defmodule MishkaCmsMigration.MigrationItem do
         field :mapped_id, :relation do
           mode :search
           options fn state -> MishkaCmsMigration.MigrationItem.map_options(state) end
+          visible fn state -> MishkaCmsMigration.MigrationItem.decision_options(state) == [] end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Map to") end
@@ -509,6 +582,24 @@ defmodule MishkaCmsMigration.MigrationItem do
               dgettext(
                 "mishka_gervaz",
                 "Pick a record the site already has, in the language it leads with, and the import links to it and writes nothing; what sits under the item goes under it. Import as its own writes the item as the source has it."
+              )
+            end
+          end
+        end
+
+        field :decision, :relation do
+          virtual true
+          mode :search
+          options fn state -> MishkaCmsMigration.MigrationItem.decision_options(state) end
+          visible fn state -> MishkaCmsMigration.MigrationItem.decision_options(state) != [] end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Your decision") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "The import cannot place this item on its own: the site already has something in its place. What you pick holds for every later dry run and import."
               )
             end
           end
@@ -673,33 +764,95 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "Brings a left out item of any site back (masters)"
     end
 
-    update :map_to do
+    update :choose do
       accept [:mapped_id]
+      require_atomic? false
+
+      argument :decision, :string do
+        allow_nil? true
+        description "The answer to the conflict the item waits on: keep, import or leave_out"
+      end
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+      validate MappedRecord, before_action?: true, where: [changing(:mapped_id)]
+
+      change set_attribute(:left_out, false)
+      change &MishkaCmsMigration.MigrationItem.unmapped/2
+      change Decided
+
+      description "Maps the item to a record the CMS holds or back (nil), or decides its conflict"
+    end
+
+    update :master_choose do
+      accept [:mapped_id]
+      multitenancy :bypass
+      require_atomic? false
+
+      argument :decision, :string do
+        allow_nil? true
+        description "The answer to the conflict the item waits on: keep, import or leave_out"
+      end
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+      validate MappedRecord, before_action?: true, where: [changing(:mapped_id)]
+
+      change set_attribute(:left_out, false)
+      change &MishkaCmsMigration.MigrationItem.unmapped/2
+      change Decided
+
+      description "Maps an item of any site, or decides its conflict (masters)"
+    end
+
+    update :decide_keep do
+      accept []
       require_atomic? false
 
       validate {TenantContext, require_master: false}
       validate SiteIdle, before_action?: true
-      validate MappedRecord, before_action?: true
 
-      change set_attribute(:left_out, false)
-      change &MishkaCmsMigration.MigrationItem.unmapped/2
+      change {Decided, choice: "keep"}
 
-      description "Maps the item to a record the CMS holds, or back to importing as its own (nil)"
+      description "Answers the item's conflict with the site as it is: its own kept, connected, or waiting"
     end
 
-    update :master_map_to do
-      accept [:mapped_id]
+    update :master_decide_keep do
+      accept []
       multitenancy :bypass
       require_atomic? false
 
       validate {TenantContext, require_master: true}
       validate SiteIdle, before_action?: true
-      validate MappedRecord, before_action?: true
 
-      change set_attribute(:left_out, false)
-      change &MishkaCmsMigration.MigrationItem.unmapped/2
+      change {Decided, choice: "keep"}
 
-      description "Maps an item of any site to a record its site holds, or back (masters)"
+      description "Answers the conflict of an item of any site with the site as it is (masters)"
+    end
+
+    update :decide_import do
+      accept []
+      require_atomic? false
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+
+      change {Decided, choice: "import"}
+
+      description "Answers the item's conflict by writing it the import's way"
+    end
+
+    update :master_decide_import do
+      accept []
+      multitenancy :bypass
+      require_atomic? false
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+
+      change {Decided, choice: "import"}
+
+      description "Answers the conflict of an item of any site by writing it the import's way (masters)"
     end
 
     create :record_plan do
@@ -849,6 +1002,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The record of the kind's CMS resource an admin mapped the item to, nil to import it as its own"
     end
 
+    attribute :decisions, :map do
+      allow_nil? false
+      public? true
+      default %{}
+
+      description "An admin's answers to the conflicts the import met for the item, by conflict: keep or import"
+    end
+
     attribute :plan, :atom do
       allow_nil? true
       public? true
@@ -941,6 +1102,38 @@ defmodule MishkaCmsMigration.MigrationItem do
   def mappable?(%{source_kind: kind}), do: kind in @mappable
 
   @doc """
+  The conflict `item` waits on for an admin's decision, such as `"site_has_own"`: the reason of
+  its last dry run's plan when that plan is `:undecided`, else of its last import when that left it
+  `:undecided` after a plan to write it, or with no plan, else the conflict an admin decided (the
+  first, for an item that met several), so a decision can be changed after a run followed it. `nil`
+  for an item that never met one.
+  """
+  @spec conflict(map()) :: String.t() | nil
+  def conflict(item),
+    do: waits_on(item) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
+
+  @doc """
+  What an admin may answer `conflict` with: `"keep"` and `"import"`, or `"keep"` and
+  `"leave_out"`; none for `nil` or a conflict this extension does not know.
+  """
+  @spec choices(String.t() | nil) :: [String.t()]
+  def choices(conflict), do: Map.get(@choices, conflict, [])
+
+  @doc """
+  The Decide… form's choices (`decision`'s `options`): the choices of the conflict the item the
+  form has loaded waits on (`conflict/1`), in words, such as Keep the site's own and Use the
+  WordPress one. None before the item is loaded, and for an item with no conflict, whose form
+  shows Map to… instead.
+  """
+  @spec decision_options(map()) :: [{String.t(), String.t()}]
+  def decision_options(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}) do
+    conflict = conflict(item)
+    for choice <- choices(conflict), do: {choice_word(conflict, choice), choice}
+  end
+
+  def decision_options(_state), do: []
+
+  @doc """
   The Map to… form's choices (`mapped_id`'s `options`): Import as its own, then the records of the
   item's kind's CMS resource (`MishkaCmsMigration.Target`) on its site, in the language the site
   leads with (`MishkaCmsCore.Runtime.Languages.primary/1`), by name, read as the admin. The kind
@@ -960,7 +1153,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   def map_options(_state), do: [{dgettext("mishka_gervaz", "Import as its own"), "__nil__"}]
 
   @doc """
-  What `:map_to` does to the record an item was connected to when its mapping is taken away: an
+  What `:choose` does to the record an item was connected to when its mapping is taken away: an
   item an import connected (it recorded no `target_updated_at`) forgets that record, so the next
   run creates it, or finds it by its slug, as an item never written. An item an import wrote keeps
   its own record.
@@ -977,11 +1170,20 @@ defmodule MishkaCmsMigration.MigrationItem do
   def unmapped(changeset, _context), do: changeset
 
   @doc """
-  What the Items table says after its bulk Leave out or Bring back changed the rows `summary` names
-  (Gervaz's `MishkaGervaz.Table.Web.Events.BulkActionResult`): how many items it left out or
-  brought back, in a flash.
+  What the Items table says after its bulk Leave out, Bring back, Keep the site as it is or Import
+  anyway changed the rows `summary` names (Gervaz's
+  `MishkaGervaz.Table.Web.Events.BulkActionResult`): how many items it left out, brought back or
+  decided, in a flash, and for a decision how many it left as they were, having no conflict that
+  choice answers.
   """
   @spec chosen(BulkActionResult.t(), Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def chosen(%BulkActionResult{action_name: action, succeeded_records: records}, socket)
+      when is_map_key(@bulk_choices, action) do
+    choice = Map.fetch!(@bulk_choices, action)
+    decided = Enum.count(records, &(Map.get(&1.decisions, conflict(&1)) == choice))
+    BulkActionHooks.put_flash(socket, :info, decided_words(decided, length(records) - decided))
+  end
+
   def chosen(%BulkActionResult{action_name: action, succeeded_count: count}, socket),
     do: BulkActionHooks.put_flash(socket, :info, chosen_words(action, count))
 
@@ -991,8 +1193,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   connected to a record the CMS already held), the reason in words under it
   (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/1`). A dash before
   the item's first dry run. An admin's choice is shown before the plan: Left out by you
-  (`left_out`) for an item left out, and Brought back for one brought back since the last dry run
-  left it out.
+  (`left_out`) for an item left out, Brought back for one brought back since the last dry run
+  left it out, and Decided (`data-plan="decided"`), with the choice in words, for an item whose
+  conflict an admin decided since the last run that met it. An item that waits for a decision reads
+  Needs your decision, with the conflict in words, also when only its last import met it.
   """
   @spec plan_cell(map()) :: Phoenix.LiveView.Rendered.t()
   def plan_cell(item),
@@ -1057,6 +1261,25 @@ defmodule MishkaCmsMigration.MigrationItem do
         count
       )
 
+  defp decided_words(decided, 0),
+    do: dngettext("mishka_gervaz", "%{count} item decided.", "%{count} items decided.", decided)
+
+  defp decided_words(decided, left),
+    do:
+      decided_words(decided, 0) <>
+        " " <>
+        dngettext(
+          "mishka_gervaz",
+          "%{count} left as it was: nothing on it takes this choice.",
+          "%{count} left as they were: nothing on them takes this choice.",
+          left
+        )
+
+  defp choice_word("site_has_own", "keep"), do: dgettext("mishka_gervaz", "Keep the site's own")
+
+  defp choice_word("site_has_own", "import"),
+    do: dgettext("mishka_gervaz", "Use the WordPress one")
+
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 
   defp records_of({:ok, target}, site_id, user) do
@@ -1092,7 +1315,34 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp planned(%{mapped_id: id}) when is_binary(id),
     do: said(:skipped, plan_word(:skipped), "mapped_missing")
 
-  defp planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
+  defp planned(item), do: item |> waits_on() |> waiting(item)
+
+  defp waiting(nil, item), do: as_planned(item)
+
+  defp waiting(conflict, %{decisions: decisions}) when is_map_key(decisions, conflict),
+    do: %{
+      key: "decided",
+      word: dgettext("mishka_gervaz", "Decided"),
+      class: "bg-[#eeedfb] text-[#5b57d6]",
+      icon: "hero-check",
+      reason: choice_word(conflict, Map.fetch!(decisions, conflict))
+    }
+
+  defp waiting(conflict, _item), do: said(:undecided, plan_word(:undecided), conflict)
+
+  defp waits_on(%{plan: :undecided, plan_reason: conflict}) when is_binary(conflict), do: conflict
+
+  defp waits_on(%{plan: nil, outcome: :undecided, reason: conflict}) when is_binary(conflict),
+    do: conflict
+
+  defp waits_on(%{plan: plan, outcome: :undecided, reason: conflict, decisions: decisions})
+       when plan in [:created, :updated] and is_binary(conflict) and
+              not is_map_key(decisions, conflict),
+       do: conflict
+
+  defp waits_on(_item), do: nil
+
+  defp as_planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
     do: %{
       key: "brought_back",
       word: dgettext("mishka_gervaz", "Brought back"),
@@ -1101,9 +1351,9 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: dgettext("mishka_gervaz", "Run a dry run again to see its plan")
     }
 
-  defp planned(%{plan: nil}), do: none("", dgettext("mishka_gervaz", "No dry run yet"))
+  defp as_planned(%{plan: nil}), do: none("", dgettext("mishka_gervaz", "No dry run yet"))
 
-  defp planned(%{plan: :skipped, plan_reason: "connected"}),
+  defp as_planned(%{plan: :skipped, plan_reason: "connected"}),
     do: %{
       key: "connected",
       word: dgettext("mishka_gervaz", "Connected"),
@@ -1112,7 +1362,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: nil
     }
 
-  defp planned(%{plan: plan, plan_reason: reason}), do: said(plan, plan_word(plan), reason)
+  defp as_planned(%{plan: plan, plan_reason: reason}), do: said(plan, plan_word(plan), reason)
 
   defp imported(nil, _reason), do: none("", dgettext("mishka_gervaz", "Not imported"))
   defp imported(outcome, reason), do: said(outcome, MigrationRun.outcome_word(outcome), reason)
@@ -1133,4 +1383,5 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp plan_word(:updated), do: dgettext("mishka_gervaz", "Would update")
   defp plan_word(:skipped), do: dgettext("mishka_gervaz", "Would skip")
   defp plan_word(:failed), do: dgettext("mishka_gervaz", "Would fail")
+  defp plan_word(:undecided), do: dgettext("mishka_gervaz", "Needs your decision")
 end

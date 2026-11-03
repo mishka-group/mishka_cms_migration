@@ -8,8 +8,8 @@ defmodule MishkaCmsMigration.Report do
   (`MishkaCmsMigration.MigrationRun`'s `report`) and handed to `migration:import:finished`.
 
       %{
-        counts: %{created: 2, updated: 1, skipped: 1, failed: 0},
-        kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0}],
+        counts: %{created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0},
+        kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0}],
         entries: [
           %{kind: "post", source_id: "12", title: "Hello", outcome: :skipped, reason: "unchanged"},
           ...
@@ -48,6 +48,15 @@ defmodule MishkaCmsMigration.Report do
       is not the payload (`MishkaCmsMigration.Events`).
     * for a failure, what the source or the CMS action answered.
 
+  An item is `:undecided` when the import cannot place it safely on its own: its target found a
+  conflict on the site (`MishkaCmsMigration.Target`'s `existing/2`) that only an admin can settle,
+  and no admin has answered it yet (`MishkaCmsMigration.MigrationItem`'s `decisions`). Nothing is
+  written for it, and every later dry run and import asks again until an admin decides. Its reason
+  is the conflict:
+
+    * `"site_has_own"` — the site already has a value of its own for the setting
+      (`MishkaCmsMigration.Targets.CmsSetting`).
+
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
@@ -56,11 +65,11 @@ defmodule MishkaCmsMigration.Report do
   still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
-  @outcomes [:created, :updated, :skipped, :failed]
+  @outcomes [:created, :updated, :skipped, :failed, :undecided]
   @max_entries 1_000
 
   @typedoc "What happened, or would happen, to an item."
-  @type outcome :: :created | :updated | :skipped | :failed
+  @type outcome :: :created | :updated | :skipped | :failed | :undecided
 
   @typedoc "One item's entry."
   @type entry :: %{

@@ -18,9 +18,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       as it is for any other.
     * A card for each kind the report counts, with its icon (`kind_icon/1`) and name
       (`kind_label/1`): how many items of it the source listed, a bar of their outcomes, and how
-      many of them failed, else were skipped, with the reason most of those entries give
-      (`reason_label/1`): "54 skipped: No public address at the source" when that reason covers all
-      54, "most often" before it when others are among them.
+      many of them wait for the admin's decision, else failed, else were skipped, with the reason
+      most of those entries give (`reason_label/1`): "54 skipped: No public address at the source"
+      when that reason covers all 54, "most often" before it when others are among them.
     * The latest items, the report's last entries newest first, each with links to its CMS record
       when it has one (`item_paths/2`, `MishkaCmsMigration.MigrationRun.record_links/1`), and how
       many more it counted, which opens the run's Items page.
@@ -317,7 +317,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         title={@kind.note.text}
         class={[
           "m-0 mt-2.5 line-clamp-2 text-[11px] font-medium leading-[1.45]",
-          (@kind.note.outcome == :failed && "text-[#c0473d]") || "text-[#8a877f]"
+          note_tone(@kind.note.outcome)
         ]}
       >
         {@kind.note.text}
@@ -691,7 +691,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         label: MigrationRun.kind_label(kind),
         found: total(counts),
         counts: counts,
-        note: Enum.find_value([:failed, :skipped], &kind_note(entries, counts, kind, &1))
+        note:
+          Enum.find_value([:undecided, :failed, :skipped], &kind_note(entries, counts, kind, &1))
       }
     end
   end
@@ -718,9 +719,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       text:
         note_text(outcome, covered == count,
           count: Localized.number(count),
-          reason: MigrationRun.reason_label(reason)
+          reason: MigrationRun.reason_label(reason),
+          waiting: MigrationRun.outcome_count(outcome, count)
         )
     }
+
+  defp note_text(:undecided, true, words), do: gettext("%{waiting}: %{reason}", words)
+
+  defp note_text(:undecided, false, words),
+    do: gettext("%{waiting}, most often: %{reason}", words)
 
   defp note_text(:failed, true, words), do: gettext("%{count} failed: %{reason}", words)
 
@@ -976,10 +983,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp kind_tone("post_redirect"), do: "bg-[#eaf1fb] text-[#3a6cb5]"
   defp kind_tone(_other), do: "bg-[#f2f1ec] text-[#6d6a63]"
 
+  defp note_tone(:failed), do: "text-[#c0473d]"
+  defp note_tone(:undecided), do: "text-[#8a5a00]"
+  defp note_tone(:skipped), do: "text-[#8a877f]"
+
   defp outcome_fill(:created), do: "#1f9d6b"
   defp outcome_fill(:updated), do: "#3b6fd4"
   defp outcome_fill(:skipped), do: "#c3c0b8"
   defp outcome_fill(:failed), do: "#d5544b"
+  defp outcome_fill(:undecided), do: "#e0a028"
 
   defp step_class(:done), do: "bg-[#5b57d6]"
   defp step_class(:current), do: "bg-[#bcb8ee] motion-safe:animate-pulse"

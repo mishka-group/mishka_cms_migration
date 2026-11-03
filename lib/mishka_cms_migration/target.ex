@@ -129,7 +129,11 @@ defmodule MishkaCmsMigration.Target do
       answers whose item lands in a record every site already has, such as the main menu, which
       becomes the links of the site layout's header (`MishkaCmsMigration.Targets.CmsLayout`). A
       later run treats the record as any other a run wrote;
-    * `{:skipped, reason}` — the item is left out, with `reason`.
+    * `{:skipped, reason}` — the item is left out, with `reason`;
+    * `{:undecided, conflict}` — the item meets something the site already has that only an admin
+      can settle, such as a setting the site has a value of its own for: nothing is written, the
+      report says `conflict` (`MishkaCmsMigration.Report`), and every later run asks again until
+      an admin decides on the Items page.
 
   An item the answer leaves out is created. It reads as the admin running the job, under the CMS's
   own policies. `use` answers `%{}`.
@@ -140,6 +144,25 @@ defmodule MishkaCmsMigration.Target do
         for item <- items, record = held[item.attrs["slug"]], into: %{},
             do: {item.source_id, {:connected, record}}
       end
+
+  ## An admin's decision
+
+  An admin answers a conflict on the item's row (`MishkaCmsMigration.MigrationItem`'s
+  `decisions`), and the answer holds for every later dry run and import. `decision/3` reads it from
+  the context: `"keep"`, the site stays as it is (its own value is kept, the item is connected to
+  the record it has, or it waits); `"import"`, the item is written the import's way; `nil` while no
+  admin has answered. A target answers by it in `existing/2`, and in `note/2`, `prepare/3` and
+  `attrs/2`, which are handed the same decisions:
+
+      def existing(items, context) do
+        for item <- items, own?(item, context), into: %{} do
+          {item.source_id, kept(Target.decision(context, item, "site_has_own"))}
+        end
+      end
+
+      defp kept("keep"), do: {:skipped, "site_own_kept"}
+      defp kept("import"), do: {:updated, record}
+      defp kept(nil), do: {:undecided, "site_has_own"}
 
   ## What the report says
 
@@ -174,7 +197,9 @@ defmodule MishkaCmsMigration.Target do
   What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
   from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
   CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
-  "A create and an update") and what `prepare/3` fetched for the write (`nil` until it does).
+  "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), and an
+  admin's decisions on the items, by source id (see "An admin's decision", read with
+  `decision/3`).
   """
   @type context :: %{
           mode: :dry_run | :import,
@@ -186,14 +211,19 @@ defmodule MishkaCmsMigration.Target do
           options: map(),
           parent_id: Ecto.UUID.t() | nil,
           record: struct() | nil,
-          prepared: term()
+          prepared: term(),
+          decisions: %{String.t() => %{String.t() => String.t()}}
         }
 
   @typedoc """
-  What `existing/2` says of one item: the CMS record it already is, the one it is written over, or
-  why it is left out.
+  What `existing/2` says of one item: the CMS record it already is, the one it is written over, why
+  it is left out, or the conflict it waits on for an admin's decision.
   """
-  @type found :: {:connected, struct()} | {:updated, struct()} | {:skipped, String.t()}
+  @type found ::
+          {:connected, struct()}
+          | {:updated, struct()}
+          | {:skipped, String.t()}
+          | {:undecided, String.t()}
 
   @doc "The kind of item this target writes, such as `\"post\"`."
   @callback id() :: String.t()
@@ -285,6 +315,14 @@ defmodule MishkaCmsMigration.Target do
   @doc "The installed target that writes `kind`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
   def fetch(kind), do: Source.installed(@event, __MODULE__, kind)
+
+  @doc """
+  What an admin decided on `item`'s `conflict` (see "An admin's decision"): `"keep"`, `"import"`,
+  or `nil` while no admin has answered it, and for a context that carries no decisions.
+  """
+  @spec decision(map(), Item.t(), String.t()) :: String.t() | nil
+  def decision(context, %Item{source_id: id}, conflict),
+    do: get_in(context, [:decisions, id, conflict])
 
   defp refused([], _module), do: :ok
 

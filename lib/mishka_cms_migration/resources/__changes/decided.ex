@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+defmodule MishkaCmsMigration.Resources.Changes.Decided do
+  @moduledoc """
+  Keeps an admin's decision on the conflict an item waits on
+  (`MishkaCmsMigration.MigrationItem.conflict/1`): the choice is put in the item's `decisions`
+  under that conflict and brings the item back, so every later dry run and import follows it;
+  `"leave_out"` leaves the item out instead.
+
+  Given as the action's `decision` argument, the choice of one item's Decide…, a choice the
+  conflict does not offer (`MishkaCmsMigration.MigrationItem.choices/1`), and any choice on an item
+  that waits on none, is refused on `decision`, in words an admin reads; no choice changes nothing.
+
+      update :choose do
+        argument :decision, :string
+        change MishkaCmsMigration.Resources.Changes.Decided
+      end
+
+  Given as `:choice`, the same answer for the rows an admin picked, it decides the items whose
+  conflict offers it and leaves the others as they are, so a bulk choice over mixed rows never
+  undoes the rows it answers.
+
+      update :decide_keep do
+        change {MishkaCmsMigration.Resources.Changes.Decided, choice: "keep"}
+      end
+  """
+
+  use Ash.Resource.Change
+  use Gettext, backend: MishkaCmsCore.Gettext
+
+  alias Ash.Error.Changes.InvalidArgument
+  alias MishkaCmsMigration.MigrationItem
+
+  @nothing dgettext_noop("errors", "Nothing on this item waits for your decision.")
+  @not_offered dgettext_noop("errors", "Pick one of the choices this item offers.")
+
+  @impl true
+  def change(changeset, opts, _context) do
+    choice = opts[:choice] || Ash.Changeset.get_argument(changeset, :decision)
+
+    changeset.data
+    |> MigrationItem.conflict()
+    |> answer(choice, changeset.data)
+    |> settled(changeset, opts[:choice])
+  end
+
+  defp answer(_conflict, nil, _item), do: :none
+  defp answer(nil, _choice, _item), do: {:error, @nothing}
+
+  defp answer(conflict, choice, item),
+    do: answered(conflict, choice, item, choice in MigrationItem.choices(conflict))
+
+  defp answered(_conflict, "leave_out", _item, true), do: {:ok, left_out: true}
+
+  defp answered(conflict, choice, item, true),
+    do: {:ok, decisions: Map.put(item.decisions, conflict, choice), left_out: false}
+
+  defp answered(_conflict, _choice, _item, false), do: {:error, @not_offered}
+
+  defp settled({:ok, attributes}, changeset, _bulk),
+    do: Ash.Changeset.force_change_attributes(changeset, attributes)
+
+  defp settled({:error, message}, changeset, nil),
+    do:
+      Ash.Changeset.add_error(
+        changeset,
+        InvalidArgument.exception(field: :decision, message: message)
+      )
+
+  defp settled(_left_as_it_is, changeset, _bulk), do: changeset
+end

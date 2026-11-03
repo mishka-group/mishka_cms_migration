@@ -23,10 +23,13 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
 
   ## The site's own
 
-  A setting the site already holds a value of its own for is never written over: read before
-  anything is written, in the dry run too (`existing/2`), from the core's settings cache, so with
-  no query, it is skipped as `"site_own_kept"`. A value the site takes from the installation's
-  global settings, or an empty one, is not the site's own, and is written over by the site's own.
+  A setting the site already holds a value of its own for is never written over on the import's
+  own say: read before anything is written, in the dry run too (`existing/2`), from the core's
+  settings cache, so with no query, it waits for an admin's decision as `"site_has_own"`
+  (`MishkaCmsMigration.MigrationItem`'s Decide…). Keep the site's own skips it as
+  `"site_own_kept"`; Use the WordPress one writes it over through the same `:set`, and the report
+  says so (`note/2`, `"site_own_replaced"`). A value the site takes from the installation's global
+  settings, or an empty one, is not the site's own, and is written over by the site's own.
 
   A re-run is held to the rules every target is: a setting the source did not change is
   `"unchanged"`, and one an admin changed or removed in the CMS since is kept as the admin left it
@@ -42,6 +45,7 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
 
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
 
   @keys %{"title" => "site.title", "logo" => "site.logo", "icon" => "site.favicon"}
@@ -52,10 +56,16 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
     do:
       for(
         item <- items,
-        found = @keys |> Map.get(item.source_id) |> found(context.site_id),
+        found = @keys |> Map.get(item.source_id) |> found(item, context),
         into: %{},
         do: {item.source_id, found}
       )
+
+  @impl MishkaCmsMigration.Target
+  def note(%Item{source_id: id}, %{record: nil} = context) when is_map_key(@keys, id),
+    do: @keys |> Map.fetch!(id) |> own?(context.site_id) |> replaced()
+
+  def note(_item, _context), do: nil
 
   @impl MishkaCmsMigration.Target
   def prepare(%Item{source_id: id, attrs: %{"value" => file}}, context, write) when id in @files,
@@ -68,11 +78,20 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
   def attrs(item, context),
     do: %{key: Map.fetch!(@keys, item.source_id), value: %{"value" => context.prepared}}
 
-  defp found(nil, _site_id), do: {:skipped, "no_setting"}
-  defp found(key, site_id), do: key |> Settings.get_own(nil, site_id) |> own()
+  defp found(nil, _item, _context), do: {:skipped, "no_setting"}
 
-  defp own(value) when value in [nil, ""], do: nil
-  defp own(_value), do: {:skipped, "site_own_kept"}
+  defp found(key, item, context),
+    do: key |> own?(context.site_id) |> kept(Target.decision(context, item, "site_has_own"))
+
+  defp own?(key, site_id), do: Settings.get_own(key, nil, site_id) not in [nil, ""]
+
+  defp kept(false, _decision), do: nil
+  defp kept(true, "keep"), do: {:skipped, "site_own_kept"}
+  defp kept(true, "import"), do: nil
+  defp kept(true, nil), do: {:undecided, "site_has_own"}
+
+  defp replaced(true), do: "site_own_replaced"
+  defp replaced(false), do: nil
 
   defp filed(nil, _context, _write), do: {:skipped, "file_missing"}
   defp filed(address, context, write), do: write.(%{context | prepared: address})

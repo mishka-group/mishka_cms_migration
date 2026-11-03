@@ -409,7 +409,7 @@ defmodule Playground.Tour do
     {%{context | run: run},
      [
        {"the report says 3 to create",
-        run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0}},
+        run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0, undecided: 0}},
        {"the CMS still has no redirect", Playground.redirects() == []},
        {"each item's plan is recorded, and none is imported",
         Playground.items() == [
@@ -446,7 +446,7 @@ defmodule Playground.Tour do
     {context,
      [
        {"1 row is updated and 2 are skipped as unchanged",
-        run.report.counts == %{created: 0, updated: 1, skipped: 2, failed: 0}},
+        run.report.counts == %{created: 0, updated: 1, skipped: 2, failed: 0, undecided: 0}},
        {"the CMS still has 3 redirects, with the changed one moved",
         Playground.redirects() ==
           [{"/old-one", "/one"}, {"/old-three", "/three"}, {"/old-two", "/two-moved"}]}
@@ -488,7 +488,7 @@ defmodule Playground.Tour do
     {context,
      [
        {"1 row failed and 1 was skipped",
-        run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 1}},
+        run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 1, undecided: 0}},
        {"the unreadable row failed as unreadable", outcomes(run)[nil] == {:failed, "unreadable"}},
        {"the note was skipped as no_target", outcomes(run)["9"] == {:skipped, "no_target"}},
        {"the run still ended as done and the CMS is unchanged",

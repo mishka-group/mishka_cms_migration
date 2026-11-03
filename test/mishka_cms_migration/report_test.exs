@@ -19,7 +19,7 @@ defmodule MishkaCmsMigration.ReportTest do
 
     report = Report.new() |> add_many("post", 1..total, :created) |> Report.done()
 
-    assert report.counts == %{created: total, updated: 0, skipped: 0, failed: 0}
+    assert report.counts == %{created: total, updated: 0, skipped: 0, failed: 0, undecided: 0}
     assert length(report.entries) == Report.max_entries()
     assert hd(report.entries).source_id == "#{total - Report.max_entries() + 1}"
     assert List.last(report.entries).source_id == "#{total}"
