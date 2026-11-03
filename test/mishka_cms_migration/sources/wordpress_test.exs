@@ -72,6 +72,14 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
   defp recorded_ids(recording), do: recording |> recorded() |> Enum.map(&to_string(&1["id"]))
 
+  defp json(rows), do: {"application/json", Jason.encode!(rows)}
+
+  defp menu_items_with(changes),
+    do: json(for(item <- recorded("menu-items"), do: Map.merge(item, changes[item["id"]] || %{})))
+
+  defp outline(items),
+    do: for(item <- items, do: {item["title"], item["kind"], item["id"], outline(item["items"])})
+
   defp counts(run, kind),
     do:
       run.report.kinds
@@ -181,7 +189,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {:ok, WordPress} = Source.fetch("wordpress")
 
       assert WordPress.kinds() ==
-               ~w(user category tag media setting page post comment post_redirect)
+               ~w(user category tag media setting page post comment post_redirect menu)
     end
   end
 
@@ -279,11 +287,26 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {status, type} == {"all", "all"}
     end
 
+    test "reads every menu and every menu item with their raw fields, each route to its last page" do
+      stub!()
+      assert {:ok, menus, nil} = WordPress.list(connected!(), "menu", nil)
+
+      for route <- ["/wp-json/wp/v2/menus", "/wp-json/wp/v2/menu-items"] do
+        assert_received {:wordpress_request, %{request_path: ^route, query_params: params}}
+        assert {params["context"], params["per_page"], params["page"]} == {"edit", "100", "1"}
+      end
+
+      assert Enum.map(menus, &{&1["name"], length(&1["items"])}) ==
+               [{"Footer", 3}, {"Primary", 14}]
+    end
+
     test "lists no kind it does not read" do
       stub!()
 
-      assert WordPress.list(connected!(), "menu", nil) == {:error, {:unknown_kind, "menu"}}
-      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/menus"}}
+      assert WordPress.list(connected!(), "navigation", nil) ==
+               {:error, {:unknown_kind, "navigation"}}
+
+      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/navigation"}}
     end
   end
 
@@ -431,6 +454,92 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       for kept <- ["content", "post", "author", "status", "_links"],
           do: refute(is_map_key(reply.extra, kept))
+    end
+
+    test "a menu keeps its items nested in menu order, each naming the page, post or term it points at" do
+      menus = items!("menu")
+      primary = menus["22"]
+
+      assert {primary.title, primary.attrs["slug"], primary.attrs["main"]} ==
+               {"Primary", "primary", true}
+
+      assert {menus["23"].title, menus["23"].attrs["main"]} == {"Footer", false}
+
+      assert outline(primary.attrs["items"]) == [
+               {"Home", nil, nil, []},
+               {"About", "page", "24",
+                [
+                  {"Team", "page", "25", [{"Leadership", "page", "26", []}]},
+                  {"Contact", "page", "29", []}
+                ]},
+               {"Blog", "page", "23",
+                [
+                  {"News", "category", "2",
+                   [{"Releases", "category", "3", []}, {"Announcements", "category", "4", []}]},
+                  {"Tutorials", "category", "5", []}
+                ]},
+               {"Docs", "page", "27", [{"Getting started", "page", "28", []}]},
+               {"Start here", "post", "32", []},
+               {"Elixir", nil, nil, []}
+             ]
+
+      [home | _] = primary.attrs["items"]
+      elixir = List.last(primary.attrs["items"])
+
+      assert {home["url"], home["new_tab"]} == {"http://localhost:8089/", false}
+      assert {elixir["url"], elixir["new_tab"]} == {"https://elixir-lang.org/", true}
+      assert is_map_key(primary.extra, "auto_add")
+      refute is_map_key(primary.extra, "_links")
+    end
+
+    test "the main menu is the one at the theme's primary location, else one at any location, else the first made" do
+      for {locations, main} <- [
+            {%{22 => [], 23 => []}, "22"},
+            {%{22 => [], 23 => ["footer"]}, "23"},
+            {%{22 => ["footer"], 23 => ["primary"]}, "23"}
+          ] do
+        menus = for menu <- recorded("menus"), do: %{menu | "locations" => locations[menu["id"]]}
+        found = items!("menu", %{"/wp-json/wp/v2/menus" => json(menus)})
+
+        assert for({id, %{attrs: %{"main" => true}}} <- found, do: id) == [main]
+      end
+    end
+
+    test "a custom link of the main menu to a page or post of the site points at it, asked for as a post's links are" do
+      menus =
+        items!("menu", %{
+          "/wp-json/wp/v2/menu-items" =>
+            menu_items_with(%{
+              88 => %{"url" => "http://localhost:8089/about/team/"},
+              104 => %{"url" => "http://localhost:8089/contact/"}
+            })
+        })
+
+      assert menus["22"].attrs["items"] |> hd() |> Map.take(["title", "kind", "id"]) ==
+               %{"title" => "Home", "kind" => "page", "id" => "25"}
+
+      assert menus["23"].attrs["items"] |> List.last() |> Map.take(["kind", "id"]) ==
+               %{"kind" => nil, "id" => nil}
+
+      assert_received {:wordpress_request,
+                       %{request_path: "/wp-json/wp/v2/pages", query_params: %{"slug" => "team"}}}
+
+      refute_received {:wordpress_request, %{query_params: %{"slug" => "contact"}}}
+    end
+
+    test "a menu item WordPress counts as invalid is left out, and the one under it sits at the top" do
+      primary =
+        items!("menu", %{
+          "/wp-json/wp/v2/menu-items" => menu_items_with(%{90 => %{"invalid" => true}})
+        })[
+          "22"
+        ]
+
+      assert primary.attrs["items"] |> outline() |> Enum.map(&elem(&1, 0)) ==
+               ["Home", "About", "Leadership", "Blog", "Docs", "Start here", "Elixir"]
+
+      assert [{"About", _, _, [{"Contact", "page", "29", []}]}] =
+               primary.attrs["items"] |> outline() |> Enum.filter(&(elem(&1, 0) == "About"))
     end
 
     test "a setting is the site's name, tagline, logo or icon, read from the REST index with no request of its own" do
@@ -681,7 +790,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert WordPress.normalize(row, "post", @context) == {:error, :unreadable}
 
       assert WordPress.normalize(row, "comment", @context) == {:error, :unreadable}
-      assert WordPress.normalize(row, "menu", @context) == {:error, {:unknown_kind, "menu"}}
+      assert WordPress.normalize(row, "menu", @context) == {:error, :unreadable}
+
+      assert WordPress.normalize(row, "navigation", @context) ==
+               {:error, {:unknown_kind, "navigation"}}
     end
   end
 
@@ -884,9 +996,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                %{created: length(recorded("media")) - 1, updated: 0, skipped: 1, failed: 0}
 
       assert counts(run, "setting") == %{created: 3, updated: 0, skipped: 1, failed: 0}
+      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 2, failed: 0}
 
       for %{kind: kind} = counts <- run.report.kinds,
-          kind not in ["post_redirect", "media", "setting"] do
+          kind not in ["post_redirect", "media", "setting", "menu"] do
         planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
@@ -904,6 +1017,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:created, nil},
                    {:skipped, "no_user"},
                    {:skipped, "no_setting"},
+                   {:skipped, "no_target"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}

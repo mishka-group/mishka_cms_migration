@@ -9,8 +9,8 @@ defmodule MishkaCmsMigration.Test.WordPress do
 
   `stub!/1` answers each request by its path, without the site's own folder, and its `page`: by
   default the REST index (`"/wp-json/"`), the signed-in user (`"/wp-json/wp/v2/users/me"`), the
-  first page of users, categories, tags, pages, posts and comments, and the reusable blocks and media the
-  posts' content names (`site/0`), from their recordings, with the status and headers WordPress sent
+  first page of users, categories, tags, pages, posts, comments, menus and menu items, and the
+  reusable blocks and media the posts' content names (`site/0`), from their recordings, with the status and headers WordPress sent
   (`X-WP-TotalPages` among them). A path answers a request with no `page` or with page 1;
   `{path, page}` answers that page. A test overrides either with another recording's name, with
   `:no_site` (an HTML 404, what a site with no REST API answers), with `:unreachable` (the
@@ -44,7 +44,9 @@ defmodule MishkaCmsMigration.Test.WordPress do
     "/wp-json/wp/v2/posts" => "posts",
     "/wp-json/wp/v2/comments" => "comments",
     "/wp-json/wp/v2/blocks" => "blocks",
-    "/wp-json/wp/v2/media" => "media"
+    "/wp-json/wp/v2/media" => "media",
+    "/wp-json/wp/v2/menus" => "menus",
+    "/wp-json/wp/v2/menu-items" => "menu-items"
   }
 
   @transport ["content-length", "transfer-encoding", "connection"]
