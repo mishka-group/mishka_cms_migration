@@ -40,6 +40,7 @@ defmodule MishkaCmsMigration.Application do
     MishkaCmsMigration.Targets.BlogCollection,
     MishkaCmsMigration.Targets.BlogTag,
     MishkaCmsMigration.Targets.BlogPost,
+    MishkaCmsMigration.Targets.BlogComment,
     MishkaCmsMigration.Targets.PostRedirect
   ]
 
@@ -67,9 +68,10 @@ defmodule MishkaCmsMigration.Application do
   through an existing CMS action: files into the CMS's media library
   (`MishkaCmsMigration.Targets.CmsMedia`), pages into the CMS's pages
   (`MishkaCmsMigration.Targets.CmsPage`),
-  authors, categories, tags and posts into Mishka Blog (`MishkaCmsMigration.Targets.BlogBlogger`,
-  `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
-  `MishkaCmsMigration.Targets.BlogPost`), and each post's old address into a CMS redirect to it
+  authors, categories, tags, posts and comments into Mishka Blog
+  (`MishkaCmsMigration.Targets.BlogBlogger`, `MishkaCmsMigration.Targets.BlogCollection`,
+  `MishkaCmsMigration.Targets.BlogTag`, `MishkaCmsMigration.Targets.BlogPost`,
+  `MishkaCmsMigration.Targets.BlogComment`), and each post's old address into a CMS redirect to it
   (`MishkaCmsMigration.Targets.PostRedirect`).
 
   Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,

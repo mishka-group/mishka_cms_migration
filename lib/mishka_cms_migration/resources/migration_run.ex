@@ -28,12 +28,13 @@ defmodule MishkaCmsMigration.MigrationRun do
       from each old address; `"blog_without_redirects"` serves them there with no redirect.
       Keeping a source's own address, such as WordPress's `/2025/12/hello/`, needs Mishka Blog to
       serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
-    * `:comments` — whether comments come too; `false` by default.
+    * `:comments` — whether comments come too; `false` by default. A comment by a user of the
+      site, or by someone whose email is one, is written on its Blog post; a guest's is left out.
 
   The authors choice is read by the Blog's author target and the post addresses by the redirect
   target (`MishkaCmsMigration.Targets.PostRedirect`), the pages choice by the page target
-  (`MishkaCmsMigration.Targets.CmsPage`); comments will be read by the comment target, as that
-  kind's import comes.
+  (`MishkaCmsMigration.Targets.CmsPage`) and the comments choice by the comment target
+  (`MishkaCmsMigration.Targets.BlogComment`).
 
   ## Its life
 
@@ -164,15 +165,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   one `.xml` file of up to 100 MB (see "The source's file"), the reason a file is refused under
   it. Under them,
   Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
-  the post addresses, each starting at the default the `sub_field` gives it; its description says
-  why a post's old address is redirected rather than kept. Comments are not asked for until a
-  source's comments can be imported. For a master the form asks for the site the content moves to
-  as well (`:master_create`). Its button, Check and save, creates the run, which connects to
-  the source first, or reads its file (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a
-  source that does not answer or refuses the user keeps the form open with the reason, and nothing
-  is saved. Gervaz takes a button's label as a string or a function of no arguments, so one label
-  fits a connection and a file alike. A run that is not given a `source_host` takes the host its
-  source reads from the connection (`c:MishkaCmsMigration.Source.host/1`).
+  the post addresses, each starting at the default the `sub_field` gives it, and a toggle for the
+  comments, off; its description says why a post's old address is redirected rather than kept. For
+  a master the form asks for the site the content moves to as well (`:master_create`). Its button,
+  Check and save, creates the run, which connects to the source first, or reads its file
+  (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
+  refuses the user keeps the form open with the reason, and nothing is saved. Gervaz takes a
+  button's label as a string or a function of no arguments, so one label fits a connection and a
+  file alike. A run that is not given a `source_host` takes the host its source reads from the
+  connection (`c:MishkaCmsMigration.Source.host/1`).
   """
 
   use Ash.Resource,
@@ -256,7 +257,10 @@ defmodule MishkaCmsMigration.MigrationRun do
         default: "blog",
         derives: "sanitize(trim) validate(enum=String[blog::blog_without_redirects])"
 
-      field :comments, :boolean, default: false, derives: "validate(boolean)"
+      field :comments, :boolean,
+        default: false,
+        validator: {MishkaCmsMigration.MigrationRun, :switch},
+        derives: "validate(boolean)"
     end
   end
 
@@ -697,6 +701,11 @@ defmodule MishkaCmsMigration.MigrationRun do
                 {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"),
                  "blog_without_redirects"}
               ]
+            ],
+            [
+              name: :comments,
+              type: :toggle,
+              label: dgettext_noop("mishka_gervaz", "Bring the comments too")
             ]
           ]
 
@@ -706,7 +715,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live."
+                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live. A comment comes only if its author has a user on the site: a guest's is left out."
               )
             end
           end
@@ -1313,6 +1322,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("media"), do: "hero-photo"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
+  def kind_icon("comment"), do: "hero-chat-bubble-left-right"
   def kind_icon("post_redirect"), do: "hero-arrows-right-left"
   def kind_icon(_other), do: "hero-cube"
 
@@ -1567,8 +1577,14 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("media"), do: dgettext("mishka_gervaz", "files")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
+  defp kind_noun("comment"), do: dgettext("mishka_gervaz", "comments")
   defp kind_noun("post_redirect"), do: dgettext("mishka_gervaz", "redirects")
   defp kind_noun(kind), do: kind
+
+  @doc false
+  def switch(field, "true"), do: {:ok, field, true}
+  def switch(field, "false"), do: {:ok, field, false}
+  def switch(field, value), do: {:ok, field, value}
 
   @doc """
   The items of `kind` as the admin reads them, such as `"Posts"` for `"post"`. A kind this
@@ -1581,6 +1597,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("media"), do: dgettext("mishka_gervaz", "Media")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
+  def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
   def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
   def kind_label(kind), do: String.capitalize(kind)
 
@@ -1603,6 +1620,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")
   defp said("post_missing"), do: dgettext("mishka_gervaz", "Its post was not imported")
   defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
+
+  defp said("guest_comment"),
+    do: dgettext("mishka_gervaz", "A guest's comment, which Blog cannot keep yet (#21)")
+
+  defp said("page_comment"),
+    do: dgettext("mishka_gervaz", "A comment on a page, which Blog cannot keep")
+
+  defp said("not_a_comment"),
+    do: dgettext("mishka_gervaz", "A pingback or trackback, which Blog does not keep")
+
+  defp said("spam_or_trash"),
+    do: dgettext("mishka_gervaz", "Spam or in the trash at the source, so left out")
 
   defp said("author_missing"),
     do: dgettext("mishka_gervaz", "Its author was not imported, so it has none")

@@ -807,7 +807,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
                    {:skipped, "no_user"},
-                   {:skipped, "no_target"},
+                   {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}
                  ])

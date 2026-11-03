@@ -114,9 +114,15 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
       |> Map.fetch!(:id)
     end
 
-    defp users([], _context), do: %{}
+    @doc """
+    The users of the run's site with these `emails`, by lowercase email, read as the admin running
+    the job (`MishkaCmsMigration.Targets.Helpers.Read`): none the admin may not see, and never a
+    master or a user of another site.
+    """
+    @spec users([String.t()], MishkaCmsMigration.Target.context()) :: %{String.t() => struct()}
+    def users([], _context), do: %{}
 
-    defp users(emails, context) do
+    def users(emails, context) do
       User
       |> Ash.Query.filter(email in ^emails)
       |> Read.call(context)

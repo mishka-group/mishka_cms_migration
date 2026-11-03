@@ -21,6 +21,7 @@ defmodule MishkaCmsMigrationTest do
                 MishkaCmsMigration.Targets.BlogCollection,
                 MishkaCmsMigration.Targets.BlogTag,
                 MishkaCmsMigration.Targets.BlogPost,
+                MishkaCmsMigration.Targets.BlogComment,
                 MishkaCmsMigration.Targets.PostRedirect
               ]}
 

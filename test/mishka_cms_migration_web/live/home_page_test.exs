@@ -403,6 +403,11 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       for label <- ["Choices for this run", "Authors", "Pages", "Post addresses"],
           do: assert(has_element?(view, "#migration-run-form-modal label", label))
 
+      comments = ~s|#migration-run-form-modal input[name="form[options][comments]"]|
+      assert has_element?(view, comments)
+      refute has_element?(view, comments <> "[checked]")
+      assert has_element?(view, "#migration-run-form-modal", "Bring the comments too")
+
       assert has_element?(
                view,
                "#migration-run-form-modal",
@@ -440,6 +445,29 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "post_address" => "blog_without_redirects",
                "comments" => false
              }
+    end
+
+    test "saves the comments choice when it is switched on", %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form(~s|#migration-run-form-modal form|, %{
+        "form" => %{
+          "connection" => %{
+            "url" => "http://localhost:8089",
+            "user" => "admin",
+            "secret" => "app password"
+          },
+          "options" => %{"comments" => "true"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      assert %{"comments" => true, "authors" => "connect"} = stored(run).options
     end
   end
 
@@ -846,7 +874,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert outcomes(view) == %{"created" => 86, "skipped" => 23}
-      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="no_target"]|)
+      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
                "user" => 5,

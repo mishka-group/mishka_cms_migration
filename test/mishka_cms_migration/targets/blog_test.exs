@@ -4,8 +4,8 @@
 
 defmodule MishkaCmsMigration.Targets.BlogTest do
   @moduledoc """
-  A WordPress site's authors, categories, tags and posts moved into Mishka Blog, against what the
-  seeded WordPress answered: what a dry run reports, what an import writes and where, what a second
+  A WordPress site's authors, categories, tags, posts and comments moved into Mishka Blog, against
+  what the seeded WordPress answered: what a dry run reports, what an import writes and where, what a second
   run does with it, and a node whose Blog targets are stopped. A post's content is read for what it
   means, with LazyHTML, not as markup. An author becomes the blogger of the site's user with their
   email, the editor `shahryar@mishka.tools` in the seed's story, and under `"create"` of a new user.
@@ -17,8 +17,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
-  alias MishkaBlog.{Blogger, BlogPost, Collection, Tag}
+  alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
   alias MishkaCmsCore.Accounts.User
+  alias MishkaCmsCore.PlainText
   alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.{Events, MigrationItem}
@@ -1185,6 +1186,293 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
             do: %Item{kind: "post_redirect", source_id: id, attrs: %{"from" => from}}
 
       assert PostRedirect.existing(items, context) == %{"44" => {:skipped, "same_address"}}
+    end
+  end
+
+  describe "comments" do
+    @commenters @people ++ ["admin:dashboard:blog:comment"]
+    # The commenters the site has a user for: the editor, who is a WordPress user, and visitors
+    # and WordPress users whose comments carry the email of one of its users.
+    @members [
+      @editor,
+      "reza@example.test",
+      "mina@example.test",
+      "kaveh@example.test",
+      "pending@example.test",
+      "nadia.karimi@example.test",
+      "omid.rahimi@example.test"
+    ]
+    @on %{comments: true}
+
+    setup %{site: site}, do: %{admin: migration_admin!(site, @commenters)}
+
+    defp members!(site, emails \\ @members),
+      do: Map.new(emails, &{&1, create_user!(email: &1, site_id: site.id)})
+
+    defp comments(site),
+      do:
+        Comment
+        |> Ash.read!(tenant: site.id, authorize?: false, load: [:post])
+        |> Map.new(&{&1.content, &1})
+
+    defp text(id),
+      do:
+        "comments"
+        |> recorded()
+        |> Enum.find(&(&1["id"] == id))
+        |> get_in(["content", "raw"])
+        |> PlainText.from_html()
+
+    defp written(comments, id), do: comments[text(id)]
+
+    defp parent_text(comments, comment),
+      do:
+        Enum.find_value(comments, fn {text, %{id: id}} ->
+          id == comment.parent_comment_id && text
+        end)
+
+    defp stub_comments!(rows),
+      do: stub!(%{"/wp-json/wp/v2/comments" => {"application/json", Jason.encode!(rows)}})
+
+    test "with the choice off, a dry run and an import write none, and say the run's choices left them out",
+         %{site: site, admin: admin} do
+      members!(site)
+      dry = site |> wordpress_run!(admin) |> dry_run!(admin)
+      run = imported!(site, admin)
+
+      for run <- [dry, run] do
+        assert counts(run, "comment") ==
+                 %{created: 0, updated: 0, skipped: length(recorded("comments")), failed: 0}
+
+        assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
+                 [{:skipped, "not_chosen"}]
+      end
+
+      assert comments(site) == %{}
+    end
+
+    test "a dry run plans the comments of the site's users, leaves out a guest's and a page's, and writes nothing",
+         %{site: site, admin: admin} do
+      members!(site)
+      run = site |> wordpress_run!(admin, @on) |> dry_run!(admin)
+
+      assert outcomes(run, "comment") ==
+               Map.new(~w(2 3 4 5 6 7 9 12 13), &{&1, {:created, nil}})
+               |> Map.merge(Map.new(~w(8 14 16), &{&1, {:skipped, "guest_comment"}}))
+               |> Map.put("15", {:skipped, "page_comment"})
+
+      assert comments(site) == %{}
+      assert Ash.read!(MigrationItem, tenant: site.id, authorize?: false) == []
+    end
+
+    test "a dry run under create plans a source user's comment too, since the import makes the user",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin, %{comments: true, authors: "create"}) |> dry_run!(admin)
+      outcomes = outcomes(run, "comment")
+
+      for id <- ~w(3 5 7 13), do: assert(outcomes[id] == {:created, nil})
+      for id <- ~w(2 4 6 8 9 12 14 16), do: assert(outcomes[id] == {:skipped, "guest_comment"})
+    end
+
+    test "an import writes each comment on its post, under its parent whichever WordPress lists first, with its status and its text",
+         %{site: site, admin: admin} do
+      members!(site)
+      other = create_site!()
+
+      run = imported!(site, admin, @on)
+      comments = comments(site)
+
+      assert counts(run, "comment") == %{created: 9, updated: 0, skipped: 4, failed: 0}
+      assert map_size(comments) == 9
+
+      for id <- [2, 3, 4, 5, 6, 7, 9],
+          do: assert(written(comments, id).post.title == "A post with many comments")
+
+      for id <- [12, 13],
+          do: assert(written(comments, id).post.title == "Welcome to the Mishka Test Blog")
+
+      for {id, parent} <- %{3 => 2, 4 => 3, 5 => 4, 7 => 6, 13 => 12},
+          do: assert(parent_text(comments, written(comments, id)) == text(parent))
+
+      for id <- [2, 6, 9, 12], do: assert(is_nil(written(comments, id).parent_comment_id))
+
+      assert written(comments, 9).status == :pending
+      for id <- [2, 3, 4, 5, 6, 7, 12, 13], do: assert(written(comments, id).status == :approved)
+      assert written(comments, 6).content == "Bold and a link in a comment."
+      assert Comment |> Ash.read!(tenant: other.id, authorize?: false) == []
+    end
+
+    test "a comment's author is the user it was written for, not the admin who imported it", %{
+      site: site,
+      admin: admin
+    } do
+      users = members!(site)
+      imported!(site, admin, @on)
+      comments = comments(site)
+
+      for {id, email} <- [
+            {2, "reza@example.test"},
+            {3, @editor},
+            {4, "reza@example.test"},
+            {5, "nadia.karimi@example.test"},
+            {6, "mina@example.test"},
+            {7, "omid.rahimi@example.test"},
+            {9, "pending@example.test"},
+            {12, "kaveh@example.test"},
+            {13, @editor}
+          ],
+          do: assert(written(comments, id).author_id == users[email].id)
+
+      refute Enum.any?(Map.values(comments), &(&1.author_id == admin.id))
+    end
+
+    test "a source user's comment belongs to the user the run made for them, whatever email it carries, and its text is read as text",
+         %{site: site, admin: admin} do
+      create_user!(email: "reza@example.test", site_id: site.id)
+
+      rows =
+        for row <- recorded("comments") do
+          case row["id"] do
+            2 -> put_in(row, ["content", "raw"], "Tom &amp; Jerry say <b>hi</b>")
+            3 -> %{row | "author_email" => "elsewhere@example.test"}
+            _other -> row
+          end
+        end
+
+      stub_comments!(rows)
+      imported!(site, admin, %{comments: true, authors: "create"})
+
+      users = accounts(site)
+      comments = comments(site)
+
+      assert Map.keys(comments) |> Enum.sort() ==
+               Enum.sort(["Tom & Jerry say hi" | Enum.map([3, 4, 5], &text/1)])
+
+      assert comments["Tom & Jerry say hi"].author_id == users["reza@example.test"].id
+      assert written(comments, 3).author_id == users[@editor].id
+      assert written(comments, 5).author_id == users["nadia.karimi@example.test"].id
+    end
+
+    test "a guest's comment is left out as one the Blog cannot keep yet, and so is every reply under it",
+         %{site: site, admin: admin} do
+      run = imported!(site, admin, %{comments: true, authors: "create"})
+      outcomes = outcomes(run, "comment")
+
+      for id <- ~w(2 4 6 8 9 12 14 16),
+          do: assert(outcomes[id] == {:skipped, "guest_comment"})
+
+      assert outcomes["15"] == {:skipped, "page_comment"}
+      for id <- ~w(3 5 7 13), do: assert(outcomes[id] == {:skipped, "parent_missing"})
+      assert comments(site) == %{}
+    end
+
+    test "a spam comment and a pingback are left out, whoever sent them", %{
+      site: site,
+      admin: admin
+    } do
+      members!(site, ["spam@example.test", "pingback@example.test"])
+
+      for {recording, id, reason} <- [
+            {"comments-spam", "10", "spam_or_trash"},
+            {"comments-pingback", "11", "not_a_comment"}
+          ] do
+        stub!(%{"/wp-json/wp/v2/comments" => recording})
+        run = imported!(site, admin, @on)
+
+        assert outcomes(run, "comment") == %{id => {:skipped, reason}}
+      end
+
+      assert comments(site) == %{}
+    end
+
+    test "a comment on a post that was not imported is left out, and the others are written", %{
+      site: site,
+      admin: admin
+    } do
+      members!(site)
+
+      stub!(%{
+        "/wp-json/wp/v2/posts" =>
+          {"application/json",
+           recorded("posts") |> Enum.reject(&(&1["id"] == 50)) |> Jason.encode!()}
+      })
+
+      run = imported!(site, admin, @on)
+      outcomes = outcomes(run, "comment")
+
+      for id <- ~w(2 3 4 5 6 7 9), do: assert(outcomes[id] == {:skipped, "post_missing"})
+
+      assert comments(site) |> Map.values() |> Enum.map(& &1.content) |> Enum.sort() ==
+               Enum.sort([text(12), text(13)])
+    end
+
+    test "a second run writes no second comment, writes over one WordPress changed, and keeps one an admin moderated",
+         %{site: site, admin: admin} do
+      members!(site)
+      imported!(site, admin, @on)
+      before = comments(site)
+
+      again = imported!(site, admin, @on)
+
+      assert again |> outcomes("comment") |> Map.values() |> Enum.frequencies() ==
+               %{
+                 {:skipped, "unchanged"} => 9,
+                 {:skipped, "guest_comment"} => 3,
+                 {:skipped, "page_comment"} => 1
+               }
+
+      assert comments(site) == before
+
+      written(before, 9)
+      |> Ash.Changeset.for_update(:approve, %{}, actor: admin, tenant: site.id)
+      |> Ash.update!()
+
+      rows =
+        for row <- recorded("comments") do
+          if row["id"] in [2, 9],
+            do: update_in(row, ["content", "raw"], &(&1 <> " (edited)")),
+            else: row
+        end
+
+      stub_comments!(rows)
+      third = imported!(site, admin, @on)
+      outcomes = outcomes(third, "comment")
+      comments = comments(site)
+
+      assert outcomes["2"] == {:updated, nil}
+      assert outcomes["9"] == {:skipped, "edited_in_cms"}
+      assert map_size(comments) == 9
+      assert comments[text(2) <> " (edited)"].id == written(before, 2).id
+      assert comments[text(9)].status == :approved
+      refute is_map_key(comments, text(9) <> " (edited)")
+    end
+
+    test "a comment skipped for having no user is written once the site has the user", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin, @on)
+      assert comments(site) == %{}
+
+      create_user!(email: "reza@example.test", site_id: site.id)
+      run = imported!(site, admin, @on)
+
+      assert %{"2" => {:created, nil}, "4" => {:skipped, "parent_missing"}} =
+               outcomes(run, "comment")
+
+      assert comments(site) |> Map.keys() == [text(2)]
+    end
+
+    test "an admin the Blog does not let write comments has them fail, and nothing is written", %{
+      site: site
+    } do
+      admin = migration_admin!(site, @people)
+      members!(site)
+
+      run = imported!(site, admin, @on)
+
+      assert outcomes(run, "comment")["2"] == {:failed, "forbidden"}
+      assert comments(site) == %{}
     end
   end
 end

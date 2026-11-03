@@ -151,7 +151,11 @@ defmodule MishkaCmsMigration.MigrationRunTest do
               }} =
                Options.builder(stored)
 
-      for {options, field} <- [{%{pages: "maybe"}, :pages}, {%{mode: "x"}, :mode}] do
+      for {options, field} <- [
+            {%{pages: "maybe"}, :pages},
+            {%{mode: "x"}, :mode},
+            {%{comments: "maybe"}, :comments}
+          ] do
         assert {:error,
                 %Ash.Error.Invalid{
                   errors: [%Ash.Error.Changes.InvalidAttribute{field: ^field, path: [:options]}]
@@ -164,6 +168,15 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       end
 
       assert [_only_the_first] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+    end
+
+    test "reads the comments choice a form sends as text", %{site: site, admin: admin} do
+      for {sent, chosen} <- [{"true", true}, {"false", false}, {true, true}] do
+        run = create_run!(site, admin, rows(), %{options: %{comments: sent}})
+        stored = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).options
+
+        assert stored["comments"] == chosen
+      end
     end
 
     test "cleans the source host and refuses one that is not a host", %{site: site, admin: admin} do

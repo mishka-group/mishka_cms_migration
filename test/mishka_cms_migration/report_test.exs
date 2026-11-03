@@ -47,4 +47,12 @@ defmodule MishkaCmsMigration.ReportTest do
     assert MigrationRun.reason_label("title: is required; slug: is required") ==
              "title: is required; slug: is required"
   end
+
+  test "a comment left out says why in words, and names the issue that will bring a guest's" do
+    for code <- ~w(guest_comment page_comment not_a_comment spam_or_trash),
+        do: refute(MigrationRun.reason_label(code) == code)
+
+    assert MigrationRun.reason_label("guest_comment") =~ "#21"
+    assert MigrationRun.kind_label("comment") == "Comments"
+  end
 end
