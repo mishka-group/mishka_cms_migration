@@ -32,8 +32,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   (`call/2`). Wait for an admin skips it as `"waits_for_admin"` until a run by an admin who may
   allow the players writes it with them; Import without the player writes it with those
   `<iframe>`s left out of its content (`playable/2`), and the report says so (`"player_left_out"`).
-  `note/2` says which for the report, `"frames_allowed"` when the admin allows them, in a dry run
-  too.
+  `note/2` says which for the report, `"frames_allowed: <origins>"` naming the origins when the
+  admin allows them, in a dry run too.
   """
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
@@ -66,10 +66,10 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   def waiting(item, context), do: item |> missing(context) |> waits(item, context)
 
   @doc """
-  What the report says of `item`'s players: `"frames_allowed"` when its content frames one the
-  run's site does not allow yet and the admin may allow it, `"player_left_out"` when they may not
-  and an admin decided to import it without the player, `"player_not_allowed"` or
-  `"waits_for_admin"` while it waits, else `nil`.
+  What the report says of `item`'s players: `"frames_allowed: <origins>"` when its content frames
+  players the run's site does not allow yet and the admin may allow them, the origins joined by
+  `", "`; `"player_left_out"` when they may not and an admin decided to import it without the
+  player, `"player_not_allowed"` or `"waits_for_admin"` while it waits, else `nil`.
   """
   @spec note(Item.t(), Target.context()) :: String.t() | nil
   def note(item, context), do: item |> missing(context) |> noted(item, context)
@@ -141,10 +141,12 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   defp found(waiting), do: waiting
 
   defp noted([], _item, _context), do: nil
-  defp noted(_missing, item, context), do: context.actor |> permitted?() |> told(item, context)
 
-  defp told(true, _item, _context), do: "frames_allowed"
-  defp told(false, item, context), do: item |> decision(context) |> decided() |> said()
+  defp noted(missing, item, context),
+    do: context.actor |> permitted?() |> told(missing, item, context)
+
+  defp told(true, missing, _item, _context), do: "frames_allowed: " <> Enum.join(missing, ", ")
+  defp told(false, _missing, item, context), do: item |> decision(context) |> decided() |> said()
 
   defp said(:ok), do: "player_left_out"
   defp said({_waiting, reason}), do: reason

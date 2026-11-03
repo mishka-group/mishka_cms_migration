@@ -894,6 +894,13 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       refute Item.html(post) =~ "[gallery"
     end
 
+    test "names a video's poster among the files of the media library it shows" do
+      post = items!("post")["49"]
+      gallery_2 = Enum.find(recorded("media"), &(&1["slug"] == "gallery-2"))
+
+      assert post.attrs["media"][gallery_2["source_url"]] == gallery_2["id"]
+    end
+
     test "plays a YouTube or Vimeo embed block, keeps an iframe the author wrote, and links any other embed" do
       html = html(items!("post")["49"])
 

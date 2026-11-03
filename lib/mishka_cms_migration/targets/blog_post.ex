@@ -71,8 +71,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     as an SVG or one that failed, is written with none, and the import's report says so
     (`"featured_image_missing"`); a dry run, which writes no file, does not.
 
-    Its `"media"` name the addresses of its content that are files of the source, and each `src`
-    and `href` of them points at the file's Media address instead
+    Its `"media"` name the addresses of its content that are files of the source, and each `src`,
+    `href` and video `poster` of them points at the file's Media address instead
     (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
     file that was not written is kept as it is.
@@ -82,18 +82,20 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
     post's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description,
     robots, share image and a canonical address on another site. A share image that is the post's
-    featured image is left to the featured image, which the Blog shows as the post's share image.
+    featured image is left out: the post's page then shows the core's share card, which draws the
+    featured image with the post's title, where a stored `og:image` would replace the card. The
+    WordPress REST API cannot tell Yoast's chosen image from its fallback to the featured image.
 
     ## Its videos
 
     A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
     allowed on the site before the post is written, in an import only, as the admin
-    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
-    the dry run too. For an admin who may not change the site's settings the post waits for an
-    admin's decision (`"player_not_allowed"`): Wait for an admin keeps it for a run by one who may,
-    and Import without the player writes it with that player left out (`"player_left_out"`). The
-    Blog keeps an `<iframe>`'s address, title and size, and leaves out its other attributes, such
-    as `allowfullscreen`.
+    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them
+    (`"frames_allowed: <origins>"`), in the dry run too. For an admin who may not change the site's
+    settings the post waits for an admin's decision (`"player_not_allowed"`): Wait for an admin
+    keeps it for a run by one who may, and Import without the player writes it with that player
+    left out (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
+    leaves out its other attributes, such as `allowfullscreen`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).

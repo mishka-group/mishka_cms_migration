@@ -46,6 +46,17 @@ defmodule MishkaCmsMigration.ReportTest do
 
     assert MigrationRun.reason_label("title: is required; slug: is required") ==
              "title: is required; slug: is required"
+
+    label =
+      MigrationRun.reason_label(
+        "frames_allowed: https://www.youtube.com, https://player.vimeo.com"
+      )
+
+    assert label =~ "https://www.youtube.com, https://player.vimeo.com"
+    refute label =~ "frames_allowed"
+
+    for code <- ~w(player_not_allowed waits_for_admin player_left_out),
+        do: refute(MigrationRun.reason_label(code) == code)
   end
 
   test "a comment left out says why in words, and names the issue that will bring a guest's" do

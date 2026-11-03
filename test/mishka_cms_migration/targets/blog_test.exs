@@ -811,7 +811,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "42" => {:created, "draft_from_password"},
                "53" => {:created, "unconverted: acme/callout, core/latest-posts"},
                "34" =>
-                 {:created, "frames_allowed; unconverted: unknown_plugin_shortcode, pullbox"}
+                 {:created,
+                  "frames_allowed: https://www.youtube-nocookie.com, https://player.vimeo.com; " <>
+                    "unconverted: unknown_plugin_shortcode, pullbox"}
              } = outcomes
 
       assert posts(site) == %{}
@@ -1140,6 +1142,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert classic |> LazyHTML.query("video") |> LazyHTML.attribute("src") == [files["sample"]]
 
+      video = posts["A post with a gallery and a video"] |> content() |> LazyHTML.query("video")
+
+      assert {LazyHTML.attribute(video, "src"), LazyHTML.attribute(video, "poster")} ==
+               {[files["sample"]], [files["gallery-2"]]}
+
       located =
         posts
         |> Map.values()
@@ -1230,7 +1237,15 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
     defp framed(run),
       do:
-        for({id, outcome} <- outcomes(run, "post"), "frames_allowed" in reasons(outcome), do: id)
+        for(
+          {id, outcome} <- outcomes(run, "post"),
+          origins = Enum.find_value(reasons(outcome), &allowed_origins/1),
+          into: %{},
+          do: {id, origins}
+        )
+
+    defp allowed_origins("frames_allowed: " <> origins), do: String.split(origins, ", ")
+    defp allowed_origins(_reason), do: nil
 
     test "a dry run says which posts bring a player the site does not allow, and allows none", %{
       site: site,
@@ -1238,7 +1253,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     } do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert Enum.sort(framed(run)) == ["33", "34", "49"]
+      assert framed(run) == %{
+               "33" => ["https://www.youtube-nocookie.com"],
+               "34" => ["https://www.youtube-nocookie.com", "https://player.vimeo.com"],
+               "49" => ["https://player.vimeo.com", "https://www.youtube.com"]
+             }
+
       assert frame_origins(site) == []
     end
 
@@ -1258,7 +1278,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert [^maps | allowed] = origins.value["value"]
       assert Enum.sort(allowed) == Enum.sort(@players)
 
-      assert Enum.sort(framed(run)) == ["33", "49"],
+      assert framed(run) == %{
+               "49" => ["https://www.youtube.com"],
+               "33" => ["https://www.youtube-nocookie.com"]
+             },
              "WordPress lists 49 first, which adds YouTube's origin, then 33 the nocookie one, and 34 adds none"
 
       assert frame_origins(other) == []
@@ -1294,10 +1317,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
           src <- post |> content() |> LazyHTML.query("iframe") |> LazyHTML.attribute("src"),
           do: refute(src =~ ~r{youtube|vimeo})
 
-      outcomes = site |> imported!(allowed) |> outcomes("post")
+      run = imported!(site, allowed)
 
-      assert {:created, _reason} = outcomes["33"]
-      assert "frames_allowed" in reasons(outcomes["33"])
+      assert {:created, _reason} = outcomes(run, "post")["33"]
+      assert framed(run)["33"] == ["https://www.youtube-nocookie.com"]
       assert [_origins] = frame_origins(site)
     end
   end

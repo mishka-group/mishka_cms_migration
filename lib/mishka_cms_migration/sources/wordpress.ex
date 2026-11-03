@@ -83,7 +83,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       is asked for by its id and any other by the last segment of its path, the same way, from
       `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
       `media` are the addresses of
-      its converted content (`src` and `href`) that are a file of the site's media library, each
+      its converted content (`src`, `href` and a video's `poster`) that are a file of the site's
+      media library, each
       as written to the id of the file it is: the original or one of the sizes WordPress made of it
       (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
       with only `id`, `source_url` and `media_details`, by the ids of its `wp-image-<id>` images
@@ -235,6 +236,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
   @media_fields [_fields: "id,source_url,media_details"]
+  @addressed ["src", "href", "poster"]
   @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
 
   @rendered ~w(_links yoast_head yoast_head_json)
@@ -798,7 +800,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         for %{html: html} when is_binary(html) <- content, into: "", do: html
       )
 
-    for attribute <- ["src", "href"],
+    for attribute <- @addressed,
         address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
         uniq: true,
         do: address
