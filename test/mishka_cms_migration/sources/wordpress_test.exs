@@ -354,7 +354,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert post.attrs["tags"] == [17]
       assert post.attrs["status"] == "future"
       assert post.attrs["date_gmt"] == row["date_gmt"]
-      assert post.modified_at == ~U[2026-11-02 06:22:16Z]
+      assert post.modified_at == ~U[2026-11-03 14:47:53Z]
       assert texts(html(post), "p code") == ["future"]
       refute Item.html(post) =~ "wp:paragraph"
       assert Enum.any?(Map.values(posts), &(&1.title == "نصب وردپرس روی سرور"))
@@ -434,7 +434,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       hero = items!("media")["4"]
 
       assert hero.title == "Hero image"
-      assert hero.modified_at == ~U[2026-11-02 06:22:14Z]
+      assert hero.modified_at == ~U[2026-11-03 14:47:50Z]
 
       assert Map.take(hero.attrs, ~w(source_url filename mime_type filesize post)) == %{
                "source_url" => "http://localhost:8089/wp-content/uploads/2026/11/hero.jpg",

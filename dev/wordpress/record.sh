@@ -9,7 +9,7 @@
 #   test/fixtures/wordpress/VERSIONS.txt                  what produced them
 # Only secrets are replaced (application password, admin password, nonces, password hashes, the admin email);
 # everything else stays byte for byte. Record from the curated seed only: run seed.sh first, record.sh before
-# adding any bulk content, and re-record on a clean volume (`docker compose down -v`, `./seed.sh`).
+# adding any bulk content, and re-record on a clean volume (`docker compose down -v`, `./seed.sh` twice).
 set -euo pipefail
 
 cd "$(dirname "$0")"

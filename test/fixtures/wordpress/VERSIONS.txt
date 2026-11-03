@@ -1,4 +1,4 @@
-Recorded: 2026-11-02T06:22:49Z from http://localhost:8089
+Recorded: 2026-11-03T14:48:19Z from http://localhost:8089
 WordPress: 7.1.4  (image wordpress:7.1.4-php8.4-apache)
 PHP: 8.4.27
 Database: 11.8.9  (image mariadb:11.8.9)

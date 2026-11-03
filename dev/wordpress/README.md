@@ -36,12 +36,12 @@ curl -u "admin:$WORDPRESS_APPLICATION_PASSWORD" \
 | --- | --- |
 | Users | admin, an editor whose email (`shahryar@mishka.tools`) matches a Mishka CMS user, two authors (one with a Persian name), a contributor; all with bios |
 | Terms | nested categories (News > Releases, Tutorials > WordPress > Migration, a Persian one), tags |
-| Posts | every core block, a classic post with `[caption]` `[gallery]` `[embed]` `[video]`, internal links of every shape, featured images, sticky, scheduled (2099), draft, pending, private, password-protected, trashed, Persian slug, a 128 KB post, an `aside` format post, an unknown plugin block |
+| Posts | every core block, a classic post with `[caption]` `[gallery]` `[embed]` `[video]` and a Vimeo address alone on its line, YouTube and Vimeo embed blocks and a YouTube `<iframe>`, internal links of every shape, featured images, sticky, scheduled (2099), draft, pending, private, password-protected, trashed, Persian slug, a 128 KB post, an `aside` format post, an unknown plugin block |
 | Pages | home and blog (static front page), about > team > leadership, docs > getting-started, contact, a draft, a private page, and the core Privacy Policy draft |
-| Media | jpg, png, webp, gif, pdf, mp4 and svg, each with alt text, caption and description (`media/`, drawn by `make-media.py`) |
+| Media | jpg, png, webp, gif, pdf, mp4 and svg, each with alt text, caption and description (`media/`, drawn by `make-media.py`); two PNGs are the site's logo and icon (`site_logo`, `site_icon`) |
 | Comments | threaded three levels, pending, spam, a pingback, on posts and a page |
 | Menus | a nested Primary menu, a Footer menu, a block-theme navigation |
-| SEO | Yoast SEO titles, descriptions, noindex/nofollow, social titles and images, a canonical |
+| SEO | Yoast SEO titles (one with Yoast's variables), descriptions, noindex/nofollow, social titles and images, a canonical on the site and one elsewhere; Rank Math's title, description, robots, image and canonical on one post, stored as Rank Math stores them (Rank Math itself is not installed: it adds nothing to the REST API, so only the export carries its fields) |
 
 What WordPress refuses is recorded as it is: it rejects an SVG upload (`rest_upload_sideload_error`, kept
 in `rest/media-upload-svg-refused.*`), so `seed.sh` imports the SVG once with the type allowed, the way a
@@ -63,8 +63,10 @@ Only secrets are replaced, with fixed placeholders (`REDACTED-APPLICATION-PASSWO
 the admin email is already the placeholder `admin@example.test`. `counts.sh` compares the REST totals with the
 WXR item counts from the recorded files alone.
 
-Record on a clean site (`down -v`, `./seed.sh`, `./record.sh`) and only from this curated seed, never after
-adding bulk content, so the fixtures stay small and the same.
+Record on a clean site (`down -v`, `./seed.sh` twice, `./record.sh`) and only from this curated seed, never after
+adding bulk content, so the fixtures stay small and the same. The second seed run changes nothing but the links
+the first one wrote before every post existed: a file's attachment page then sits under the post it is attached
+to, and the export's `<link>` is the site's home.
 
 ## Bulk content
 
@@ -80,7 +82,7 @@ cd dev/wordpress
 ```
 
 Fixtures are never recorded from bulk data. Record only from the curated seed, on a clean site:
-`docker compose down -v && ./seed.sh && ./record.sh`.
+`docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh`.
 
 ## Testing approach
 
