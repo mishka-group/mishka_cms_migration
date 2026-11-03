@@ -183,6 +183,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         source_kind: item.kind,
         source_id: item.source_id,
         run_id: state.run.id,
+        title: item.title,
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
         target_resource: inspect(target.resource()),
@@ -205,6 +206,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_kind: item.kind,
                source_id: source_id,
                run_id: state.run.id,
+               title: item.title,
                outcome: outcome,
                reason: reason
              },

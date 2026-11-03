@@ -21,7 +21,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       many of them failed, else were skipped, with the reason most of those entries give
       (`reason_label/1`): "54 skipped: No public address at the source" when that reason covers all
       54, "most often" before it when others are among them.
-    * The latest items, the report's last entries newest first, and how many more it counted.
+    * The latest items, the report's last entries newest first, and how many more it counted, which
+      opens the run's Items page.
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
@@ -375,7 +376,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
             "inline-flex flex-none items-center rounded-[20px] px-[9px] py-[3px] text-[10px] font-bold whitespace-nowrap",
             MigrationRun.outcome_class(item.outcome)
           ]}>
-            {outcome_word(item.outcome)}
+            {MigrationRun.outcome_word(item.outcome)}
           </span>
         </li>
       </ul>
@@ -385,7 +386,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         data-count={@more}
         class="m-0 mt-1 border-t border-[#f4f3ef] pt-3 text-[11.5px] font-semibold text-[#a8a5a0]"
       >
-        {gettext("and %{count} more", count: Localized.number(@more))}
+        <a
+          href={MigrationRun.items_path(@run)}
+          data-role="run-details-items-link"
+          class="text-[#5b57d6] transition-opacity hover:opacity-80"
+        >
+          {gettext("and %{count} more", count: Localized.number(@more))}
+        </a>
       </p>
     </section>
     """
@@ -917,11 +924,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp outcome_fill(:updated), do: "#3b6fd4"
   defp outcome_fill(:skipped), do: "#c3c0b8"
   defp outcome_fill(:failed), do: "#d5544b"
-
-  defp outcome_word(:created), do: gettext("Created")
-  defp outcome_word(:updated), do: gettext("Updated")
-  defp outcome_word(:skipped), do: gettext("Skipped")
-  defp outcome_word(:failed), do: gettext("Failed")
 
   defp step_class(:done), do: "bg-[#5b57d6]"
   defp step_class(:current), do: "bg-[#bcb8ee] motion-safe:animate-pulse"

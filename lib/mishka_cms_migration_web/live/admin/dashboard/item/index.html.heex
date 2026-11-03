@@ -1,0 +1,39 @@
+<%!--
+SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+
+SPDX-License-Identifier: Apache-2.0
+--%>
+
+<div id="migration-items-page">
+  <.link
+    navigate={path(@socket, "/admin/dashboard/migration")}
+    data-role="items-back"
+    class="inline-flex items-center gap-[6px] text-[12px] font-semibold text-[#7c7a75] transition-colors hover:text-[#17161a]"
+  >
+    <.icon name="hero-arrow-left" class="size-[13px] rtl:rotate-180" /> {gettext("Migration")}
+  </.link>
+
+  <div data-role="items-head" class="mb-[22px] mt-3">
+    <h1 class="m-0 font-['Newsreader'] text-[30px] font-medium leading-[1.05] tracking-[-0.01em] text-[#17161a]">
+      {gettext("Items")}
+    </h1>
+    <div
+      data-role="items-source"
+      data-run-id={@run.id}
+      class="mt-[7px] max-w-[620px] text-[13.5px] font-medium text-[#7c7a75]"
+    >
+      {gettext("Everything this site has of %{host} (%{source}), and what each run did with it.",
+        host: @run.source_host,
+        source: @source
+      )}
+    </div>
+  </div>
+
+  <.live_component
+    module={MishkaGervaz.Table.Web.Live}
+    id="migration-items-table"
+    resource={MishkaCmsMigration.MigrationItem}
+    current_user={@current_user}
+    url_state={@url_state}
+  />
+</div>

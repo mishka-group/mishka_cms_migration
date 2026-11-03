@@ -32,7 +32,7 @@ The dry run and the import are AshOban jobs on the `migration` queue, three atte
 
 ## 🔀 Several sources into one site
 
-A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and CMS records, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from.
+A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and CMS records, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from, and its Items page lists everything the migration keeps of that host on the site: each item's kind, title, source id and what the last run did with it and why, filtered by kind, outcome, title and the run that met it last, and the item's kept WordPress fields as JSON.
 
 ## 🗂️ Layout
 

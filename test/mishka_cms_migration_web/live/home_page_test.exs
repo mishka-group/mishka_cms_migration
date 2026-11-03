@@ -19,6 +19,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   alias MishkaCmsMigration.{MigrationRun, Report}
   alias MishkaCmsMigration.Test.Plugins.TokenSource
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.{Index, RunDetails}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item
   alias MishkaCmsMigrationWeb.SidebarMenu
 
   @page "/admin/dashboard/migration"
@@ -1453,8 +1454,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       :ok
     end
 
-    # The domain's Tailwind adapter draws a row action as a 30px button, 4px from the next, in a
-    # cell with 16px of padding either side.
+    # The domain's Tailwind adapter draws a row action, a button or a link, as a 30px square, 4px
+    # from the next, in a cell with 16px of padding either side.
     defp actions_width(0), do: 32
     defp actions_width(buttons), do: buttons * 30 + (buttons - 1) * 4 + 32
 
@@ -1523,7 +1524,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         for run <- runs do
           html
           |> LazyHTML.query(
-            ~s|#migration-runs-table [id$="-#{run.id}"] [data-role="gervaz-row-actions"] button|
+            ~s|#migration-runs-table [id$="-#{run.id}"] [data-role="gervaz-row-actions"] :is(button, a)|
           )
           |> Enum.count()
         end
@@ -1588,13 +1589,87 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "a run's Items link and latest items" do
+    setup %{site: site} do
+      stub!()
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      admin = migration_admin!(site, @blog_admin)
+
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      {:ok, admin: admin, run: run}
+    end
+
+    defp items_link(run), do: ~s|#migration-runs-table a[href="#{MigrationRun.items_path(run)}"]|
+
+    test "every run's row links to its Items page, which the link opens", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      pending =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            source_host: "waiting.example.com",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password"
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin)
+
+      assert has_element?(view, items_link(run))
+      assert has_element?(view, items_link(pending))
+
+      assert {:ok, items, _html} =
+               view
+               |> element(items_link(run))
+               |> render_click()
+               |> follow_redirect(signed_in(conn, admin))
+
+      render_async(items)
+      assert has_element?(items, ~s|[data-role="items-source"][data-run-id="#{run.id}"]|)
+    end
+
+    test "the latest items end with a link to the rest, on the Items page", %{
+      conn: conn,
+      admin: admin,
+      run: run
+    } do
+      run = import!(run, admin)
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert length(detailed(view, "run-details-item", "data-source-id")) == 8
+      assert [more] = detailed(view, "run-details-items-link", "href")
+      assert more == MigrationRun.items_path(run)
+    end
+  end
+
   describe "the sidebar" do
-    test "has one entry, in Plugins, gated by the migration permission" do
-      assert [item] = SidebarMenu.items()
+    test "has one entry, in Plugins, gated by the migration permission, and a page beside it" do
+      assert [item, items] = SidebarMenu.items()
       assert {item.key, item.path, item.group} == {"migration", @page, "plugins"}
+      assert {items.key, items.nav} == {"migration.items", false}
       assert SidebarMenu.permissions("migration") == ["admin:dashboard:migration"]
       assert Enum.any?(MishkaCmsCore.Sidebar.collect().items, &(&1.key == "migration"))
       assert MishkaCmsCore.Sidebar.permissions_for_module(Index) == ["admin:dashboard:migration"]
+
+      assert MishkaCmsCore.Sidebar.permissions_for_module(Item.Index) == [
+               "admin:dashboard:migration"
+             ]
     end
   end
 end

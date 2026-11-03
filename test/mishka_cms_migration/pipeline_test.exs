@@ -234,6 +234,27 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert length(redirects(site)) == 2
     end
 
+    test "keeps each item's title, whether it was written, refused or left out", %{
+      site: site,
+      admin: admin
+    } do
+      items = %{
+        "redirect" => [
+          %{"id" => 1, "title" => "Moved", "from" => "/old", "to" => "/new"},
+          %{"id" => 2, "title" => "Loop", "from" => "/loop", "to" => "/loop"}
+        ],
+        "note" => [%{"id" => 9, "title" => "A note"}]
+      }
+
+      migrate!(site, admin, items)
+
+      assert Map.new(items(site), &{&1.source_id, {&1.outcome, &1.title}}) == %{
+               "1" => {:created, "Moved"},
+               "2" => {:failed, "Loop"},
+               "9" => {:skipped, "A note"}
+             }
+    end
+
     test "writes a source id listed twice once, on the same page or a later one", %{
       site: site,
       admin: admin

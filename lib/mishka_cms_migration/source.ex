@@ -412,7 +412,7 @@ defmodule MishkaCmsMigration.Source.Item do
 
   It lives with the source behaviour because it is the source's answer, held only while a job
   runs. What is kept of it afterwards is `MishkaCmsMigration.MigrationItem`: the CMS record it was
-  written to, its hash and what the last run did with it, not its content.
+  written to, its title, its `extra`, its hash and what the last run did with it, not its content.
 
     * `:kind` — what the item is, such as `"post"`, `"page"` or `"user"`. A target is chosen by it
       (`MishkaCmsMigration.Target`).

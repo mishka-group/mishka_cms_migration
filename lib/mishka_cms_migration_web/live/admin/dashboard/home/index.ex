@@ -28,12 +28,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   such as a second dry run while one of the site's runs is running, is said in Gervaz's words for
   a failed row action (`MishkaGervaz.Errors.format_flash_message/2`), and nothing changes.
 
+  Items, on a row, is a link to the run's Items page
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
+
   An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
   `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
   got there, what its last report found kind by kind and its latest items, how far a running job
-  is, why a failed run stopped, and what its source said of itself and the admin chose. The page
-  keeps which row it last expanded and draws it again on each of that run's notifications, so a
-  dry run moving on, or finishing, shows in it without a reload.
+  is, why a failed run stopped, and what its source said of itself and the admin chose. The page keeps which row it last expanded and draws it again on each
+  of that run's notifications, so a dry run moving on, or finishing, shows in it without a reload.
 
   ## Logs
 
@@ -162,7 +164,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   defp step(socket, id, action, label, done) do
     user = socket.assigns.current_user
 
-    with {:ok, %MigrationRun{} = run} <- read_run(id, user),
+    with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(id, user),
          {:ok, _run} <- action.(run, actor: user, tenant: run.site_id) do
       put_flash(socket, :info, done)
     else
@@ -176,14 +178,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
     put_flash(socket, :error, Errors.format_flash_message(error))
   end
 
-  defp read_run(id, %{site_id: nil} = user),
-    do: Ash.get(MigrationRun, id, action: :master_get, actor: user, not_found_error?: false)
-
-  defp read_run(id, %{site_id: site_id} = user),
-    do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
-
   defp expand(socket, id) do
-    id |> read_run(socket.assigns.current_user) |> expanded()
+    id |> MigrationRun.fetch(socket.assigns.current_user) |> expanded()
     assign(socket, :expanded_id, id)
   end
 

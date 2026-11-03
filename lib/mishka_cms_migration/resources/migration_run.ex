@@ -145,14 +145,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   one whose dry run is ready (`:dry_run`), both `:start_dry_run`, Import on that same ready run
   (`:start_import`, once the admin confirms), and Cancel (`:cancel`, once the admin confirms) on
   one that is waiting, dry running, ready or importing. They are `:event` row actions, run by the
-  page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`), and drawn by the domain's
-  Tailwind adapter as the Pages table draws its own: an icon, with the action's name as its
-  tooltip and accessible name. The Actions column is always as wide as the most a row shows, three
-  30px buttons 4px apart with 16px either side (`actions_layout`'s `width`), so a row whose status
-  changes its buttons never moves the other columns. A row expands to what its last dry run or
-  import found, kind by kind: the kind in words (`kind_label/1`), how many items the source listed,
-  what was done with them (`result_summary/1`) and why the skipped ones were skipped
-  (`reason_label/1`).
+  page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`). Every row also has Items, a link
+  to the run's Items page (`items_path/1`, `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
+  They are drawn by the domain's Tailwind adapter as the Pages table draws its own: an icon, with
+  the action's name as its tooltip and accessible name. The Actions column is always as wide as
+  the most a row shows, four 30px squares 4px apart with 16px either side (`actions_layout`'s
+  `width`), so a row whose status changes its buttons never moves the other columns. A row
+  expands to what its last dry run or import found, kind by kind: the kind in words
+  (`kind_label/1`), how many items the source listed, what was done with them
+  (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default. Its
   Connection is a `:key_map` whose keys the source names
@@ -525,10 +526,20 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       row_actions do
         actions_layout do
-          width "minmax(130px,max-content)"
+          width "minmax(164px,max-content)"
         end
 
         action :expand, type: :accordion
+
+        action :items do
+          type :link
+          path &MishkaCmsMigration.MigrationRun.items_path/1
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Items") end
+            icon "hero-list-bullet"
+          end
+        end
 
         action :dry_run do
           type :event
@@ -1196,6 +1207,19 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   @doc """
+  The run `id` as `user` may read it: a master's on any site, a site admin's on their own site
+  alone. `{:ok, nil}` for a run that is not there or that `user` may not read.
+  """
+  @spec fetch(String.t(), map()) :: {:ok, struct() | nil} | {:error, term()}
+  def fetch(id, %{site_id: nil} = user),
+    do: Ash.get(__MODULE__, id, action: :master_get, actor: user, not_found_error?: false)
+
+  def fetch(id, %{site_id: site_id} = user),
+    do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
+
+  def fetch(_id, _no_user), do: {:ok, nil}
+
+  @doc """
   The source's secret `run` keeps, opened: `{:ok, secret}`, `{:ok, nil}` when it keeps none, or
   `{:error, :unreadable_secret}` when it was sealed under another `secret_key_base`.
   """
@@ -1600,6 +1624,33 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
   def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
   def kind_label(kind), do: String.capitalize(kind)
+
+  @doc """
+  Every kind the installed sources list, as `{label, kind}` pairs in the order the sources walk
+  them (`kind_label/1`).
+  """
+  @spec kind_options() :: [{String.t(), String.t()}]
+  def kind_options,
+    do:
+      MishkaCmsMigration.Source.all()
+      |> Enum.flat_map(& &1.kinds())
+      |> Enum.uniq()
+      |> Enum.map(&{kind_label(&1), &1})
+
+  @doc "Every outcome as a `{word, outcome}` pair, in the order the report counts them."
+  @spec outcome_options() :: [{String.t(), atom()}]
+  def outcome_options, do: Enum.map(@outcomes, &{outcome_word(&1), &1})
+
+  @doc "An outcome as its pill reads it, such as Created or Failed."
+  @spec outcome_word(atom()) :: String.t()
+  def outcome_word(:created), do: dgettext("mishka_gervaz", "Created")
+  def outcome_word(:updated), do: dgettext("mishka_gervaz", "Updated")
+  def outcome_word(:skipped), do: dgettext("mishka_gervaz", "Skipped")
+  def outcome_word(:failed), do: dgettext("mishka_gervaz", "Failed")
+
+  @doc "The admin address of the page that lists the items of `run`'s source on its site."
+  @spec items_path(%{id: String.t()}) :: String.t()
+  def items_path(%{id: id}), do: "/admin/dashboard/migration/runs/#{id}/items"
 
   @doc """
   Why an item was skipped or failed, or what was written otherwise than the source has it (a
