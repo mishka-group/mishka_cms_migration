@@ -359,6 +359,30 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     end
   end
 
+  describe "files" do
+    test "an import points a page's images and links to the site's files at their Media files, and keeps its other links",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])
+      imported!(site, admin)
+
+      media =
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Map.new(&{&1.name, &1.relative_path})
+
+      pages = pages(site)
+      team = LazyHTML.from_fragment(pages["/about/team"].template)
+      docs = LazyHTML.from_fragment(pages["/docs"].template)
+      hrefs = docs |> LazyHTML.query("a") |> LazyHTML.attribute("href")
+
+      assert team |> LazyHTML.query("img") |> LazyHTML.attribute("src") |> Enum.sort() ==
+               Enum.sort([media["avatar-nadia"], media["avatar-omid"], media["avatar-shahryar"]])
+
+      assert media["guide"] in hrefs
+      assert "http://localhost:8089/docs/getting-started/" in hrefs
+    end
+  end
+
   describe "content" do
     @hostile """
     <p>Total: {send(self(), :curly)} and <%= send(self(), :eex) %></p>\

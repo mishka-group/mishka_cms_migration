@@ -72,10 +72,13 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   check with its own sentence, and the item fails with it. A deployment that turned hand-written
   templates off (`config :mishka_cms_core, :page_code, :off`) refuses every page the same way.
 
-  ## Left for later
+  ## Its pictures and files
 
-  The links in a page's content keep the addresses WordPress gave them, and so do its images
-  (mishka_cms_migration#7).
+  Its `"media"` name the addresses of its content that are files of the source, and each `src`
+  and `href` of them points at the Media address of the file the same run, or an earlier one,
+  wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
+  too. The address of a file that was not written is kept as it is, and so is every other link: a
+  page's links to posts and pages keep the addresses WordPress gave them.
   """
 
   use MishkaCmsMigration.Target,
@@ -88,6 +91,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Targets.CmsMedia
   alias MishkaCmsMigration.Targets.Helpers.{Read, Status}
 
   @drafted ["pending", "private", "password", "future"]
@@ -97,7 +101,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
     %{
       title: item.title,
       path: path(item),
-      template: template(item),
+      template: template(item, context),
       active: active?(item, context),
       language: Languages.primary(context.site_id),
       layout_id: SiteLayout.layout_id(context.site_id)
@@ -175,10 +179,15 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp segment(segment, true), do: segment
   defp segment(segment, false), do: segment |> URI.decode() |> Slug.slugify()
 
-  defp template(item),
+  defp template(item, context),
     do:
       ~s(<div phx-no-curly-interpolation>) <>
-        (item |> Item.html() |> LazyHTML.from_fragment() |> LazyHTML.to_html() |> eex_free()) <>
+        (item
+         |> Item.html()
+         |> CmsMedia.relinked(item.attrs["media"], context)
+         |> LazyHTML.from_fragment()
+         |> LazyHTML.to_html()
+         |> eex_free()) <>
         "</div>"
 
   defp eex_free(html), do: String.replace(html, "<%", "&lt;%")

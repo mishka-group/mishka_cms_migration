@@ -1529,6 +1529,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("author_missing"),
     do: dgettext("mishka_gervaz", "Its author was not imported, so it has none")
 
+  defp said("featured_image_missing"),
+    do: dgettext("mishka_gervaz", "Its featured image was not imported, so it has none")
+
   defp said("connected"),
     do: dgettext("mishka_gervaz", "Already in the CMS, so linked and kept as it is")
 

@@ -57,10 +57,19 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     points at it too. Any other link is kept as it is: a page, a category, a file, an outside
     site, or a post the source no longer has.
 
-    ## Left for later
+    ## Its pictures and files
 
-    Its featured image (`"featured_media"`) and the images in its content keep their WordPress
-    addresses until the media are moved (mishka_cms_migration#7).
+    Its `"featured_media"` is the file the same run, or an earlier one, wrote to the CMS's Media for
+    that id (`MishkaCmsMigration.Targets.CmsMedia`), and the file's address becomes the post's
+    featured image (its `featured_image_url`). A post whose featured file was never written, such
+    as an SVG or one that failed, is written with none, and the import's report says so
+    (`"featured_image_missing"`); a dry run, which writes no file, does not.
+
+    Its `"media"` name the addresses of its content that are files of the source, and each `src`
+    and `href` of them points at the file's Media address instead
+    (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
+    `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
+    file that was not written is kept as it is.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
@@ -75,6 +84,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaBlog.Provision
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
+    alias MishkaCmsMigration.Targets.CmsMedia
     alias MishkaCmsMigration.Targets.Helpers.{BySlug, Status}
 
     @drafted ["pending", "private", "password"]
@@ -87,8 +97,13 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       |> Map.merge(%{
         title: item.title,
         slug: slug(item),
-        content: item |> Item.html() |> relinked(item.attrs["links"], context),
+        content:
+          item
+          |> Item.html()
+          |> relinked(item.attrs["links"], context)
+          |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
+        featured_image_url: featured_image(item, context),
         featured: item.attrs["sticky"] == true,
         language: Languages.primary(context.site_id),
         collection_ids: written(context, "category", item.attrs["categories"]),
@@ -115,7 +130,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
-      [item |> Status.call() |> drafted(), authored(item, context)]
+      [item |> Status.call() |> drafted(), authored(item, context), pictured(item, context)]
       |> Enum.reject(&is_nil/1)
       |> noted()
     end
@@ -136,6 +151,23 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     defp author([]), do: "author_missing"
     defp author(_bloggers), do: nil
+
+    defp pictured(_item, %{mode: :dry_run}), do: nil
+
+    defp pictured(%Item{attrs: %{"featured_media" => id}} = item, context)
+         when is_integer(id) and id > 0,
+         do: item |> featured_image(context) |> picture()
+
+    defp pictured(_item, _context), do: nil
+
+    defp picture(nil), do: "featured_image_missing"
+    defp picture(_address), do: nil
+
+    defp featured_image(%Item{attrs: %{"featured_media" => id}}, context)
+         when is_integer(id) and id > 0,
+         do: [id] |> CmsMedia.addresses(context) |> Map.get(to_string(id))
+
+    defp featured_image(_item, _context), do: nil
 
     defp noted([]), do: nil
     defp noted(notes), do: Enum.join(notes, "; ")

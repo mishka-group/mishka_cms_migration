@@ -15,7 +15,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaBlog.{Blogger, BlogPost, Collection, Tag}
   alias MishkaCmsCore.Accounts.User
@@ -941,6 +941,97 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       posts = posts(site)
       assert posts["Roadmap, edited"].id == draft.id
       refute is_map_key(posts, "Draft roadmap")
+    end
+  end
+
+  describe "a post's pictures and files" do
+    @pictures @admin ++ ["admin:dashboard:runtime:media"]
+    @uploads "http://localhost:8089/wp-content/uploads/2026/11/"
+
+    setup %{site: site}, do: %{admin: migration_admin!(site, @pictures)}
+
+    defp reasons({_outcome, reason}), do: String.split(reason || "", "; ")
+
+    defp files(site),
+      do:
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Map.new(&{&1.name, &1.relative_path})
+
+    test "an import makes the file WordPress featured each post the post's featured image", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin)
+      posts = posts(site)
+      files = files(site)
+
+      featured =
+        for row <- recorded("posts"), into: %{}, do: {row["title"]["raw"], row["featured_media"]}
+
+      assert posts["Welcome to the Mishka Test Blog"].featured_image_url == files["hero"]
+      assert posts["Every core block in one post"].featured_image_url == files["cover"]
+
+      for {title, post} <- posts do
+        case featured[title] do
+          0 -> assert is_nil(post.featured_image_url)
+          _id -> assert String.starts_with?(post.featured_image_url, "/uploads/#{site.id}/media/")
+        end
+      end
+    end
+
+    test "an import points a post's images and links to the site's files at their Media files, a size of a file too, and keeps its other links",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      posts = posts(site)
+      files = files(site)
+      linking = content(posts["Linking between posts and media"])
+      hrefs = linking |> LazyHTML.query("a") |> LazyHTML.attribute("href")
+      classic = content(posts["A classic editor post with shortcodes"])
+
+      assert files["guide"] in hrefs
+      assert Enum.frequencies(hrefs)[files["hero"]] == 1
+      assert "http://localhost:8089/2026/01/welcome-to-the-mishka-test-blog/hero/" in hrefs
+      assert linking |> LazyHTML.query("img") |> LazyHTML.attribute("src") == [files["diagram"]]
+
+      assert classic |> LazyHTML.query("img") |> LazyHTML.attribute("src") |> Enum.take(4) ==
+               [files["hero"], files["gallery-1"], files["gallery-2"], files["gallery-3"]]
+
+      assert classic |> LazyHTML.query("video") |> LazyHTML.attribute("src") == [files["sample"]]
+
+      located =
+        posts
+        |> Map.values()
+        |> Enum.flat_map(
+          &(&1
+            |> content()
+            |> LazyHTML.query("img[src]")
+            |> LazyHTML.attribute("src"))
+        )
+
+      assert Enum.all?(located, &String.starts_with?(&1, "/uploads/#{site.id}/media/"))
+    end
+
+    test "a post whose featured file was not imported is written with none, and the import says so",
+         %{site: site, admin: admin} do
+      stub!(%{
+        "/wp-content/uploads/2026/11/og-image.jpg" => {"image/jpeg", "<html></html>"},
+        "/wp-content/uploads/2026/11/hero.jpg" => :no_site
+      })
+
+      run = imported!(site, admin)
+      posts = posts(site)
+      outcomes = outcomes(run, "post")
+
+      assert is_nil(posts["SEO checklist for a migration"].featured_image_url)
+      assert is_nil(posts["Welcome to the Mishka Test Blog"].featured_image_url)
+      for id <- ["46", "32"], do: assert("featured_image_missing" in reasons(outcomes[id]))
+      refute "featured_image_missing" in reasons(outcomes["33"])
+
+      assert content(posts["A classic editor post with shortcodes"])
+             |> LazyHTML.query("a")
+             |> LazyHTML.attribute("href")
+             |> Enum.member?(@uploads <> "hero.jpg")
     end
   end
 
