@@ -54,8 +54,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/2`) in the language the site leads with, and
     keeps its `#fragment`: `http://old.example/2025/12/hello/#more` becomes `/blog/hello#more`.
     It is the address the run writes the post at, so a post that links to one listed after it
-    points at it too. Any other link is kept as it is: a page, a category, a file, an outside
-    site, or a post the source no longer has.
+    points at it too. Its `"pages"` name the links of its content that point at a page of the
+    source, and each points at the path that page is written at instead, keeping its `?query` and
+    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/2`): `http://old.example/contact/` is
+    `/contact`. Any other link is kept as it is: a category, a file, an outside site, or a post or
+    page the source no longer has.
 
     ## Its pictures and files
 
@@ -84,7 +87,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaBlog.Provision
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
-    alias MishkaCmsMigration.Targets.CmsMedia
+    alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
     alias MishkaCmsMigration.Targets.Helpers.{BySlug, Status}
 
     @drafted ["pending", "private", "password"]
@@ -101,6 +104,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           item
           |> Item.html()
           |> relinked(item.attrs["links"], context)
+          |> CmsPage.relinked(item.attrs["pages"])
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),

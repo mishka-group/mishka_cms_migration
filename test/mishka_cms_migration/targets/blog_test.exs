@@ -874,7 +874,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                outcomes(run, "post")
     end
 
-    test "an import points a post's links to the run's posts at their Blog addresses, and keeps every other link",
+    test "an import points a post's links to the run's posts at their Blog addresses and to its pages at their CMS paths, and keeps every other link",
          %{site: site, admin: admin} do
       imported!(site, admin)
       posts = posts(site)
@@ -888,6 +888,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert Enum.frequencies(hrefs)["/blog/welcome-to-the-mishka-test-blog"] == 2
       assert Enum.frequencies(hrefs)["/blog/gutenberg-all-core-blocks"] == 2
       assert "/blog/classic-editor-with-shortcodes#a-heading-after-the-more-tag" in hrefs
+      assert Enum.frequencies(hrefs)["/about/team"] == 2
 
       assert for(
                link <- LazyHTML.query(html, "a"),
@@ -895,9 +896,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                do: LazyHTML.attribute(link, "href")
              ) == [["/blog/welcome-to-the-mishka-test-blog"]]
 
+      for page_link <- ["http://localhost:8089/?page_id=25", "/about/team/"],
+          do: refute(page_link in hrefs)
+
       for kept <- [
-            "http://localhost:8089/?page_id=25",
-            "/about/team/",
             "http://localhost:8089/2026/01/this-post-was-deleted/",
             "http://localhost:8089/2026/01/welcome-to-the-mishka-test-blog/hero/",
             "http://localhost:8089/category/news/",

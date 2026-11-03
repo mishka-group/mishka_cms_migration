@@ -513,6 +513,78 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert posts["52"].attrs["links"] == %{}
     end
 
+    test "a post's and a page's links to the site's pages name the page's address, and its other links are left out" do
+      team = "http://localhost:8089/about/team/"
+
+      assert items!("post")["35"].attrs["pages"] == %{
+               "http://localhost:8089/?page_id=25" => team,
+               "/about/team/" => team
+             }
+
+      pages = items!("page")
+
+      assert pages["24"].attrs["pages"] == %{
+               team => team,
+               "http://localhost:8089/contact/" => "http://localhost:8089/contact/"
+             }
+
+      assert pages["25"].attrs["pages"] == %{}
+      assert items!("post")["52"].attrs["pages"] == %{}
+    end
+
+    test "a link to a page of the site is found however it is written, and a feed, a category or a page the site no longer has is not" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("pages"), &(&1["id"] == 22))
+
+      content =
+        ~s(<a href="http://localhost:8089/contact/?ref=nav#form">a</a> ) <>
+          ~s(<a href="/docs/getting-started">b</a> ) <>
+          ~s(<a href="http://LOCALHOST:8089/?page_id=27">c</a> ) <>
+          ~s(<a href="http://localhost:8089/feed/">d</a> ) <>
+          ~s(<a href="http://localhost:8089/category/news/">e</a> ) <>
+          ~s(<a href="http://localhost:8089/gone/">f</a> ) <>
+          ~s(<a href="https://elsewhere.test/contact/">g</a>)
+
+      row = put_in(row, ["content", "raw"], content)
+
+      assert {:ok, %{attrs: %{"pages" => pages}}} =
+               WordPress.normalize(row, "page", Map.put(@context, :conn, conn))
+
+      assert Map.keys(pages) |> Enum.sort() ==
+               Enum.sort([
+                 "http://localhost:8089/contact/?ref=nav#form",
+                 "/docs/getting-started",
+                 "http://LOCALHOST:8089/?page_id=27"
+               ])
+
+      assert pages["http://localhost:8089/contact/?ref=nav#form"] ==
+               "http://localhost:8089/contact/"
+    end
+
+    test "a link a post answers is not asked of the pages again, and the pages are asked for by slug and by id with only the fields they need" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, _attrs} = WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/pages",
+                         query_params: %{"slug" => slugs, "_fields" => "id,slug,link"}
+                       }}
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/pages",
+                         query_params: %{"include" => "25", "status" => "any"}
+                       }}
+
+      assert ~w(team news elixir nadia this-post-was-deleted) -- String.split(slugs, ",") == []
+      refute "welcome-to-the-mishka-test-blog" in String.split(slugs, ",")
+    end
+
     test "a post's links are asked for by slug and by id, with only the fields they need" do
       stub!()
       conn = connected!()
@@ -529,7 +601,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert_received {:wordpress_request,
                        %{
                          request_path: "/wp-json/wp/v2/posts",
-                         query_params: %{"include" => "33", "status" => "any"}
+                         query_params: %{"include" => "33,25", "status" => "any"}
                        }}
 
       assert ~w(welcome-to-the-mishka-test-blog gutenberg-all-core-blocks
@@ -540,10 +612,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     test "a post's links and media are left as they are without the connection to ask WordPress" do
       [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
 
-      assert {:ok, %{attrs: %{"links" => links, "media" => media}}} =
+      assert {:ok, %{attrs: %{"links" => links, "pages" => pages, "media" => media}}} =
                WordPress.normalize(row, "post", @context)
 
-      assert {links, media} == {%{}, %{}}
+      assert {links, pages, media} == {%{}, %{}, %{}}
     end
 
     test "a row without the fields its kind needs is refused, and an unknown kind too" do

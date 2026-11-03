@@ -156,9 +156,16 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   def relinked(html, _media, _context), do: html
 
-  defp moved(html, moved) when map_size(moved) == 0, do: html
+  @doc """
+  `html` with each `src` and `href` whose value is a key of `moved` written as that key's value; the
+  other attributes are kept as they are. `relinked/3` and
+  `MishkaCmsMigration.Targets.CmsPage.relinked/2` point the addresses of files and of pages at
+  where they went.
+  """
+  @spec moved(String.t(), %{String.t() => String.t()}) :: String.t()
+  def moved(html, moved) when map_size(moved) == 0, do: html
 
-  defp moved(html, moved),
+  def moved(html, moved),
     do:
       html
       |> LazyHTML.from_fragment()

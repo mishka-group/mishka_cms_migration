@@ -71,8 +71,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       host, or a path alone, is asked for: `/?p=<id>` by its id (`include`), any other by the last
       segment of its path (`slug`), from `/wp/v2/posts` in any status with only `id`, `slug` and
       `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
-      page, a category, a file, an attachment page or a post the site no longer has is left out,
-      and so is every link when the connection is not at hand. Its `media` are the addresses of
+      category, a file, an attachment page or a post the site no longer has is left out, and so is
+      every link when the connection is not at hand. Its `pages` are the links of its content that
+      are left, to a page of the site, each `href` as written to the page's `link`: `/?page_id=<id>`
+      is asked for by its id and any other by the last segment of its path, the same way, from
+      `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
+      `media` are the addresses of
       its converted content (`src` and `href`) that are a file of the site's media library, each
       as written to the id of the file it is: the original or one of the sizes WordPress made of it
       (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
@@ -256,10 +260,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          row
          |> entry_attrs()
          |> decoded_slug()
-         |> Map.merge(%{
-           "links" => links(html, context),
-           "media" => media(html, content, context)
-         }),
+         |> Map.put("media", media(html, content, context))
+         |> Map.merge(links(html, context)),
        extra: Map.drop(row, @entry_read),
        content: content
      }}
@@ -350,15 +352,18 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> Enum.uniq()
       |> Enum.flat_map(&asked(&1, URI.parse(home)))
 
-    posts = linked_posts(req, asked)
+    posts = linked(req, "/wp/v2/posts", asked)
+    pages = linked(req, "/wp/v2/pages", Enum.reject(asked, &is_map_key(posts, elem(&1, 0))))
 
-    for {href, reference} <- asked,
-        %{"slug" => slug} when slug != "" <- [Enum.find(posts, &links_to?(&1, reference))],
-        into: %{},
-        do: {href, decoded(slug)}
+    %{
+      "links" =>
+        for({href, %{"slug" => slug}} <- posts, slug != "", into: %{}, do: {href, decoded(slug)}),
+      "pages" =>
+        for({href, %{"link" => link}} <- pages, is_binary(link), into: %{}, do: {href, link})
+    }
   end
 
-  defp links(_html, _context), do: %{}
+  defp links(_html, _context), do: %{"links" => %{}, "pages" => %{}}
 
   defp asked(href, home) do
     uri = href |> String.trim() |> URI.parse()
@@ -383,8 +388,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp reference(%URI{query: query}, href), do: query |> query_id() |> by_id_or_path(href)
 
-  defp query_id(query) when is_binary(query),
-    do: query |> URI.decode_query() |> Map.get("p", "") |> Integer.parse()
+  defp query_id(query) when is_binary(query) do
+    params = URI.decode_query(query)
+    Integer.parse(params["p"] || params["page_id"] || "")
+  end
 
   defp query_id(_no_query), do: :error
 
@@ -394,14 +401,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp by_path({:ok, "/" <> rest = path}) when rest != "", do: {:slug, path}
   defp by_path(_root_or_not_a_path), do: nil
 
-  defp linked_posts(req, asked) do
-    Enum.flat_map([:include, :slug], fn by ->
-      asked_rows(
-        req,
-        {"/wp/v2/posts", @linked_fields},
-        {by, for({_href, {^by, value}} <- asked, do: asked_value(by, value))}
-      )
-    end)
+  defp linked(req, route, asked) do
+    rows =
+      Enum.flat_map([:include, :slug], fn by ->
+        asked_rows(
+          req,
+          {route, @linked_fields},
+          {by, for({_href, {^by, value}} <- asked, do: asked_value(by, value))}
+        )
+      end)
+
+    for {href, reference} <- asked,
+        row = Enum.find(rows, &links_to?(&1, reference)),
+        into: %{},
+        do: {href, row}
   end
 
   defp asked_rows(_req, _route, {_by, []}), do: []

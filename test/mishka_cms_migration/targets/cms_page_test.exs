@@ -379,7 +379,67 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
                Enum.sort([media["avatar-nadia"], media["avatar-omid"], media["avatar-shahryar"]])
 
       assert media["guide"] in hrefs
-      assert "http://localhost:8089/docs/getting-started/" in hrefs
+    end
+  end
+
+  describe "links to pages" do
+    defp hrefs(page),
+      do:
+        page.template
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("a")
+        |> LazyHTML.attribute("href")
+
+    test "an import points a page's links to the site's other pages at the paths they are written at",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      pages = pages(site)
+
+      assert "/about/team" in hrefs(pages["/about"])
+      assert "/contact" in hrefs(pages["/about"])
+      assert ["/blog", "/docs"] -- hrefs(pages["/"]) == []
+      assert "/docs/getting-started" in hrefs(pages["/docs"])
+
+      old_site =
+        for page <- Map.values(pages), href <- hrefs(page), href =~ "localhost:8089", do: href
+
+      assert Enum.all?(old_site, &(&1 =~ "/wp-content/uploads/"))
+    end
+
+    test "a link keeps its query and fragment, and goes to the path however it was written" do
+      html =
+        ~s(<a href="http://localhost:8089/contact/?ref=nav#form">a</a>) <>
+          ~s(<a href="/about/team/">b</a>) <>
+          ~s(<a href="http://localhost:8089/?page_id=25&amp;x=1#staff">c</a>) <>
+          ~s(<a href="http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/">d</a>)
+
+      pages = %{
+        "http://localhost:8089/contact/?ref=nav#form" => "http://localhost:8089/contact/",
+        "/about/team/" => "http://localhost:8089/about/team/",
+        "http://localhost:8089/?page_id=25&x=1#staff" => "http://localhost:8089/about/team/",
+        "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/" =>
+          "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/"
+      }
+
+      assert html
+             |> CmsPage.relinked(pages)
+             |> LazyHTML.from_fragment()
+             |> LazyHTML.query("a")
+             |> LazyHTML.attribute("href") ==
+               ["/contact?ref=nav#form", "/about/team", "/about/team#staff", "/wrdprs"]
+    end
+
+    test "a link to a page with no address of its own yet, and any other link, is kept as it is" do
+      html =
+        ~s(<a href="http://localhost:8089/?page_id=30">a</a>) <>
+          ~s(<a href="http://localhost:8089/category/news/">b</a>) <>
+          ~s(<a href="https://elixir-lang.org/">c</a>)
+
+      pages = %{"http://localhost:8089/?page_id=30" => "http://localhost:8089/?page_id=30"}
+
+      assert CmsPage.relinked(html, pages) == html
+      assert CmsPage.relinked(html, %{}) == html
+      assert CmsPage.relinked(html, nil) == html
     end
   end
 

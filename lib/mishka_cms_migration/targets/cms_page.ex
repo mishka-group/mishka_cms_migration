@@ -77,8 +77,19 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   Its `"media"` name the addresses of its content that are files of the source, and each `src`
   and `href` of them points at the Media address of the file the same run, or an earlier one,
   wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
-  too. The address of a file that was not written is kept as it is, and so is every other link: a
-  page's links to posts and pages keep the addresses WordPress gave them.
+  too. The address of a file that was not written is kept as it is, and so is every other link.
+
+  ## Its links to pages
+
+  Its `"pages"` name the links of its content that point at a page of the source, each by its
+  `href` as written and the address WordPress gives that page (the WordPress source finds them,
+  `MishkaCmsMigration.Sources.WordPress`). Each such link points at the path that page is written
+  at instead (`relinked/2`), however the link was written, and keeps its `?query` and `#fragment`:
+  `http://old.example/about/team/#staff` becomes `/about/team#staff`. It is the path the run
+  writes the page at, so a page that links to one listed after it points at it too. A page with no
+  address of its own yet, such as a draft, and any other link, such as a category's or a feed's,
+  is kept as it is. The same links in a post point at the same paths
+  (`MishkaCmsMigration.Targets.BlogPost`).
   """
 
   use MishkaCmsMigration.Target,
@@ -121,6 +132,37 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   @impl MishkaCmsMigration.Target
   def note(item, _context),
     do: [item |> Status.call() |> drafted(), moved(item)] |> Enum.reject(&is_nil/1) |> noted()
+
+  @doc """
+  `html` with each link that `pages` names, an `href` as the source wrote it to the address the
+  source gives the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the
+  path the CMS serves that page at (`path/1`'s rules: the path of its address, in ASCII), with the
+  link's own `?query` and `#fragment`. A link whose page has no address of its own, and every other
+  link, is kept as it is.
+  """
+  @spec relinked(String.t(), map() | nil) :: String.t()
+  def relinked(html, pages) when is_map(pages) and map_size(pages) > 0,
+    do:
+      CmsMedia.moved(
+        html,
+        for({old, link} <- pages, new = pointed(link, old), into: %{}, do: {old, new})
+      )
+
+  def relinked(html, _pages), do: html
+
+  defp pointed(link, old), do: link |> served() |> ascii() |> pointed_at(old)
+
+  defp pointed_at(nil, _old), do: nil
+
+  defp pointed_at(path, old),
+    do:
+      old
+      |> String.trim()
+      |> URI.parse()
+      |> then(&URI.to_string(%URI{path: path, query: query(&1), fragment: &1.fragment}))
+
+  defp query(%URI{path: path}) when path in [nil, "", "/"], do: nil
+  defp query(%URI{query: query}), do: query
 
   defp taken([], _context), do: MapSet.new()
 
@@ -184,6 +226,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       ~s(<div phx-no-curly-interpolation>) <>
         (item
          |> Item.html()
+         |> relinked(item.attrs["pages"])
          |> CmsMedia.relinked(item.attrs["media"], context)
          |> LazyHTML.from_fragment()
          |> LazyHTML.to_html()
