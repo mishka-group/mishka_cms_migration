@@ -11,7 +11,7 @@ defmodule MishkaCmsMigration.RecordPathsTest do
   use MishkaCmsMigration.DataCase, async: false
 
   alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
-  alias MishkaCmsCore.Runtime.{Media, Page, Redirect}
+  alias MishkaCmsCore.Runtime.{Layout, Media, Page, Redirect}
   alias MishkaCmsMigration.MigrationRun
 
   setup do
@@ -97,6 +97,24 @@ defmodule MishkaCmsMigration.RecordPathsTest do
 
     assert %{admin: admin, public: nil} = paths("post_redirect", redirect)
     assert admin == "/admin/dashboard/runtime/redirects?redirects_search=%2F2025%2F12%2Fhello%2F"
+  end
+
+  test "a menu opens the layout it is the header's links of, and has no page of its own", %{
+    site: site
+  } do
+    assert %{admin: "/admin/dashboard/runtime/layouts?layouts_search=site-main", public: nil} =
+             paths("menu", %Layout{name: "site-main", site_id: site.id})
+  end
+
+  test "a record's address is where the site serves it whether it is live yet or not", %{
+    site: site
+  } do
+    draft = %BlogPost{slug: "hello", language: "en", site_id: site.id, status: :draft}
+    hidden = %Page{path: "/about", language: "en", site_id: site.id, active: false}
+
+    assert MigrationRun.record_address("post", draft) == "/blog/hello"
+    assert MigrationRun.record_address("page", hidden) == "/about"
+    assert MigrationRun.record_address("comment", %Comment{site_id: site.id}) == nil
   end
 
   test "a kind this extension names no pages for has none" do

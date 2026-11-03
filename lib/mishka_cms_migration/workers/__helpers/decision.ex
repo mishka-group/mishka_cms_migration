@@ -20,7 +20,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
     * none, or one never written — `{:created, target, nil}`, unless the target finds it in the
       CMS already (`MishkaCmsMigration.Target`'s `existing/2`): `{:connected, target, record}`, the
-      CMS record it is, or `{:skipped, reason}`, why it is left out;
+      CMS record it is, `{:updated, target, record}`, the CMS record it is written over, or
+      `{:skipped, reason}`, why it is left out;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
@@ -93,6 +94,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp found(items, target, state), do: target.existing(items, state.context)
 
   defp connected(target, {:connected, record}), do: {:connected, target, record}
+  defp connected(target, {:updated, record}), do: {:updated, target, record}
   defp connected(_target, {:skipped, reason}) when is_binary(reason), do: {:skipped, reason}
 
   defp current([], _target, _state), do: %{}

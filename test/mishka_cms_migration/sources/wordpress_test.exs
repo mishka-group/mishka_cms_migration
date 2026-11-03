@@ -969,7 +969,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every item it found: what to create, users with no CMS user, a file Media cannot keep, a tagline the CMS has no setting for, a redirect from each published post's address" do
+    test "reports every item it found: what to create, users with no CMS user, a file Media cannot keep, a tagline the CMS has no setting for, a redirect from each published post's address, menus a site with no layout has no place for" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -1017,7 +1017,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:created, nil},
                    {:skipped, "no_user"},
                    {:skipped, "no_setting"},
-                   {:skipped, "no_target"},
+                   {:skipped, "no_layout"},
+                   {:skipped, "not_main_menu"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}

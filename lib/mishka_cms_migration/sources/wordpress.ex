@@ -159,7 +159,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
   name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
-  own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  own pages (`MishkaCmsMigration.Targets.CmsPage`), the main menu as the links of the site layout's
+  header (`MishkaCmsMigration.Targets.CmsLayout`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
   users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,

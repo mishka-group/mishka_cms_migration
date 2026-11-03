@@ -124,6 +124,11 @@ defmodule MishkaCmsMigration.Target do
     * `{:connected, record}` — the item is that CMS record. It is recorded against it and never
       written, by this run or a later one: the record is the CMS's own and is kept as it is, and
       the report says `"connected"` (`MishkaCmsMigration.Workers.Helpers.Decision`);
+    * `{:updated, record}` — the item is written over that CMS record through the update action,
+      as though an earlier run had written it, and is that record from then on: what a target
+      answers whose item lands in a record every site already has, such as the main menu, which
+      becomes the links of the site layout's header (`MishkaCmsMigration.Targets.CmsLayout`). A
+      later run treats the record as any other a run wrote;
     * `{:skipped, reason}` — the item is left out, with `reason`.
 
   An item the answer leaves out is created. It reads as the admin running the job, under the CMS's
@@ -184,8 +189,11 @@ defmodule MishkaCmsMigration.Target do
           prepared: term()
         }
 
-  @typedoc "What `existing/2` says of one item: the CMS record it already is, or why it is left out."
-  @type found :: {:connected, struct()} | {:skipped, String.t()}
+  @typedoc """
+  What `existing/2` says of one item: the CMS record it already is, the one it is written over, or
+  why it is left out.
+  """
+  @type found :: {:connected, struct()} | {:updated, struct()} | {:skipped, String.t()}
 
   @doc "The kind of item this target writes, such as `\"post\"`."
   @callback id() :: String.t()
