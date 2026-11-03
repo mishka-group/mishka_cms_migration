@@ -80,9 +80,10 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   A row's Leave out or Bring back makes that choice (Gervaz's `:update` row actions), and so do the
   bulk actions of the same names for the rows picked with the checkboxes (`choose/3`), Leave out
-  once the admin confirms. A category's or a tag's Map to… opens this resource's Gervaz form, one
-  `mapped_id` field whose choices are the site's records of that kind in the language it leads
-  with, and Import as its own (`map_options/1`). The Plan cell shows the choice before the plan,
+  once the admin confirms. A category's or a tag's Map to… (Gervaz's `:edit` row action, which
+  shows the page's modal first) opens this resource's Gervaz form on the item, one `mapped_id`
+  field whose choices are the site's records of that kind in the language it leads with, and
+  Import as its own (`map_options/1`). The Plan cell shows the choice before the plan,
   and the record a mapped item is connected to (`mapped_paths`). The table's other view, Map,
   draws the items as the source nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`),
   from the rows it keeps loaded.
@@ -397,8 +398,7 @@ defmodule MishkaCmsMigration.MigrationItem do
         action :expand, type: :accordion
 
         action :map_to do
-          type :event
-          event "map_to"
+          type :edit
           js fn _item -> MishkaCmsCore.CoreComponents.show_modal(@map_modal) end
           visible fn item, _state -> MishkaCmsMigration.MigrationItem.mappable?(item) end
 
@@ -945,12 +945,16 @@ defmodule MishkaCmsMigration.MigrationItem do
   @doc """
   The Map to… form's choices (`mapped_id`'s `options`): Import as its own, then the records of the
   item's kind's CMS resource (`MishkaCmsMigration.Target`) on its site, in the language the site
-  leads with (`MishkaCmsCore.Runtime.Languages.primary/1`), by name, read as the admin. The page
-  opens the form with the item's kind and site as its `defaults`; a form opened with neither, a
-  kind with no Map to… (`mappable?/1`) or one no target writes has Import as its own alone.
+  leads with (`MishkaCmsCore.Runtime.Languages.primary/1`), by name, read as the admin. The kind
+  and the site are the item's, the record the form has loaded to update (`state.form.data`); a
+  form with no item loaded yet, a kind with no Map to… (`mappable?/1`) or one no target writes has
+  Import as its own alone.
   """
   @spec map_options(map()) :: [{String.t(), String.t()}]
-  def map_options(%{defaults: %{source_kind: kind, site_id: site_id}, current_user: user})
+  def map_options(%{
+        form: %Phoenix.HTML.Form{data: %__MODULE__{source_kind: kind, site_id: site_id}},
+        current_user: user
+      })
       when kind in @mappable do
     [{dgettext("mishka_gervaz", "Import as its own"), "__nil__"} | records(kind, site_id, user)]
   end

@@ -16,6 +16,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0]
 
+  alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
 
@@ -147,16 +148,31 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   defp migrate_run!(run, admin), do: run |> dry_run!(admin) |> import!(admin)
 
-  # An `:update` row action names its row by `phx-value-id`, an `:event` one in `phx-value-values`.
+  # An `:update` row action names its row by `phx-value-id`, an `:edit` one in the push its
+  # `phx-click` commands end with.
   defp row_button(action, item),
     do:
       ~s|#{@table} [phx-value-event="#{action}"][phx-value-id="#{item.id}"], | <>
-        ~s|#{@table} [phx-value-event="#{action}"][phx-value-values*="#{item.id}"]|
+        ~s|#{@table} [phx-click*='"event":"#{action}"'][phx-click*='"id":"#{item.id}"']|
 
   defp row_action!(view, action, item) do
     view |> element(row_button(action, item)) |> render_click()
     settled(view)
   end
+
+  # What a row's Map to… shows on the client when it is clicked, before the server answers.
+  defp map_to_shows(view, item) do
+    for click <- view |> parts(row_button("map_to", item)) |> LazyHTML.attribute("phx-click"),
+        {:ok, commands} <- [Jason.decode(click)],
+        ["show", %{"to" => to}] <- commands,
+        do: to
+  end
+
+  defp map_value(view),
+    do:
+      view
+      |> parts(~s|#migration-item-map-modal input[type="hidden"][name="mapped_id"]|)
+      |> LazyHTML.attribute("value")
 
   defp pick!(view, item) do
     view
@@ -516,11 +532,6 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       row_action!(view, "map_to", releases)
 
-      File.write!(
-        "/private/tmp/claude-502/-Users-shahryar-Documents-Programming-Elixir/c14521e9-32f2-493c-8432-aa99832766a3/scratchpad/modal.html",
-        view |> parts("#migration-item-map-modal") |> LazyHTML.to_html()
-      )
-
       assert map_choices(view) ==
                ["Import as its own" | collections |> Enum.map(& &1.name) |> Enum.sort()]
 
@@ -564,6 +575,37 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
                later.report.entries,
                &(&1.kind == "category" and &1.source_id == news.source_id)
              ).reason == "connected"
+    end
+
+    test "shows the modal from a row in the List and in the Map view, with that item's form in it",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      phoenix = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.title == "Phoenix"))
+      language = Languages.primary(site.id)
+
+      tags =
+        MishkaBlog.Tag
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.filter(&(&1.language == language))
+
+      elixir = Enum.find(tags, &(&1.name == "Elixir"))
+      list = open!(conn, admin, run, "?items_filter_source_kind=tag")
+      tree = open!(conn, admin, run, "?view=map&items_filter_source_kind=tag")
+
+      assert has_element?(tree, ~s|#{@table}[data-role="item-tree"]|)
+
+      for view <- [list, tree] do
+        assert "#migration-item-map-modal" in map_to_shows(view, phoenix)
+      end
+
+      row_action!(tree, "map_to", phoenix)
+      assert ["Import as its own" | names] = map_choices(tree)
+      assert Enum.sort(names) == tags |> Enum.map(& &1.name) |> Enum.sort()
+      save_map!(tree, elixir.id)
+
+      assert item!(phoenix).mapped_id == elixir.id
+
+      row_action!(list, "map_to", phoenix)
+      assert map_value(list) == [elixir.id]
     end
   end
 

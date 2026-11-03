@@ -28,10 +28,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   ## Map to… and the Map view
 
-  A category's or a tag's Map to… (`{:row_action, "map_to", %{"id" => id}}`) opens the item's
-  Gervaz form in a modal (`MishkaCmsMigration.MigrationItem`'s form): the page reads the item as
-  the table does and hands the form its kind and site as `defaults`, which its choices are read
-  from (`MishkaCmsMigration.MigrationItem.map_options/1`): the site's categories, or tags, in the
+  A category's or a tag's Map to…, in the List and in the Map view, shows the page's modal on the
+  client and opens the item in the Gervaz form inside it (`MishkaCmsMigration.MigrationItem`'s
+  form, through the table's `:edit` row action), whose choices are read from the item it loaded
+  (`MishkaCmsMigration.MigrationItem.map_options/1`): the site's categories, or tags, in the
   language it leads with, and Import as its own. Save maps it (`:map_to`), and the modal closes; the
   table draws the item again from its broadcast.
 
@@ -124,10 +124,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     {:noreply, socket}
   end
 
-  def handle_info({:row_action, "map_to", %{"id" => id}}, socket) do
-    id |> MigrationItem.fetch(socket.assigns.current_user) |> map_to(socket)
-  end
-
   def handle_info({:form_saved, :update, %MigrationItem{} = item}, socket) do
     {:noreply, socket |> close_map() |> put_flash(:info, mapped_words(item))}
   end
@@ -152,19 +148,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp template(%{"view" => "map"}), do: :item_tree
   defp template(_params), do: nil
-
-  defp map_to({:ok, %MigrationItem{} = item}, socket) do
-    send_update(MishkaGervaz.Form.Web.Live,
-      id: MishkaGervaz.Resource.Info.Form.component_id(MigrationItem),
-      record_id: item.id,
-      defaults: %{source_kind: item.source_kind, site_id: item.site_id}
-    )
-
-    {:noreply, socket}
-  end
-
-  defp map_to(_unreadable, socket),
-    do: {:noreply, socket |> close_map() |> put_flash(:error, gettext("That item is not there."))}
 
   defp mapped_words(%MigrationItem{mapped_id: nil}),
     do: gettext("It will be imported as its own.")
