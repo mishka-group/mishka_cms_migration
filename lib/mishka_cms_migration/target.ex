@@ -54,7 +54,8 @@ defmodule MishkaCmsMigration.Target do
     * `:create` names one of its create actions, or a generic action that answers one of its
       records (`returns :struct, constraints: [instance_of: <the resource>]`), such as the core
       Media's `:upload`, which stores a file and creates its record; `:update` names one of its
-      update actions.
+      update actions, or a create action that upserts (`upsert? true`), such as the core Setting's
+      `:set`, which writes over the record with the same identity and keeps its id.
 
   ## The source's other fields
 
@@ -299,8 +300,9 @@ defmodule MishkaCmsMigration.Target do
       {creates?(Info.action(resource, actions.create), resource),
        "#{inspect(actions.create)} is not one of its create actions, nor a generic action " <>
          "that answers one of its records"},
-      {action?(Info.action(resource, actions.update), :update),
-       "#{inspect(actions.update)} is not one of its update actions"}
+      {updates?(Info.action(resource, actions.update)),
+       "#{inspect(actions.update)} is not one of its update actions, nor a create action " <>
+         "that upserts"}
     ]
     |> Enum.reject(&elem(&1, 0))
     |> Enum.map(&"#{inspect(resource)}: #{elem(&1, 1)}")
@@ -322,6 +324,7 @@ defmodule MishkaCmsMigration.Target do
 
   defp creates?(_action, _resource), do: false
 
-  defp action?(%{type: type}, type), do: true
-  defp action?(_action, _type), do: false
+  defp updates?(%{type: :update}), do: true
+  defp updates?(%{type: :create, upsert?: true}), do: true
+  defp updates?(_action), do: false
 end

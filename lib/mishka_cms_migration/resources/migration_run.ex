@@ -1350,6 +1350,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("category"), do: "hero-folder"
   def kind_icon("tag"), do: "hero-tag"
   def kind_icon("media"), do: "hero-photo"
+  def kind_icon("setting"), do: "hero-cog-6-tooth"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
   def kind_icon("comment"), do: "hero-chat-bubble-left-right"
@@ -1605,6 +1606,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
   defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
   defp kind_noun("media"), do: dgettext("mishka_gervaz", "files")
+  defp kind_noun("setting"), do: dgettext("mishka_gervaz", "settings")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
   defp kind_noun("comment"), do: dgettext("mishka_gervaz", "comments")
@@ -1625,6 +1627,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("category"), do: dgettext("mishka_gervaz", "Categories")
   def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
   def kind_label("media"), do: dgettext("mishka_gervaz", "Media")
+  def kind_label("setting"), do: dgettext("mishka_gervaz", "Settings")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
   def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
@@ -1666,9 +1669,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   The admin has no address for one record: its pages edit in a modal over a list. `admin` is the
   record's list opened on the record, the way the list's own search writes its address
   (`MishkaGervaz.Table.Web.UrlSync`): a post, category, tag or blogger by its slug, a page by its
-  path, a file by its name, a redirect by its old address, and a comment on the list of its post's
-  comments. `public` is the record's page on the site where it is live: a published post, an active
-  category, a tag, a blogger's page, an active page and a file; a comment and a redirect have none.
+  path, a file by its name, a redirect by its old address, a comment on the list of its post's
+  comments, and a setting on the Settings page's tab of its category. `public` is the record's page
+  on the site where it is live: a published post, an active category, a tag, a blogger's page, an
+  active page and a file; a comment, a redirect and a setting have none.
   """
   @spec record_paths(String.t(), struct()) :: %{admin: String.t(), public: String.t() | nil} | nil
   def record_paths("post", post),
@@ -1711,6 +1715,12 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: %{
       admin: listed("/admin/dashboard/runtime/medias", media, %{search: media.name}),
       public: media.relative_path
+    }
+
+  def record_paths("setting", setting),
+    do: %{
+      admin: "/admin/dashboard/settings?tab=" <> URI.encode_www_form(setting.category),
+      public: nil
     }
 
   def record_paths("post_redirect", redirect),
@@ -1862,6 +1872,26 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "The file is not the type its name says, so it is left out")
 
   defp said("not_downloaded"), do: dgettext("mishka_gervaz", "The source did not send the file")
+
+  defp said("frames_allowed: " <> origins),
+    do:
+      dgettext("mishka_gervaz", "Allowed its video player on the site: %{origins}",
+        origins: origins
+      )
+
+  defp said("frames_blocked: " <> origins),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its video player stays blocked until an admin allows %{origins} in Settings",
+        origins: origins
+      )
+
+  defp said("site_own_kept"),
+    do: dgettext("mishka_gervaz", "The site already has its own, so it is kept")
+
+  defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
+  defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)

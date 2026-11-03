@@ -369,6 +369,16 @@ for f in $FILES; do
   [ -z "${FM[yoast_tw_title]:-}" ] || add_meta _yoast_wpseo_twitter-title "${FM[yoast_tw_title]}"
   [ -z "${FM[yoast_tw_desc]:-}" ] || add_meta _yoast_wpseo_twitter-description "${FM[yoast_tw_desc]}"
   [ -z "${FM[yoast_primary_cat]:-}" ] || add_meta _yoast_wpseo_primary_category "${CATID[${FM[yoast_primary_cat]}]}"
+  # Rank Math's fields as Rank Math stores them; its robots are a list, which WordPress serializes.
+  [ -z "${FM[rank_math_title]:-}" ] || add_meta rank_math_title "${FM[rank_math_title]}"
+  [ -z "${FM[rank_math_desc]:-}" ] || add_meta rank_math_description "${FM[rank_math_desc]}"
+  [ -z "${FM[rank_math_focuskw]:-}" ] || add_meta rank_math_focus_keyword "${FM[rank_math_focuskw]}"
+  [ -z "${FM[rank_math_canonical]:-}" ] || add_meta rank_math_canonical_url "${FM[rank_math_canonical]}"
+  [ -z "${FM[rank_math_robots]:-}" ] || meta+=("\"rank_math_robots\":[\"${FM[rank_math_robots]//,/\",\"}\"]")
+  if [ -n "${FM[rank_math_image]:-}" ]; then
+    add_meta rank_math_facebook_image "${MURL[${FM[rank_math_image]}]}"
+    add_meta rank_math_facebook_image_id "${MID[${FM[rank_math_image]}]}"
+  fi
   for key in "${!FM[@]}"; do
     case $key in meta.*) add_meta "${key#meta.}" "${FM[$key]}" ;; esac
   done

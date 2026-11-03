@@ -33,12 +33,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]`:
-  authors, terms and files before the pages and posts that point at them, the comments after the
-  posts they are on, and each post's old address after its post. `list/3` reads each from its REST
-  route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`,
-  `/wp/v2/posts`, `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress
-  answers the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with
+  `kinds/0` is `["user", "category", "tag", "media", "setting", "page", "post", "comment",
+  "post_redirect"]`: authors, terms and files before the site's settings, pages and posts that point
+  at them, the comments after the posts they are on, and each post's old address after its post.
+  `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
+  site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
+  when the site has it. `list/3` reads each other kind from its REST route (`/wp/v2/users`,
+  `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`,
+  `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress answers the raw fields
+  an editor sees, 100 rows a page. Pages and posts are asked for with
   `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
   asked for with `status=all` and `type=all`: approved and held for moderation, of every type
   (WordPress answers only plain comments unless asked), but not spam and not the trash.
@@ -77,14 +80,29 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       is asked for by its id and any other by the last segment of its path, the same way, from
       `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
       `media` are the addresses of
-      its converted content (`src` and `href`) that are a file of the site's media library, each
+      its converted content (`src`, `href` and a video's `poster`) that are a file of the site's
+      media library, each
       as written to the id of the file it is: the original or one of the sizes WordPress made of it
       (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
       with only `id`, `source_url` and `media_details`, by the ids of its `wp-image-<id>` images
       (`include`) and by slugs made of the file names, without a size (`slug`), and an address is
       a file's when its path is the path of the file or of one of its sizes. A file whose slug is
       not its name and that no `wp-image-<id>` names is left out, and so is every address when the
-      connection is not at hand.
+      connection is not at hand. Its `seo` is what Yoast SEO or Rank Math kept for it, each key only
+      when it has one: `"title"`, `"description"`, `"robots"` (of `noindex`, `nofollow`,
+      `noarchive`, `nosnippet` and `noimageindex`, joined by `", "`), `"image"`, the share image's
+      address, with `"image_id"`, the file of the media library it is, found with the content's
+      files in the same request, and `"canonical"`, only when it is on another host than the
+      source's (every entry's own address is its canonical by default). Each is read from Rank
+      Math's `rank_math_*` fields in `meta`, then Yoast's `_yoast_wpseo_*`, then the head Yoast
+      answers (`yoast_head_json`), which is what the site served. An export carries every one of
+      these fields; the REST API answers only a post's Yoast title and description among them, and
+      none of Rank Math's, so the rest is read from Yoast's head: its title only when it is not the
+      entry's own title, alone or followed by the site's name (Yoast's default, which the CMS's
+      layout draws itself), and its robots only when they say `noindex` or `nofollow`. A variable
+      in a title or description is the CMS's own where it has one (`%%title%%` and `%title%` as
+      `{{page.title}}`, `sitename` as `{{site.name}}`, `excerpt` as `{{page.description}}`, `sep`
+      as `-` and `page` as nothing), and a value with any other variable is left out.
     * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
       `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
       `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
@@ -103,6 +121,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
       `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
       address, website, user agent and the rest are kept in `extra`.
+    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"` or
+      `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
+      text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
+      `&amp;`), and the media id of the logo and the icon.
     * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
@@ -123,8 +145,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
   such as one read with `_fields`, is refused as `:unreadable`.
 
-  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), pages as
-  the CMS's own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
+  name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
+  own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
   users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
@@ -144,9 +167,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   use Gettext, backend: MishkaCmsCore.Gettext
 
   alias MishkaCmsCore.Runtime.Redirects
-  alias MishkaCmsMigration.Sources.WordPress.Content
+  alias MishkaCmsMigration.Source
+  alias MishkaCmsMigration.Sources.WordPress.{Content, Export}
 
-  @kinds ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
+  @kinds [
+    "user",
+    "category",
+    "tag",
+    "media",
+    "setting",
+    "page",
+    "post",
+    "comment",
+    "post_redirect"
+  ]
 
   @form_fields [
     [
@@ -187,6 +221,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
   @media_fields [_fields: "id,source_url,media_details"]
+  @addressed ["src", "href", "poster"]
   @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
 
   @rendered ~w(_links yoast_head yoast_head_json)
@@ -204,6 +239,29 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+
+  @settings [
+    {"title", "name", "Site Title"},
+    {"tagline", "description", "Tagline"},
+    {"logo", "site_logo", "Site Logo"},
+    {"icon", "site_icon", "Site Icon"}
+  ]
+  @texts ["title", "tagline"]
+
+  @seo_titles ["rank_math_title", "_yoast_wpseo_title"]
+  @seo_descriptions ["rank_math_description", "_yoast_wpseo_metadesc"]
+  @seo_images ["rank_math_facebook_image", "_yoast_wpseo_opengraph-image"]
+  @seo_canonicals ["rank_math_canonical_url", "_yoast_wpseo_canonical"]
+  @seo_robots ~w(noindex nofollow noarchive nosnippet noimageindex)
+  @seo_variable ~r/%%(\w+)%%|%(\w+)%/
+  @seo_unknown ~r/%%?[a-z_][^%]*%/i
+  @seo_variables %{
+    "title" => "{{page.title}}",
+    "sitename" => "{{site.name}}",
+    "sep" => "-",
+    "page" => "",
+    "excerpt" => "{{page.description}}"
+  }
 
   @comment_attrs ~w(post author author_name author_email status type date_gmt)
   @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
@@ -245,6 +303,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     |> listed(page)
   end
 
+  def list(%{index: index}, "setting", _cursor),
+    do:
+      {:ok,
+       for(
+         {id, field, label} <- @settings,
+         value = setting(id, index[field]),
+         do: %{"id" => id, "label" => label, "value" => value}
+       ), nil}
+
   def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
 
   @impl MishkaCmsMigration.Source
@@ -255,6 +322,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       )
       when kind in @entries do
     content = Content.call(html, fetch(context))
+    {media, seo} = media(html, content, seo(row, context), context)
 
     {:ok,
      %{
@@ -266,7 +334,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          row
          |> entry_attrs()
          |> decoded_slug()
-         |> Map.put("media", media(html, content, context))
+         |> Map.merge(%{"seo" => seo, "media" => media})
          |> Map.merge(links(html, context)),
        extra: Map.drop(row, @entry_read),
        content: content
@@ -335,8 +403,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      }}
   end
 
+  def normalize(%{"id" => id, "label" => label, "value" => value}, "setting", _context),
+    do: {:ok, %{source_id: id, title: label, attrs: %{"value" => value}}}
+
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp setting(id, value) when id in @texts and is_binary(value),
+    do: value |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim() |> filled()
+
+  defp setting(_file, id) when is_integer(id) and id > 0, do: id
+  defp setting(_id, _none), do: nil
+
+  defp filled(""), do: nil
+  defp filled(text), do: text
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
@@ -426,20 +506,142 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp asked_rows(read, {route, fields}, {by, values}),
     do: route |> read.([{by, values |> Enum.uniq() |> Enum.join(",")} | fields]) |> Map.values()
 
-  defp media(html, content, %{conn: %{read: read, index: %{"home" => home}}})
+  defp media(html, content, seo, %{conn: %{read: read, index: %{"home" => home}}})
        when is_binary(home) do
-    files = content |> addresses() |> Enum.filter(&file?(&1, URI.parse(home)))
+    home = URI.parse(home)
+    files = content |> addresses() |> Enum.filter(&file?(&1, home))
+    image = seo |> Map.get("image") |> List.wrap() |> Enum.filter(&file?(&1, home))
 
     rows =
       Enum.flat_map(
-        [include: image_ids(html), slug: Enum.flat_map(files, &file_slugs/1)],
+        [
+          include: image_ids(html),
+          slug: files |> Enum.concat(image) |> Enum.flat_map(&file_slugs/1)
+        ],
         &asked_rows(read, {"/wp/v2/media", @media_fields}, &1)
       )
 
-    for href <- files, id = file_of(rows, href), into: %{}, do: {href, id}
+    {for(href <- files, id = file_of(rows, href), into: %{}, do: {href, id}),
+     image_id(seo, Enum.find_value(image, &file_of(rows, &1)))}
   end
 
-  defp media(_html, _content, _context), do: %{}
+  defp media(_html, _content, seo, _context), do: {%{}, seo}
+
+  defp image_id(seo, nil), do: seo
+  defp image_id(seo, id), do: Map.put(seo, "image_id", id)
+
+  defp seo(row, context) do
+    meta = with_map(row["meta"])
+    head = with_map(row["yoast_head_json"])
+
+    %{
+      "title" => typed(meta, @seo_titles) || served_title(head, row),
+      "description" => typed(meta, @seo_descriptions) || said(head["description"]),
+      "robots" => robots(meta) || served_robots(head["robots"]),
+      "image" => said(meta, @seo_images) || served_image(head["og_image"]),
+      "canonical" =>
+        (said(meta, @seo_canonicals) || said(head["canonical"])) |> elsewhere(context)
+    }
+    |> Map.reject(fn {_field, value} -> is_nil(value) end)
+  end
+
+  defp with_map(%{} = map), do: map
+  defp with_map(_none), do: %{}
+
+  defp typed(meta, keys), do: meta |> said(keys) |> variables()
+
+  defp said(meta, keys), do: Enum.find_value(keys, &said(meta[&1]))
+
+  defp said(text) when is_binary(text), do: text |> String.trim() |> filled()
+  defp said(_none), do: nil
+
+  defp variables(nil), do: nil
+
+  defp variables(text),
+    do:
+      @seo_variable
+      |> Regex.replace(text, fn whole, yoast, rank_math ->
+        Map.get(@seo_variables, yoast <> rank_math, whole)
+      end)
+      |> String.split()
+      |> Enum.join(" ")
+      |> resolved()
+
+  defp resolved(text), do: resolved(Regex.match?(@seo_unknown, text), text)
+  defp resolved(true, _text), do: nil
+  defp resolved(false, text), do: filled(text)
+
+  defp served_title(%{"title" => title, "og_site_name" => site}, %{"title" => %{"raw" => own}})
+       when is_binary(title) and is_binary(site) and is_binary(own),
+       do: title |> said() |> own_title(own, site)
+
+  defp served_title(head, _row), do: said(head["title"])
+
+  defp own_title(nil, _own, _site), do: nil
+  defp own_title(own, own, _site), do: nil
+
+  defp own_title(title, own, site),
+    do:
+      own_title(
+        title,
+        Regex.match?(
+          ~r/\A#{Regex.escape(own)} [^\p{L}\p{N}\s]{1,3} #{Regex.escape(site)}\z/u,
+          title
+        )
+      )
+
+  defp own_title(_title, true), do: nil
+  defp own_title(title, false), do: title
+
+  defp robots(meta) do
+    [
+      meta["rank_math_robots"] |> php_list() |> List.wrap(),
+      [yoast_robot(meta["_yoast_wpseo_meta-robots-noindex"], "noindex")],
+      [yoast_robot(meta["_yoast_wpseo_meta-robots-nofollow"], "nofollow")],
+      String.split(meta["_yoast_wpseo_meta-robots-adv"] || "", ",", trim: true)
+    ]
+    |> List.flatten()
+    |> robots_value()
+  end
+
+  defp php_list(value) when is_binary(value), do: Export.php(value)
+  defp php_list(value), do: value
+
+  defp yoast_robot("1", robot), do: robot
+  defp yoast_robot(_default, _robot), do: nil
+
+  defp served_robots(%{} = robots),
+    do: robots_value([robots["index"], robots["follow"]])
+
+  defp served_robots(_none), do: nil
+
+  defp robots_value(robots),
+    do:
+      for(
+        robot when is_binary(robot) <- robots,
+        robot = String.trim(robot),
+        robot in @seo_robots,
+        uniq: true,
+        do: robot
+      )
+      |> joined_robots()
+
+  defp joined_robots([]), do: nil
+  defp joined_robots(robots), do: Enum.join(robots, ", ")
+
+  defp served_image([%{"url" => url} | _]), do: said(url)
+  defp served_image(_none), do: nil
+
+  defp elsewhere(nil, _context), do: nil
+
+  defp elsewhere(url, %{source_host: host}),
+    do: url |> URI.parse() |> elsewhere(url, Source.url_host(%{"url" => url}) != host)
+
+  defp elsewhere(%URI{scheme: scheme, host: host}, url, true)
+       when scheme in ["http", "https"] and is_binary(host),
+       do: url
+
+  defp elsewhere(_uri, _url, _on_source), do: nil
 
   defp addresses(content) do
     tree =
@@ -447,7 +649,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         for %{html: html} when is_binary(html) <- content, into: "", do: html
       )
 
-    for attribute <- ["src", "href"],
+    for attribute <- @addressed,
         address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
         uniq: true,
         do: address

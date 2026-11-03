@@ -36,7 +36,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     "post_redirect" => ["posts"]
   }
 
-  # What an export does not carry ("Where it differs from the REST API" in the source's docs).
+  # What an export does not carry ("Where it differs from the REST API" in the source's docs): the
+  # site's logo and icon among its settings, and these attrs.
+  @unexported_settings ["logo", "icon"]
+
   @not_exported %{
     "user" => ~w(avatar_urls description link nickname roles url),
     "category" => ["link"],
@@ -62,15 +65,23 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   defp rest_items!(kind) do
     stub!()
     {:ok, conn} = WordPress.connect(@connection, "app password")
-    built!(WordPress, conn, Enum.flat_map(@recordings[kind], &recorded/1), kind)
+    built!(WordPress, conn, rest_rows(conn, kind), kind)
   end
+
+  defp rest_rows(conn, "setting") do
+    {:ok, rows, nil} = WordPress.list(conn, "setting", nil)
+    Enum.reject(rows, &(&1["id"] in @unexported_settings))
+  end
+
+  defp rest_rows(_conn, kind), do: Enum.flat_map(@recordings[kind], &recorded/1)
 
   defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
 
   # The attrs of an item read from the export and from the REST API, without what an export does
-  # not carry: a draft's GMT date WordPress kept none for among it.
+  # not carry: a draft's GMT date WordPress kept none for among it. An entry's SEO is compared on
+  # its own: the REST API answers what Yoast served, an export what Yoast and Rank Math kept.
   defp compared(from_file, from_rest, kind) do
-    left_out = Map.get(@not_exported, kind, []) ++ undated(from_file.attrs)
+    left_out = ["seo" | Map.get(@not_exported, kind, [])] ++ undated(from_file.attrs)
     {Map.drop(from_file.attrs, left_out), Map.drop(from_rest.attrs, left_out)}
   end
 
@@ -143,7 +154,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert WordPressFile.kinds() == WordPress.kinds()
     end
 
-    test "takes the run's host from the export's home, and keeps the site's name and home" do
+    test "takes the run's host from the export's home, and keeps the site's name, tagline and home" do
       assert WordPressFile.host(%{"file" => @all}) == "localhost:8089"
       assert WordPressFile.host(%{}) == nil
 
@@ -151,6 +162,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
       assert WordPressFile.extra(conn) == %{
                "name" => "Mishka Test Blog",
+               "description" =>
+                 "A WordPress site filled with realistic content for testing the Mishka CMS migration",
                "home" => "http://localhost:8089"
              }
     end
@@ -273,6 +286,27 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
              }
     end
 
+    test "carry what Rank Math and Yoast SEO kept for a post or page, their variables as the CMS's own" do
+      posts = file_items!(@all, "post")
+      hero = Enum.find(recorded("media"), &(&1["slug"] == "hero"))
+
+      assert posts["47"].attrs["seo"] == %{
+               "title" => "{{page.title}} - Speed notes - {{site.name}}",
+               "description" => "Where the time goes on a slow page, and what to measure first.",
+               "robots" => "noindex, noarchive",
+               "image" => hero["source_url"],
+               "image_id" => hero["id"],
+               "canonical" => "https://speed.example.test/performance-notes/"
+             }
+
+      assert posts["46"].attrs["seo"]["robots"] == "noindex, nofollow"
+      assert posts["43"].attrs["seo"] == rest_items!("post")["43"].attrs["seo"]
+      refute is_map_key(posts["33"].attrs["seo"], "canonical")
+
+      assert file_items!(@all, "page")["27"].attrs["seo"]["title"] ==
+               "{{page.title}} - Guides - {{site.name}}"
+    end
+
     test "of an export of posts alone are its posts, with their authors, files and comments, and no page or term" do
       kinds = Map.new(WordPressFile.kinds(), &{&1, file_items!(@posts_only, &1)})
       posts = recorded("posts") |> Enum.map(&to_string(&1["id"])) |> Enum.sort()
@@ -308,7 +342,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   end
 
   describe "a dry run" do
-    test "of the export reports what a dry run over the REST API reports for the same site, the pingback the REST recording left out besides" do
+    test "of the export reports what a dry run over the REST API reports for the same site, but the logo and icon an export does not carry, and the pingback the REST recording left out besides" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -327,7 +361,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds()
 
       assert counts(file) ==
-               Map.update!(counts(rest), "comment", &%{&1 | skipped: &1.skipped + pingbacks})
+               counts(rest)
+               |> Map.update!("comment", &%{&1 | skipped: &1.skipped + pingbacks})
+               |> Map.update!("setting", &%{&1 | created: &1.created - 2})
 
       assert imported_items(site) == []
     end

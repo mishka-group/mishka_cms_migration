@@ -96,6 +96,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   alias MishkaGervaz.Resource.Info
 
   @schemes ["http", "https"]
+  @addressed ["src", "href", "poster"]
 
   @impl MishkaCmsMigration.Target
   def existing(items, context),
@@ -141,9 +142,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
       |> Map.new(fn {id, media} -> {id, media.relative_path} end)
 
   @doc """
-  `html` with each `src` and `href` that `media` names, an address as the source wrote it to the
-  source id of the file it is (`MishkaCmsMigration.Sources.WordPress`'s `media`), pointing at that
-  file's Media address (`addresses/2`). The address of a file that was not written, and every
+  `html` with each `src`, `href` and `poster` that `media` names, an address as the source wrote it
+  to the source id of the file it is (`MishkaCmsMigration.Sources.WordPress`'s `media`), pointing at
+  that file's Media address (`addresses/2`). The address of a file that was not written, and every
   other, is kept as it is.
   """
   @spec relinked(String.t(), map() | nil, MishkaCmsMigration.Target.context()) :: String.t()
@@ -157,8 +158,8 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   def relinked(html, _media, _context), do: html
 
   @doc """
-  `html` with each `src` and `href` whose value is a key of `moved` written as that key's value; the
-  other attributes are kept as they are. `relinked/3` and
+  `html` with each `src`, `href` and `poster` (a video's picture) whose value is a key of `moved`
+  written as that key's value; the other attributes are kept as they are. `relinked/3` and
   `MishkaCmsMigration.Targets.CmsPage.relinked/2` point the addresses of files and of pages at
   where they went.
   """
@@ -179,7 +180,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp moved_node(node, _moved), do: node
 
   defp moved_attribute({name, old}, moved)
-       when name in ["src", "href"] and is_map_key(moved, old),
+       when name in @addressed and is_map_key(moved, old),
        do: {name, Map.fetch!(moved, old)}
 
   defp moved_attribute(attribute, _moved), do: attribute

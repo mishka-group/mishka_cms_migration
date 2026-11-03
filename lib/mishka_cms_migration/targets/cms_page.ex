@@ -74,8 +74,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   ## Its pictures and files
 
-  Its `"media"` name the addresses of its content that are files of the source, and each `src`
-  and `href` of them points at the Media address of the file the same run, or an earlier one,
+  Its `"media"` name the addresses of its content that are files of the source, and each `src`,
+  `href` and video `poster` of them points at the Media address of the file the same run, or an earlier one,
   wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
   too. The address of a file that was not written is kept as it is, and so is every other link.
 
@@ -90,6 +90,20 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   address of its own yet, such as a draft, and any other link, such as a category's or a feed's,
   is kept as it is. The same links in a post point at the same paths
   (`MishkaCmsMigration.Targets.BlogPost`).
+
+  ## Its SEO
+
+  Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
+  page's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description, robots,
+  share image, as the Media file it was imported as, and a canonical address on another site.
+
+  ## Its videos
+
+  A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
+  allowed on the site before the page is written, in an import only, as the admin
+  (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them (`"frames_allowed: <origins>"`), in
+  the dry run too. For an admin who may not change the site's settings the page is written with
+  its player blocked until an admin allows it, and the report names what stays blocked (`"frames_blocked: <origins>"`).
   """
 
   use MishkaCmsMigration.Target,
@@ -103,7 +117,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{Read, Status}
+  alias MishkaCmsMigration.Targets.Helpers.{Frames, Read, SeoTags, Status}
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -114,6 +128,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       path: path(item),
       template: template(item, context),
       active: active?(item, context),
+      seo_tags: SeoTags.call(item, context, nil),
       language: Languages.primary(context.site_id),
       layout_id: SiteLayout.layout_id(context.site_id)
     }
@@ -130,8 +145,19 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   end
 
   @impl MishkaCmsMigration.Target
-  def note(item, _context),
-    do: [item |> Status.call() |> drafted(), moved(item)] |> Enum.reject(&is_nil/1) |> noted()
+  def prepare(item, context, write),
+    do: with(:ok <- item |> Item.html() |> Frames.call(context), do: write.(context))
+
+  @impl MishkaCmsMigration.Target
+  def note(item, context),
+    do:
+      [
+        item |> Status.call() |> drafted(),
+        moved(item),
+        item |> Item.html() |> Frames.note(context)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> noted()
 
   @doc """
   `html` with each link that `pages` names, an `href` as the source wrote it to the address the

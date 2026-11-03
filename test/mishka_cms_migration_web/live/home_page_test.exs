@@ -855,7 +855,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert has_element?(view, ~s|[data-role="run-details-empty"]|, "No dry run yet")
 
       assert detailed(view, "run-details-reads", "data-kind") ==
-               ~w(user category tag media page post comment post_redirect)
+               ~w(user category tag media setting page post comment post_redirect)
 
       assert outcomes(view) == %{}
 
@@ -874,7 +874,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 86, "skipped" => 23}
+      assert outcomes(view) == %{"created" => 89, "skipped" => 24}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
@@ -882,6 +882,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "category" => 9,
                "tag" => 11,
                "media" => 18,
+               "setting" => 4,
                "page" => 11,
                "post" => 21,
                "comment" => 13,
@@ -895,6 +896,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "category" => 9,
                "tag" => 11,
                "media" => 18,
+               "setting" => 4,
                "page" => 11,
                "post" => 21,
                "comment" => 13,
@@ -902,7 +904,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 86, "skipped" => 23}
+               %{"created" => 89, "skipped" => 24}
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
@@ -990,7 +992,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Left out by this run's choices"
              )
 
-      assert detailed(view, "run-details-items-more", "data-count") == ["101"]
+      assert detailed(view, "run-details-items-more", "data-count") == ["105"]
 
       for {fact, said} <- [
             {"name", "Mishka Test Blog"},
@@ -1029,7 +1031,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       "admin:dashboard:blog:post",
       "admin:dashboard:runtime:page",
       "admin:dashboard:runtime:redirect",
-      "admin:dashboard:runtime:media"
+      "admin:dashboard:runtime:media",
+      "admin:dashboard:setting"
     ]
 
     setup %{site: site} do
@@ -1070,7 +1073,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Imported"
              )
 
-      assert outcomes(view) == %{"created" => 86, "skipped" => 23}
+      assert outcomes(view) == %{"created" => 89, "skipped" => 24}
 
       assert has_element?(
                view,
@@ -1078,10 +1081,11 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 86, "skipped" => 23}
+               %{"created" => 89, "skipped" => 24}
 
       for {kind, counts} <- [
             {"media", %{"created" => 17, "skipped" => 1}},
+            {"setting", %{"created" => 3, "skipped" => 1}},
             {"category", %{"created" => 9}},
             {"tag", %{"created" => 11}},
             {"page", %{"created" => 11}},

@@ -15,7 +15,8 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.Page
+  alias MishkaCmsCore.Runtime.{Page, Seo}
+  alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
 
@@ -381,6 +382,28 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     end
   end
 
+  describe "SEO" do
+    test "an import keeps what Yoast SEO kept for a page as its SEO tags, its share image at its Media file",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])
+      imported!(site, admin)
+
+      cover =
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.name == "cover"))
+
+      pages = pages(site)
+      about = Seo.stored_tags(pages["/about"].seo_tags)
+
+      assert Seo.tag_value(about, "title") == "About the Mishka Test Blog"
+      assert Seo.tag_value(about, "description") =~ "Who writes the Mishka Test Blog"
+      assert Seo.tag_value(about, "og:image") == cover.relative_path
+      assert Seo.tag_value(Seo.stored_tags(pages["/docs"].seo_tags), "title") =~ "Guides"
+      assert pages["/"].seo_tags == []
+    end
+  end
+
   describe "links to pages" do
     defp hrefs(page),
       do:
@@ -439,6 +462,24 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert CmsPage.relinked(html, pages) == html
       assert CmsPage.relinked(html, %{}) == html
       assert CmsPage.relinked(html, nil) == html
+    end
+  end
+
+  describe "a page's videos" do
+    test "an import allows the YouTube or Vimeo player its content frames, and no other origin",
+         %{
+           site: site
+         } do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:setting"])
+
+      html =
+        ~s(<figure><iframe src="https://player.vimeo.com/video/76979871"></iframe></figure>) <>
+          ~s(<iframe src="https://maps.example.com/embed?q=1"></iframe>)
+
+      run = fake_pages!(site, admin, [row(1, %{"content" => [%{"html" => html}]})])
+
+      assert outcomes(run)["1"] == {:created, "frames_allowed: https://player.vimeo.com"}
+      assert Settings.get("security.frame_origins", [], site.id) == ["https://player.vimeo.com"]
     end
   end
 

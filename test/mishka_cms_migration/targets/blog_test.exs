@@ -20,7 +20,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
   alias MishkaCmsCore.Accounts.User
   alias MishkaCmsCore.PlainText
-  alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
+  alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects, Seo, Setting}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.MigrationRun.Options
@@ -679,7 +679,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "41" => {:created, "draft_from_private"},
                "42" => {:created, "draft_from_password"},
                "53" => {:created, "unconverted: acme/callout, core/latest-posts"},
-               "34" => {:created, "unconverted: unknown_plugin_shortcode, pullbox"}
+               "34" =>
+                 {:created,
+                  "frames_blocked: https://www.youtube-nocookie.com, https://player.vimeo.com; " <>
+                    "unconverted: unknown_plugin_shortcode, pullbox"}
              } = outcomes
 
       assert posts(site) == %{}
@@ -1002,6 +1005,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert classic |> LazyHTML.query("video") |> LazyHTML.attribute("src") == [files["sample"]]
 
+      video = posts["A post with a gallery and a video"] |> content() |> LazyHTML.query("video")
+
+      assert {LazyHTML.attribute(video, "src"), LazyHTML.attribute(video, "poster")} ==
+               {[files["sample"]], [files["gallery-2"]]}
+
       located =
         posts
         |> Map.values()
@@ -1035,6 +1043,134 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
              |> LazyHTML.query("a")
              |> LazyHTML.attribute("href")
              |> Enum.member?(@uploads <> "hero.jpg")
+    end
+  end
+
+  describe "a post's SEO" do
+    setup %{site: site},
+      do: %{admin: migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])}
+
+    defp seo(post), do: Seo.stored_tags(post.seo_tags)
+
+    test "an import keeps what Yoast SEO kept for a post as its SEO tags, its share image at its Media file",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      posts = posts(site)
+
+      files =
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Map.new(&{&1.name, &1.relative_path})
+
+      checklist = seo(posts["SEO checklist for a migration"])
+      blocks = seo(posts["Every core block in one post"])
+      tips = seo(posts["Phoenix LiveView tips"])
+
+      assert Seo.tag_value(checklist, "title") == "An SEO checklist for moving a site"
+      assert Seo.tag_value(checklist, "description") =~ "Keep addresses"
+      assert Seo.tag_value(checklist, "robots") == "noindex, nofollow"
+      assert Seo.tag_value(blocks, "og:image") == files["diagram"]
+
+      assert Seo.tag_value(tips, "canonical") ==
+               "https://syndicated.example.test/phoenix-liveview-tips/"
+
+      refute Seo.tag_value(checklist, "og:image"),
+             "a share image that is the post's featured image is left to the featured image"
+
+      refute Seo.tag_value(blocks, "canonical"), "a canonical on the old host is dropped"
+      assert posts["A minimal post"].seo_tags == []
+    end
+  end
+
+  describe "a post's videos" do
+    @players [
+      "https://www.youtube-nocookie.com",
+      "https://player.vimeo.com",
+      "https://www.youtube.com"
+    ]
+
+    setup %{site: site},
+      do: %{admin: migration_admin!(site, @admin ++ ["admin:dashboard:setting"])}
+
+    defp frame_origins(site) do
+      Setting
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.filter(&(&1.site_id == site.id and &1.key == "security.frame_origins"))
+    end
+
+    defp framed(run, note \\ "frames_allowed"),
+      do:
+        for(
+          {id, outcome} <- outcomes(run, "post"),
+          origins = Enum.find_value(reasons(outcome), &noted_origins(&1, note)),
+          into: %{},
+          do: {id, origins}
+        )
+
+    defp noted_origins(reason, note), do: reason |> String.split(": ", parts: 2) |> origins(note)
+
+    defp origins([note, origins], note), do: String.split(origins, ", ")
+    defp origins(_reason, _note), do: nil
+
+    test "a dry run says which posts bring a player the site does not allow, and allows none", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert framed(run) == %{
+               "33" => ["https://www.youtube-nocookie.com"],
+               "34" => ["https://www.youtube-nocookie.com", "https://player.vimeo.com"],
+               "49" => ["https://player.vimeo.com", "https://www.youtube.com"]
+             }
+
+      assert frame_origins(site) == []
+    end
+
+    test "an import keeps the players and allows their origins on the run's site once, after the ones it allowed",
+         %{site: site, admin: admin} do
+      other = create_site!()
+      maps = "https://www.google.com"
+
+      {:ok, _origins} =
+        Settings.put("security.frame_origins", [maps, "https://player.vimeo.com"],
+          site_id: site.id
+        )
+
+      run = imported!(site, admin)
+      [origins] = frame_origins(site)
+
+      assert [^maps | allowed] = origins.value["value"]
+      assert Enum.sort(allowed) == Enum.sort(@players)
+
+      assert framed(run) == %{
+               "49" => ["https://www.youtube.com"],
+               "33" => ["https://www.youtube-nocookie.com"]
+             },
+             "WordPress lists 49 first, which adds YouTube's origin, then 33 the nocookie one, and 34 adds none"
+
+      assert frame_origins(other) == []
+
+      assert posts(site)["A post with a gallery and a video"]
+             |> content()
+             |> LazyHTML.query("iframe")
+             |> LazyHTML.attribute("src") ==
+               [
+                 "https://player.vimeo.com/video/76979871",
+                 "https://www.youtube.com/embed/jNQXAC9IVRw"
+               ]
+    end
+
+    test "an admin who may not change the site's settings has the posts written with their players blocked, and says so",
+         %{site: site} do
+      admin = migration_admin!(site, @admin)
+      run = imported!(site, admin)
+      outcomes = outcomes(run, "post")
+
+      assert run |> framed("frames_blocked") |> Map.keys() |> Enum.sort() == ["33", "34", "49"]
+      for id <- ["33", "34", "49"], do: assert({:created, _reason} = outcomes[id])
+
+      assert frame_origins(site) == []
     end
   end
 

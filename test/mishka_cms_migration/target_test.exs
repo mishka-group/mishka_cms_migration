@@ -62,6 +62,15 @@ defmodule MishkaCmsMigration.TargetTest do
     end
   end
 
+  test "a create action that upserts may be its update, and no other create" do
+    assert [{_module, _bytecode} | _] =
+             compile_target(MishkaCmsCore.Runtime.Setting, create: :set, update: :set)
+
+    assert_raise ArgumentError, ~r/:create is not one of its update actions, nor a create/, fn ->
+      compile_target(MishkaCmsCore.Runtime.Redirect, update: :create)
+    end
+  end
+
   test "a module that is not a resource, or an action the resource does not have, is refused" do
     assert_raise ArgumentError, ~r/not an Ash resource/, fn ->
       compile_target(MishkaCmsMigration.Source.Item)

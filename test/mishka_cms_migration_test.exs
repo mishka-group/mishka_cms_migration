@@ -16,6 +16,7 @@ defmodule MishkaCmsMigrationTest do
              {[MishkaCmsMigration.Sources.WordPress, MishkaCmsMigration.Sources.WordPressFile],
               [
                 MishkaCmsMigration.Targets.CmsMedia,
+                MishkaCmsMigration.Targets.CmsSetting,
                 MishkaCmsMigration.Targets.CmsPage,
                 MishkaCmsMigration.Targets.BlogBlogger,
                 MishkaCmsMigration.Targets.BlogCollection,

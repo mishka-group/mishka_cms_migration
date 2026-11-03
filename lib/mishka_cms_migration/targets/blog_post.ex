@@ -71,11 +71,30 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     as an SVG or one that failed, is written with none, and the import's report says so
     (`"featured_image_missing"`); a dry run, which writes no file, does not.
 
-    Its `"media"` name the addresses of its content that are files of the source, and each `src`
-    and `href` of them points at the file's Media address instead
+    Its `"media"` name the addresses of its content that are files of the source, and each `src`,
+    `href` and video `poster` of them points at the file's Media address instead
     (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
     file that was not written is kept as it is.
+
+    ## Its SEO
+
+    Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
+    post's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description,
+    robots, share image and a canonical address on another site. A share image that is the post's
+    featured image is left out: the post's page then shows the core's share card, which draws the
+    featured image with the post's title, where a stored `og:image` would replace the card. The
+    WordPress REST API cannot tell Yoast's chosen image from its fallback to the featured image.
+
+    ## Its videos
+
+    A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
+    allowed on the site before the post is written, in an import only, as the admin
+    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them (`"frames_allowed: <origins>"`), in
+    the dry run too. For an admin who may not change the site's settings the post is written with
+    its player blocked until an admin allows it, and the report names what stays blocked (`"frames_blocked: <origins>"`). The
+    Blog keeps an `<iframe>`'s address, title and size, and leaves out
+    its other attributes, such as `allowfullscreen`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
@@ -91,7 +110,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Status}
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, SeoTags, Status}
 
     @drafted ["pending", "private", "password"]
 
@@ -111,6 +130,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),
+        seo_tags: SeoTags.call(item, context, item.attrs["featured_media"]),
         featured: item.attrs["sticky"] == true,
         language: Languages.primary(context.site_id),
         collection_ids: written(context, "category", item.attrs["categories"]),
@@ -136,8 +156,17 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
+    def prepare(item, context, write),
+      do: with(:ok <- item |> Item.html() |> Frames.call(context), do: write.(context))
+
+    @impl MishkaCmsMigration.Target
     def note(item, context) do
-      [item |> Status.call() |> drafted(), authored(item, context), pictured(item, context)]
+      [
+        item |> Status.call() |> drafted(),
+        authored(item, context),
+        pictured(item, context),
+        item |> Item.html() |> Frames.note(context)
+      ]
       |> Enum.reject(&is_nil/1)
       |> noted()
     end
