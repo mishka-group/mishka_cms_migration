@@ -27,8 +27,11 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
     * a menu that is not the main one is skipped as `"not_main_menu"`;
     * a site with no `site-main` layout, or one whose layout draws no `site-header`, skips the main
       menu as `"no_layout"`;
-    * a header that already has links of its own keeps them, and the main menu is skipped as
-      `"site_own_kept"`; the site's own navigation is never written over;
+    * a header that already has links of its own waits for an admin's decision as
+      `"header_has_links"` (`MishkaCmsMigration.MigrationItem`'s Decide…): Keep the site's own
+      skips the main menu as `"site_own_kept"`, and Replace with the imported menu writes it over
+      the layout in place of those links; the site's own navigation is never written over on the
+      import's own say;
     * otherwise the main menu is written over the layout (`MishkaCmsMigration.Target`'s
       `{:updated, record}`), and the layout is its record.
 
@@ -108,7 +111,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
     |> old_address()
   end
 
-  defp placed(%Item{attrs: %{"main" => true}}, context), do: context |> layout() |> open()
+  defp placed(%Item{attrs: %{"main" => true}} = item, context),
+    do: context |> layout() |> open(Target.decision(context, item, "header_has_links"))
+
   defp placed(_menu, _context), do: {:skipped, "not_main_menu"}
 
   defp layout(context) do
@@ -118,14 +123,18 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
     |> List.first()
   end
 
-  defp open(nil), do: {:skipped, "no_layout"}
-  defp open(layout), do: layout.template |> header() |> opened(layout)
+  defp open(nil, _decision), do: {:skipped, "no_layout"}
+  defp open(layout, decision), do: layout.template |> header() |> opened(layout, decision)
 
-  defp opened({:ok, tree, header}, layout), do: tree |> Tree.blank?(header.id) |> blank(layout)
-  defp opened(_no_header, _layout), do: {:skipped, "no_layout"}
+  defp opened({:ok, tree, header}, layout, decision),
+    do: tree |> Tree.blank?(header.id) |> blank(layout, decision)
 
-  defp blank(true, layout), do: {:updated, layout}
-  defp blank(false, _layout), do: {:skipped, "site_own_kept"}
+  defp opened(_no_header, _layout, _decision), do: {:skipped, "no_layout"}
+
+  defp blank(true, layout, _decision), do: {:updated, layout}
+  defp blank(false, layout, "import"), do: {:updated, layout}
+  defp blank(false, _layout, "keep"), do: {:skipped, "site_own_kept"}
+  defp blank(false, _layout, nil), do: {:undecided, "header_has_links"}
 
   defp header(template) do
     with {:ok, tree} <- Tree.parse(template),

@@ -713,7 +713,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert collections["Topics"].updated_at == topics.updated_at
     end
 
-    test "mapped wins over what an import wrote and what the source changed, and unmapped finds its own record again",
+    test "mapped wins over what an import wrote and what the source changed, and unmapped meets its own record again by its slug",
          %{site: site, admin: admin} do
       migrate!(site, admin, %{"category" => [category(2, "News")]})
       news = collections(site)["News"]
@@ -729,6 +729,13 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       map!(site, admin, "2", nil)
       assert %{target_id: nil, mapped_id: nil} = item!(site, "2")
+
+      again = migrate!(site, admin, %{"category" => changed})
+      assert %{"2" => {:undecided, "slug_taken"}} = outcomes(again)
+
+      site
+      |> item!("2")
+      |> MishkaCmsMigration.decide_item!("keep", actor: admin, tenant: site.id)
 
       again = migrate!(site, admin, %{"category" => changed})
       assert %{"2" => {:skipped, "connected"}} = outcomes(again)

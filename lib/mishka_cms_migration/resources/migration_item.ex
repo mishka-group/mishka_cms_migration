@@ -140,7 +140,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   @outcomes MishkaCmsMigration.Report.outcomes()
   @mappable ["category", "tag"]
-  @choices %{"site_has_own" => ["keep", "import"]}
+  @choices %{
+    "site_has_own" => ["keep", "import"],
+    "header_has_links" => ["keep", "import"],
+    "slug_taken" => ["keep", "import"]
+  }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
@@ -1155,7 +1159,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   @doc """
   What `:choose` does to the record an item was connected to when its mapping is taken away: an
   item an import connected (it recorded no `target_updated_at`) forgets that record, so the next
-  run creates it, or finds it by its slug, as an item never written. An item an import wrote keeps
+  run creates it, or meets it by its slug, as an item never written. An item an import wrote keeps
   its own record.
   """
   @spec unmapped(Ash.Changeset.t(), map()) :: Ash.Changeset.t()
@@ -1279,6 +1283,18 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("site_has_own", "import"),
     do: dgettext("mishka_gervaz", "Use the WordPress one")
+
+  defp choice_word("header_has_links", "keep"),
+    do: dgettext("mishka_gervaz", "Keep the site's own")
+
+  defp choice_word("header_has_links", "import"),
+    do: dgettext("mishka_gervaz", "Replace with the imported menu")
+
+  defp choice_word("slug_taken", "keep"),
+    do: dgettext("mishka_gervaz", "Connect to the existing record")
+
+  defp choice_word("slug_taken", "import"),
+    do: dgettext("mishka_gervaz", "Import as new with another slug")
 
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 

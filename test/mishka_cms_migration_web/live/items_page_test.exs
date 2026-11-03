@@ -573,6 +573,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert item!(title).decisions == %{"site_has_own" => "keep"}
     end
 
+    test "a category or a page whose address the site has offers Connect or Import as new, in place of Map to…",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+
+      for {kind, source_id} <- [{"category", "6"}, {"page", "29"}] do
+        item = second_item(site, kind, source_id)
+        view = open!(conn, admin, second, "?items_filter_source_kind=#{kind}")
+
+        assert plan_of(view, item) == "undecided"
+        refute has_element?(view, row_button("map_to", item))
+        row_action!(view, "decide", item)
+
+        assert decision_choices(view) ==
+                 ["Connect to the existing record", "Import as new with another slug"]
+      end
+    end
+
     test "the picked rows are decided together, and one with nothing to decide is left as it is",
          %{conn: conn, site: site, admin: admin} do
       second = second_source!(site, admin)

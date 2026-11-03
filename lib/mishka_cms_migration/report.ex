@@ -55,7 +55,11 @@ defmodule MishkaCmsMigration.Report do
   is the conflict:
 
     * `"site_has_own"` — the site already has a value of its own for the setting
-      (`MishkaCmsMigration.Targets.CmsSetting`).
+      (`MishkaCmsMigration.Targets.CmsSetting`);
+    * `"header_has_links"` — the site layout's header already has links of its own, where the
+      main menu goes (`MishkaCmsMigration.Targets.CmsLayout`);
+    * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
+      its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.

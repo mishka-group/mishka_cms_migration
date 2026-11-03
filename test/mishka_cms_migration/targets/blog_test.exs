@@ -135,6 +135,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     {tag!(site, admin, attrs), collection!(site, admin, attrs)}
   end
 
+  defp decide!(site, admin, items, choice) do
+    for item <- Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+        {item.source_kind, item.source_id} in items,
+        do: MishkaCmsMigration.decide_item!(item, choice, actor: admin, tenant: site.id)
+  end
+
   defp slugs(resource, site),
     do:
       resource |> Ash.read!(tenant: site.id, authorize?: false) |> Enum.frequencies_by(& &1.slug)
@@ -273,42 +279,46 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   end
 
   describe "terms the site already has" do
-    test "a dry run reports the tag and the category of the same slug as connected, the others as ones to create, and writes nothing in the CMS",
+    test "a dry run and an import leave the tag and the category of the same slug for an admin's decision, and write no second copy",
          %{site: site, admin: admin} do
       own_terms!(site, admin)
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert %{"10" => {:skipped, "connected"}} = outcomes(run, "tag")
-      assert %{"6" => {:skipped, "connected"}} = outcomes(run, "category")
+      assert %{"10" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert %{"6" => {:undecided, "slug_taken"}} = outcomes(run, "category")
       assert counts(run, "tag").created == length(recorded("tags")) - 1
       assert counts(run, "category").created == length(recorded("categories")) - 1
       assert map_size(blog(Tag, site)) == 1
       assert map_size(blog(Collection, site)) == 1
+
+      run = import!(run, admin)
+
+      assert %{"10" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert {counts(run, "tag").undecided, counts(run, "category").undecided} == {1, 1}
+      assert slugs(Tag, site)["elixir"] == 1
+      assert slugs(Collection, site)["elixir"] == 1
     end
 
-    test "an import writes no second copy, keeps the site's own as it is, and links the posts to it",
+    test "Connect to the existing record writes no second copy, keeps the site's own as it is, and links the posts to it",
          %{site: site, admin: admin} do
       {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "keep")
+
       run = imported!(site, admin)
 
-      assert counts(run, "tag") ==
-               %{
-                 created: length(recorded("tags")) - 1,
-                 updated: 0,
-                 skipped: 1,
-                 failed: 0,
-                 undecided: 0
-               }
+      for {kind, recording} <- [{"tag", "tags"}, {"category", "categories"}] do
+        assert counts(run, kind) ==
+                 %{
+                   created: length(recorded(recording)) - 1,
+                   updated: 0,
+                   skipped: 1,
+                   failed: 0,
+                   undecided: 0
+                 }
+      end
 
-      assert counts(run, "category") ==
-               %{
-                 created: length(recorded("categories")) - 1,
-                 updated: 0,
-                 skipped: 1,
-                 failed: 0,
-                 undecided: 0
-               }
-
+      assert %{"10" => {:skipped, "connected"}} = outcomes(run, "tag")
       assert slugs(Tag, site)["elixir"] == 1
       assert slugs(Collection, site)["elixir"] == 1
       assert blog(Tag, site)["Elixir, as the site has it"].id == tag.id
@@ -326,6 +336,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       admin: admin
     } do
       {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "keep")
       imported!(site, admin)
       change_in_wordpress!("tag")
       change_in_wordpress!("category")
@@ -340,21 +352,56 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                collection.updated_at
     end
 
-    test "a slug WordPress keeps percent-encoded is matched as the Blog stores it", %{
-      site: site,
-      admin: admin
-    } do
-      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})
-      collection = collection!(site, admin, %{name: "Tutorials, in Persian", slug: "amwzsh"})
+    test "Import as new writes a tag and a category of their own beside the site's, with another slug, and links the posts to them",
+         %{site: site, admin: admin} do
+      {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "import")
 
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert %{"10" => {:created, "another_slug"}} = outcomes(run, "tag")
+
+      run = import!(run, admin)
+
+      assert %{"10" => {:created, "another_slug"}} = outcomes(run, "tag")
+      assert %{"6" => {:created, "another_slug"}} = outcomes(run, "category")
+
+      assert {blog(Tag, site)["Elixir"].slug, blog(Tag, site)["Elixir"].id != tag.id} ==
+               {"elixir-10", true}
+
+      assert blog(Collection, site)["Elixir"].slug == "elixir-6"
+      assert blog(Collection, site)["Elixir, as the site has it"].id == collection.id
+
+      post = posts(site)["Phoenix LiveView tips"]
+      assert blog(Tag, site)["Elixir"].id in Enum.map(post.tenant_tags, & &1.id)
+      refute tag.id in Enum.map(post.tenant_tags, & &1.id)
+
+      change_in_wordpress!("tag")
+      again = imported!(site, admin)
+      assert %{"10" => {:updated, "another_slug"}} = outcomes(again, "tag")
+      assert blog(Tag, site)["Elixir"].slug == "elixir-10"
+    end
+
+    test "a slug WordPress keeps percent-encoded is matched, and made anew, as the Blog stores it",
+         %{site: site, admin: admin} do
+      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})
+      collection!(site, admin, %{name: "Tutorials, in Persian", slug: "amwzsh"})
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert %{"20" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert %{"9" => {:undecided, "slug_taken"}} = outcomes(run, "category")
+
+      decide!(site, admin, [{"tag", "20"}], "keep")
+      decide!(site, admin, [{"category", "9"}], "import")
       run = imported!(site, admin)
 
       assert %{"20" => {:skipped, "connected"}} = outcomes(run, "tag")
-      assert %{"9" => {:skipped, "connected"}} = outcomes(run, "category")
+      assert blog(Collection, site)["آموزش‌ها"].slug == "amwzsh-9"
 
       post = posts(site)["نصب وردپرس روی سرور"]
       assert Enum.map(post.tenant_tags, & &1.id) == [tag.id]
-      assert Enum.map(post.tenant_collections, & &1.id) == [collection.id]
+      assert Enum.map(post.tenant_collections, & &1.id) == [blog(Collection, site)["آموزش‌ها"].id]
     end
 
     test "a category that sat under a connected one is written under the site's own", %{
@@ -362,6 +409,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       admin: admin
     } do
       own = collection!(site, admin, %{name: "Guides, as the site has it", slug: "tutorials"})
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      [tutorials] =
+        for %{source_kind: "category", source_slug: "tutorials"} = item <-
+              Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+            do: item
+
+      decide!(site, admin, [{"category", tutorials.source_id}], "keep")
 
       imported!(site, admin)
       collections = blog(Collection, site)

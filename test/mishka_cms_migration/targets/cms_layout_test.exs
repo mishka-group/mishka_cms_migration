@@ -7,8 +7,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
   A WordPress site's main menu moved into the links of the run's site layout's header, against what
   the seeded WordPress answered: what a dry run plans, where an import points each link (the pages,
   posts and categories it wrote, the site's home, an outside site), that a link to what was not
-  imported keeps its old address and the report says so, that the site's own links are kept, and
-  what a second run does.
+  imported keeps its old address and the report says so, that the site's own links wait for an
+  admin's decision and are kept or replaced as decided, and what a second run does.
 
   The layout is the core's `site-main` frame, its header the `site-header` component the core's
   starter draws, with no links of its own. Its links are read through the core's own tree of the
@@ -111,6 +111,21 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
     |> Enum.find(&(&1.source_kind == kind and &1.source_id == source_id))
     |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
   end
+
+  defp own_links,
+    do:
+      String.replace(
+        @frame,
+        ~s(current_user={assigns[:current_user]}>\n),
+        ~s(current_user={assigns[:current_user]}>\n    <.link navigate="/pricing">Pricing</.link>\n)
+      )
+
+  defp decide!(site, admin, choice),
+    do:
+      MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "22"))
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   defp menu_items_with(changes),
     do:
@@ -226,22 +241,48 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       refute Enum.any?(links(site), &(elem(&1, 0) == "Elixir"))
     end
 
-    test "keeps the links the site's header already has", %{site: site, admin: admin} do
-      own =
-        String.replace(
-          @frame,
-          ~s(current_user={assigns[:current_user]}>\n),
-          ~s(current_user={assigns[:current_user]}>\n    <.link navigate="/pricing">Pricing</.link>\n)
-        )
-
-      layout = layout!(site, own)
+    test "leaves a header with links of its own for an admin's decision, and keeps them", %{
+      site: site,
+      admin: admin
+    } do
+      layout = layout!(site, own_links())
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
-      assert outcomes(run)["22"] == {:skipped, "site_own_kept"}
+      assert outcomes(run)["22"] == {:undecided, "header_has_links"}
 
       run = import!(run, admin)
 
-      assert outcomes(run)["22"] == {:skipped, "site_own_kept"}
+      assert outcomes(run)["22"] == {:undecided, "header_has_links"}
       assert template(site) == layout.template
+    end
+
+    test "keeps the header's own links once an admin decides so, on every later run", %{
+      site: site,
+      admin: admin
+    } do
+      layout = layout!(site, own_links())
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "keep")
+
+      for _run <- 1..2,
+          do: assert(outcomes(imported!(site, admin))["22"] == {:skipped, "site_own_kept"})
+
+      assert template(site) == layout.template
+    end
+
+    test "replaces the header's own links with the main menu once an admin decides so", %{
+      site: site,
+      admin: admin
+    } do
+      layout!(site, own_links())
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "import")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      refute Enum.any?(links(site), &(elem(&1, 0) == "Pricing"))
+      assert [{"Home", {:navigate, "/"}} | _] = links(site)
+      assert outcomes(imported!(site, admin))["22"] == {:skipped, "unchanged"}
     end
 
     test "leaves the menu out of a site with no layout header", %{site: site, admin: admin} do

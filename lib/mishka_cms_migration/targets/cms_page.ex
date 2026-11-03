@@ -31,10 +31,14 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   The source's front page is the page whose address is `/`, and its posts page the page at the
   address of the posts: neither is told apart, since the address says it. A page whose path the
-  site already has, such as the site's home at `/`, is left as it is and skipped (`"path_taken"`),
-  also when the site's page is not live; nothing is ever written over a page an admin made. A page
-  under a skipped page is skipped too, as the walk does for any item whose parent was not imported
-  (`"parent_missing"`).
+  site already has, such as the site's home at `/`, also when the site's page is not live, waits
+  for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.MigrationItem`'s Decide…); nothing
+  is ever written over a page an admin made. Connect to the existing record makes the item that
+  page, kept as it is, and the pages under it are written as the walk writes any child. Import as
+  new with another slug writes the item as a page of its own, its path's last part followed by its
+  source id, `/contact-29` for `/contact` and `/home-2` for a front page whose slug is `home`, and
+  the report says so (`"another_slug"`). A page under one that waits is skipped, as the walk does
+  for any item whose parent was not imported (`"parent_missing"`).
 
   A live page is also refused where the site already answers its address by a pattern, such as
   `/blog` where the Blog's `/:lang/blog` answers: the core says which page does, and the item fails
@@ -116,8 +120,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{Frames, Read, SeoTags, Status}
+  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Read, SeoTags, Status}
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -125,7 +130,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   def attrs(item, context) do
     %{
       title: item.title,
-      path: path(item),
+      path: item |> path() |> placed(item, Target.decision(context, item, "slug_taken")),
       template: template(item, context),
       active: active?(item, context),
       seo_tags: SeoTags.call(item, context, nil),
@@ -139,9 +144,11 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
     paired = for item <- items, path = path(item), do: {item, path}
     taken = paired |> Enum.map(&elem(&1, 1)) |> taken(context)
 
-    for {item, path} <- paired, path in taken, into: %{} do
-      {item.source_id, {:skipped, "path_taken"}}
-    end
+    for {item, path} <- paired,
+        page = taken[path],
+        found = held(page, Target.decision(context, item, "slug_taken")),
+        into: %{},
+        do: {item.source_id, found}
   end
 
   @impl MishkaCmsMigration.Target
@@ -154,6 +161,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       [
         item |> Status.call() |> drafted(),
         moved(item),
+        BySlug.note(item, context),
         item |> Item.html() |> Frames.note(context)
       ]
       |> Enum.reject(&is_nil/1)
@@ -190,14 +198,24 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp query(%URI{path: path}) when path in [nil, "", "/"], do: nil
   defp query(%URI{query: query}), do: query
 
-  defp taken([], _context), do: MapSet.new()
+  defp taken([], _context), do: %{}
 
   defp taken(paths, context),
     do:
       Page
       |> Ash.Query.filter(path in ^paths)
       |> Read.call(context)
-      |> MapSet.new(& &1.path)
+      |> Map.new(&{&1.path, &1})
+
+  defp held(page, "keep"), do: {:connected, page}
+  defp held(_page, "import"), do: nil
+  defp held(_page, nil), do: {:undecided, "slug_taken"}
+
+  defp placed("/", item, "import"),
+    do: ascii("/" <> (slug(item) || "page") <> "-" <> item.source_id)
+
+  defp placed(path, item, "import") when is_binary(path), do: path <> "-" <> item.source_id
+  defp placed(path, _item, _decision), do: path
 
   defp active?(item, %{options: %{pages: "publish"}}), do: Status.call(item) == "publish"
   defp active?(_item, _context), do: false

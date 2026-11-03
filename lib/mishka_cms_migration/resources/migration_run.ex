@@ -1907,9 +1907,6 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("draft_from_future"),
     do: dgettext("mishka_gervaz", "Scheduled at the source, so a draft")
 
-  defp said("path_taken"),
-    do: dgettext("mishka_gervaz", "The site already has a page at this address, so it is kept")
-
   defp said("path_made_ascii"),
     do: dgettext("mishka_gervaz", "Its address was made ASCII, so the old address is not served")
 
@@ -1943,6 +1940,15 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "The site already has its own, so it is kept")
 
   defp said("site_has_own"), do: dgettext("mishka_gervaz", "The site already has its own")
+
+  defp said("header_has_links"),
+    do: dgettext("mishka_gervaz", "The site's header already has its own links")
+
+  defp said("slug_taken"),
+    do: dgettext("mishka_gervaz", "The site already has one at this address")
+
+  defp said("another_slug"),
+    do: dgettext("mishka_gervaz", "Imported as new beside the site's own, with another slug")
 
   defp said("site_own_replaced"),
     do: dgettext("mishka_gervaz", "Replaces the site's own, as you decided")
