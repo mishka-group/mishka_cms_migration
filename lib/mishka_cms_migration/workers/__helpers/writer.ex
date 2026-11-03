@@ -185,6 +185,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         source_id: item.source_id,
         run_id: state.run.id,
         title: item.title,
+        source_slug: source_slug(item),
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
         target_resource: inspect(target.resource()),
@@ -208,6 +209,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_id: source_id,
                run_id: state.run.id,
                title: item.title,
+               source_slug: source_slug(item),
                outcome: outcome,
                reason: reason
              },
@@ -225,6 +227,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_kind: item.kind,
                source_id: source_id,
                title: item.title,
+               source_slug: source_slug(item),
                plan: plan,
                plan_reason: reason
              },
@@ -234,6 +237,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   end
 
   defp noted(_state, _item, _outcome, _reason), do: :ok
+
+  defp source_slug(%Item{attrs: %{"slug" => slug}}) when is_binary(slug) and slug != "", do: slug
+  defp source_slug(_item), do: nil
 
   defp convert(state, %Item{content: [_ | _] = content} = item),
     do: state |> convert_pieces(item, content, {[], []}) |> converted(item)

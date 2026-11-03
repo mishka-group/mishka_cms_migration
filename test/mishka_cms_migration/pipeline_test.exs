@@ -604,6 +604,66 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert parent_name(collections(site), "Guides") == "News"
     end
 
+    test "under a parent an admin left out is skipped with it, however deep, in the dry run and the import",
+         %{site: site, admin: admin} do
+      rows = [
+        category(4, "Elixir", 3),
+        category(3, "Guides", 2),
+        category(6, "Phoenix", 3),
+        category(2, "News"),
+        category(5, "Releases")
+      ]
+
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      for id <- ["2", "6"], do: leave_out!(site, admin, id)
+
+      run = dry_run!(run, admin)
+
+      assert outcomes(run) == %{
+               "2" => {:skipped, "left_out_by_admin"},
+               "3" => {:skipped, "parent_left_out"},
+               "4" => {:skipped, "parent_left_out"},
+               "6" => {:skipped, "left_out_by_admin"},
+               "5" => {:created, nil}
+             }
+
+      run = import!(run, admin)
+
+      assert %{"3" => {:skipped, "parent_left_out"}, "4" => {:skipped, "parent_left_out"}} =
+               outcomes(run)
+
+      assert Map.keys(collections(site)) == ["Releases"]
+    end
+
+    test "listed before the parent an admin left out follows it too, and keeps its CMS record", %{
+      site: site,
+      admin: admin
+    } do
+      migrate!(site, admin, %{
+        "category" => [category(2, "News"), category(3, "Guides", 2), category(4, "Elixir", 3)]
+      })
+
+      written = Map.new(collections(site), fn {name, c} -> {name, {c.id, c.description}} end)
+      leave_out!(site, admin, "2")
+
+      changed = [
+        Map.put(category(4, "Elixir", 3), "description", "changed at the source"),
+        category(3, "Guides", 2),
+        category(2, "News")
+      ]
+
+      run = migrate!(site, admin, %{"category" => changed})
+
+      assert outcomes(run) == %{
+               "2" => {:skipped, "left_out_by_admin"},
+               "3" => {:skipped, "parent_left_out"},
+               "4" => {:skipped, "parent_left_out"}
+             }
+
+      assert Map.new(collections(site), fn {name, c} -> {name, {c.id, c.description}} end) ==
+               written
+    end
+
     test "whose parent the source never lists, or that is its own parent, is settled after the kind",
          %{site: site, admin: admin} do
       rows = [category(3, "Guides", 99), category(4, "Loop", 4), category(2, "News")]

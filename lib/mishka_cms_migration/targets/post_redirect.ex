@@ -26,8 +26,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       * `"blog"` (the default) — a rule is written for each item, except:
         * one the source gives no old address (`"from"` is `nil`, such as a draft's) — skipped as
           `"no_old_address"`;
-        * in an import, one whose post has no Blog post — it failed or was never written — skipped
-          as `"post_missing"`;
+        * in an import, one whose post has no Blog post — it failed, was never written or an admin
+          left it out — skipped as `"post_missing"`;
         * in an import, one whose old address is the post's Blog address already — skipped as
           `"same_address"`.
 

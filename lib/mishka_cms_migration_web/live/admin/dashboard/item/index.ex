@@ -46,6 +46,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     :source_kind,
     :source_id,
     :title,
+    :source_slug,
     :source_modified_at,
     :content_hash,
     :target_resource,

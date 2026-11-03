@@ -23,12 +23,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`MishkaCmsMigration.MigrationRun`'s `:record_progress`: the kind and the counts so far), and the
   run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`.
 
-  An item to write that sits under another of its kind (`MishkaCmsMigration.Source.Item`'s
-  `parent`) waits until that parent is settled, on the same page or a later one, whichever the
-  source lists first, and is settled right after it, so the parent's CMS record is there for the
-  target to point at. Its children wait in turn, so a tree is written from the top down. An item
-  whose parent the kind never lists, or one in a loop of parents, is settled once the kind's last
-  page is walked. An item left as it is (unchanged, or kept for an admin's edit) never waits.
+  An item that sits under another of its kind (`MishkaCmsMigration.Source.Item`'s `parent`) waits
+  until that parent is settled, on the same page or a later one, whichever the source lists first,
+  and is settled right after it, so the parent's CMS record is there for the target to point at.
+  Its children wait in turn, so a tree is settled from the top down. An item whose parent the kind
+  never lists, or one in a loop of parents, is settled once the kind's last page is walked.
+
+  A parent an admin left out takes its children with it: an item whose parent was settled as
+  `"left_out_by_admin"` or `"parent_left_out"` is skipped as `"parent_left_out"`, in a dry run and
+  in an import, however deep it sits and whatever its own plan was, unless the admin chose for the
+  item itself. Its CMS record, if an earlier import wrote one, is kept.
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
@@ -177,6 +181,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
         cursors: %{},
         source_ids: %{},
         settled: %{},
+        left_out: %{},
         waiting: %{},
         pages: 0,
         listed: 0
@@ -240,20 +245,38 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp place(state, _plans, built, {report, walk}),
     do: {Report.add(report, settle(state, built)), walk}
 
-  defp hold(_state, {%Item{parent: parent}, {outcome, _target, _record}} = held, {report, walk})
-       when outcome in [:created, :updated] and is_binary(parent) and
-              not is_map_key(walk.settled, parent),
+  defp hold(_state, {%Item{parent: parent}, _plan} = held, {report, walk})
+       when is_binary(parent) and not is_map_key(walk.settled, parent),
        do: {report, %{walk | waiting: Map.update(walk.waiting, parent, [held], &(&1 ++ [held]))}}
 
+  defp hold(state, {%Item{parent: parent} = item, plan}, {_report, walk} = placed)
+       when is_map_key(walk.left_out, parent),
+       do: settle_tree(state, {item, under_left_out(plan)}, placed)
+
   defp hold(state, held, placed), do: settle_tree(state, held, placed)
+
+  defp under_left_out({:skipped, "left_out_by_admin"} = plan), do: plan
+  defp under_left_out(_plan), do: {:skipped, "parent_left_out"}
 
   defp settle_tree(state, {item, plan}, {report, walk}) do
     report = Report.add(report, settled(state, item, plan))
     {children, waiting} = Map.pop(walk.waiting, item.source_id, [])
-    walk = %{walk | settled: Map.put(walk.settled, item.source_id, true), waiting: waiting}
+
+    walk = %{
+      walk
+      | settled: Map.put(walk.settled, item.source_id, true),
+        left_out: left_out(walk.left_out, item, plan),
+        waiting: waiting
+    }
 
     Enum.reduce(children, {report, walk}, &hold(state, &1, &2))
   end
+
+  defp left_out(left_out, item, {:skipped, reason})
+       when reason in ["left_out_by_admin", "parent_left_out"],
+       do: Map.put(left_out, item.source_id, true)
+
+  defp left_out(left_out, _item, _plan), do: left_out
 
   defp unheld(_state, %{waiting: waiting}, report) when map_size(waiting) == 0, do: report
 

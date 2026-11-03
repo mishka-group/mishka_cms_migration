@@ -85,6 +85,10 @@ defmodule MishkaCmsMigration do
         action: :by_sources,
         args: [:source_host, :source_kind, :source_ids]
 
+      define :left_out_items_by_slugs,
+        action: :left_out_by_slugs,
+        args: [:source_host, :source_kind, :source_slugs]
+
       define :record_item, action: :record
       define :record_item_outcome, action: :record_outcome
       define :record_item_plan, action: :record_plan

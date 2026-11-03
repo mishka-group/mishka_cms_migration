@@ -7,12 +7,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   What the migration remembers about one item of a source on a site: what the last dry run would
   do with it (`plan`, `plan_reason`), the CMS record the last import wrote (`target_resource`,
   `target_id`), when that record last changed as the import left it (`target_updated_at`), what the
-  source said about the item then (`title`, `source_modified_at`, `content_hash`, and the fields the
-  CMS has no home for, `extra`), and what the last import that met it did (`outcome`, `reason`,
-  `run_id`). `outcome` is `nil` for an item no import has met yet, so a run's counts
-  (`MishkaCmsMigration.MigrationRun`'s `created_count` and the rest) count what its import did
-  alone. The item's content and its other fields, such as a post's slug, status and author, are
-  not kept: every run reads them from the source again.
+  source said about the item then (`title`, `source_slug`, `source_modified_at`, `content_hash`, and
+  the fields the CMS has no home for, `extra`), and what the last import that met it did
+  (`outcome`, `reason`, `run_id`). `outcome` is `nil` for an item no import has met yet, so a run's
+  counts (`MishkaCmsMigration.MigrationRun`'s `created_count` and the rest) count what its import
+  did alone. The item's content and its other fields, such as a post's status and author, are not
+  kept: every run reads them from the source again.
 
   An item is one per site, source host, kind and source id (`:unique_source_item`). That is what
   makes running again safe: a second run finds the record the first one wrote and updates it, leaves
@@ -41,6 +41,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   changed, and leaves the CMS record an earlier import wrote for it as it is, never deleting it.
   `:bring_back` clears it, so the next run plans the item again. Each makes that one change. The
   master actions (`:master_leave_out`, `:master_bring_back`) do the same on any site.
+
+  A left-out item takes what hangs on it along (`MishkaCmsMigration.Workers.Helpers.Pipeline`): the
+  items under it in the source, such as a category's categories, a page's pages and a comment's
+  replies, are skipped as `"parent_left_out"`; a post is written without a left-out category, tag
+  or author; a left-out post's redirect and comments are skipped as `"post_missing"`; and the links
+  other posts have to it keep their old address, found by its `source_slug`
+  (`:left_out_by_slugs`).
 
   A choice takes the same permission and the same site as reading the items, and is refused while
   one of the site's runs is dry running or importing
@@ -96,6 +103,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   @written [
     :run_id,
     :title,
+    :source_slug,
     :source_modified_at,
     :content_hash,
     :target_resource,
@@ -127,6 +135,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     field :source_id, :string, derives: "sanitize(trim) validate(string, not_empty, max_len=255)"
 
     field :title, :string,
+      derives: "sanitize(trim, no_control) validate(optional=[string, max_len=1000])"
+
+    field :source_slug, :string,
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=1000])"
 
     field :reason, :string,
@@ -477,6 +488,19 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The items of a source host and kind with any of the given source ids"
     end
 
+    read :left_out_by_slugs do
+      argument :source_host, :string, allow_nil?: false
+      argument :source_kind, :string, allow_nil?: false
+      argument :source_slugs, {:array, :string}, allow_nil?: false
+
+      filter expr(
+               left_out and source_host == ^arg(:source_host) and
+                 source_kind == ^arg(:source_kind) and source_slug in ^arg(:source_slugs)
+             )
+
+      description "The items of a source host and kind an admin left out, with any of the given slugs"
+    end
+
     create :record do
       accept @source ++ @written
       upsert? true
@@ -489,10 +513,10 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     create :record_outcome do
-      accept @source ++ [:run_id, :title, :outcome, :reason]
+      accept @source ++ [:run_id, :title, :source_slug, :outcome, :reason]
       upsert? true
       upsert_identity :unique_source_item
-      upsert_fields [:run_id, :title, :outcome, :reason, :updated_at]
+      upsert_fields [:run_id, :title, :source_slug, :outcome, :reason, :updated_at]
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
@@ -550,10 +574,10 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     create :record_plan do
-      accept @source ++ [:title, :plan, :plan_reason]
+      accept @source ++ [:title, :source_slug, :plan, :plan_reason]
       upsert? true
       upsert_identity :unique_source_item
-      upsert_fields [:title, :plan, :plan_reason, :updated_at]
+      upsert_fields [:title, :source_slug, :plan, :plan_reason, :updated_at]
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
@@ -625,6 +649,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       public? true
       constraints max_length: 1000
       description "What the source calls the item (Source.Item's title), as of the last write"
+    end
+
+    attribute :source_slug, :string do
+      allow_nil? true
+      public? true
+      constraints max_length: 1000
+
+      description "The item's slug at the source (Source.Item's attrs slug), as of the last run that met it"
     end
 
     attribute :source_modified_at, :utc_datetime_usec do

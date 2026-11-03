@@ -43,7 +43,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     Its `"categories"` and `"tags"` are the Blog categories and tags the same run, or an earlier
     one, wrote for those ids (`MishkaCmsMigration.Targets.BlogCollection`,
     `MishkaCmsMigration.Targets.BlogTag`), read from the items they were recorded as; one that was
-    never written is left out, and the post is still written.
+    never written is left out, and the post is still written. So is one an admin left out on the
+    Items page (`MishkaCmsMigration.MigrationItem`'s `left_out`): the post is written without it,
+    and so without an author an admin left out.
 
     ## Links to other posts
 
@@ -57,8 +59,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     points at it too. Its `"pages"` name the links of its content that point at a page of the
     source, and each points at the path that page is written at instead, keeping its `?query` and
     `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/2`): `http://old.example/contact/` is
-    `/contact`. Any other link is kept as it is: a category, a file, an outside site, or a post or
-    page the source no longer has.
+    `/contact`. Any other link is kept as it is: a category, a file, an outside site, a post or
+    page the source no longer has, or a post an admin left out, found by the slug its item recorded
+    (`MishkaCmsMigration.MigrationItem`'s `source_slug`), which keeps its old address.
 
     ## Its pictures and files
 
@@ -188,6 +191,13 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp excerpt(excerpt), do: excerpt
 
     defp relinked(html, links, context) when is_map(links) and map_size(links) > 0,
+      do: links |> Map.drop(left_out_links(links, context)) |> relinked_to(html, context)
+
+    defp relinked(html, _no_links, _context), do: html
+
+    defp relinked_to(links, html, _context) when map_size(links) == 0, do: html
+
+    defp relinked_to(links, html, context),
       do:
         html
         |> LazyHTML.from_fragment()
@@ -195,7 +205,19 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         |> LazyHTML.Tree.postwalk(&relink(&1, links, context))
         |> LazyHTML.Tree.to_html()
 
-    defp relinked(html, _no_links, _context), do: html
+    defp left_out_links(links, context) do
+      left_out =
+        context.source_host
+        |> MishkaCmsMigration.left_out_items_by_slugs!(
+          "post",
+          links |> Map.values() |> Enum.uniq(),
+          actor: context.actor,
+          tenant: context.site_id
+        )
+        |> MapSet.new(& &1.source_slug)
+
+      for {href, slug} <- links, MapSet.member?(left_out, slug), do: href
+    end
 
     defp relink({"a", attributes, children}, links, context),
       do: {"a", Enum.map(attributes, &href(&1, links, context)), children}
@@ -230,7 +252,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
         |> Enum.flat_map(&target_id/1)
 
-    defp target_id(%{target_id: id}) when is_binary(id), do: [id]
-    defp target_id(_never_written), do: []
+    defp target_id(%{target_id: id, left_out: false}) when is_binary(id), do: [id]
+    defp target_id(_never_written_or_left_out), do: []
   end
 end

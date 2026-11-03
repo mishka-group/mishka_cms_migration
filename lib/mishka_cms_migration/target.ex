@@ -78,7 +78,8 @@ defmodule MishkaCmsMigration.Target do
         do: %{name: item.title, slug: item.attrs["slug"], parent_collection_id: context.parent_id}
 
   An item whose parent has no CMS record is not written; it is skipped as `"parent_missing"`
-  (`MishkaCmsMigration.Workers.Helpers.Writer`).
+  (`MishkaCmsMigration.Workers.Helpers.Writer`). One whose parent an admin left out is skipped as
+  `"parent_left_out"`, in a dry run too (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
 
   ## A create and an update
 

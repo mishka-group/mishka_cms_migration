@@ -22,7 +22,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsCore.PlainText
   alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
   alias MishkaCmsCore.Settings
-  alias MishkaCmsMigration.Events
+  alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag, PostRedirect}
@@ -1473,6 +1473,69 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert outcomes(run, "comment")["2"] == {:failed, "forbidden"}
       assert comments(site) == %{}
+    end
+  end
+
+  describe "what an admin left out" do
+    @leavers @people ++ ["admin:dashboard:runtime:redirect", "admin:dashboard:blog:comment"]
+
+    setup %{site: site}, do: %{admin: migration_admin!(site, @leavers)}
+
+    defp leave_out!(site, admin, kind, title),
+      do:
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == kind and &1.title == title))
+        |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
+
+    defp categories_of(post), do: post.tenant_collections |> Enum.map(& &1.name) |> Enum.sort()
+
+    test "a category takes the categories under it, and its posts are written without them", %{
+      site: site,
+      admin: admin
+    } do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      leave_out!(site, admin, "category", "News")
+      run = import!(run, admin)
+
+      assert %{
+               "2" => {:skipped, "left_out_by_admin"},
+               "3" => {:skipped, "parent_left_out"},
+               "4" => {:skipped, "parent_left_out"},
+               "5" => {:created, nil}
+             } = outcomes(run, "category")
+
+      collections = blog(Collection, site)
+      refute Enum.any?(["News", "Releases", "Announcements"], &Map.has_key?(collections, &1))
+
+      welcome = posts(site)["Welcome to the Mishka Test Blog"]
+      assert categories_of(welcome) == []
+      assert {:created, _note} = outcomes(run, "post")["32"]
+    end
+
+    test "a post is not written, its redirect and comments are left out for it, and links to it keep their old address",
+         %{site: site, admin: admin} do
+      members!(site)
+
+      run = site |> wordpress_run!(admin, %{comments: true}) |> dry_run!(admin)
+      leave_out!(site, admin, "post", "Welcome to the Mishka Test Blog")
+      run = import!(run, admin)
+      posts = posts(site)
+
+      refute Map.has_key?(posts, "Welcome to the Mishka Test Blog")
+      assert outcomes(run, "post")["32"] == {:skipped, "left_out_by_admin"}
+      assert outcomes(run, "post_redirect")["32"] == {:skipped, "post_missing"}
+      assert outcomes(run, "comment")["13"] == {:skipped, "post_missing"}
+
+      hrefs =
+        posts["Linking between posts and media"]
+        |> content()
+        |> LazyHTML.query("a")
+        |> LazyHTML.attribute("href")
+
+      refute "/blog/welcome-to-the-mishka-test-blog" in hrefs
+      assert "http://localhost:8089/2026/01/welcome-to-the-mishka-test-blog/" in hrefs
+      assert Enum.frequencies(hrefs)["/blog/gutenberg-all-core-blocks"] == 2
     end
   end
 end

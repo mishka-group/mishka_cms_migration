@@ -10,8 +10,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.Written do
   (`MishkaCmsMigration.MigrationItem`), and the records they were written to by their ids, as the
   admin running the job (`MishkaCmsMigration.Targets.Helpers.Read`).
 
-  An item that was never written, or was skipped or failed, is left out, and so is one whose record
-  the CMS no longer has or the admin may not read.
+  An item that was never written, or was skipped or failed, is left out, and so is one an admin left
+  out (its record, written by an earlier import, is not pointed at) and one whose record the CMS no
+  longer has or the admin may not read.
   """
 
   require Ash.Query
@@ -30,7 +31,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.Written do
         actor: context.actor,
         tenant: context.site_id
       )
-      |> Enum.filter(&is_binary(&1.target_id))
+      |> Enum.filter(&(is_binary(&1.target_id) and not &1.left_out))
 
     records = written |> Enum.map(& &1.target_id) |> records(resource, context)
 
