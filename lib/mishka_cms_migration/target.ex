@@ -98,7 +98,10 @@ defmodule MishkaCmsMigration.Target do
   in `prepare/3`. It is handed the item, the context `attrs/2` gets and `write`, the item's write and
   its record in one transaction, and answers what `write.(context)` answers, after putting what it
   fetched in the context's `prepared` for `attrs/2` to read, or `{:skipped, reason}` or
-  `{:error, reason}` without writing: the item is then skipped or failed with `reason`. It runs in
+  `{:error, reason}` without writing: the item is then skipped or failed with `reason`. It may
+  answer `{:undecided, conflict}` too, for a conflict only the write can tell, such as a player an
+  admin who may not allow it would write: the item waits for an admin's decision, as one
+  `existing/2` answers so does. It runs in
   an import only, after the item is converted and offered to the plugins, outside the write's
   transaction, so a slow source holds no database transaction open, and it cleans up what it
   fetched once `write` answers. `use` answers `write.(context)`.
@@ -252,11 +255,11 @@ defmodule MishkaCmsMigration.Target do
 
   @doc """
   Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
-  `{:skipped, reason}` or `{:error, reason}` without writing (see "What a write needs first"). `use`
-  answers `write.(context)`.
+  `{:skipped, reason}`, `{:undecided, conflict}` or `{:error, reason}` without writing (see "What a
+  write needs first"). `use` answers `write.(context)`.
   """
   @callback prepare(Item.t(), context(), (context() -> result)) ::
-              result | {:skipped, String.t()} | {:error, term()}
+              result | {:skipped, String.t()} | {:undecided, String.t()} | {:error, term()}
             when result: term()
 
   @doc false

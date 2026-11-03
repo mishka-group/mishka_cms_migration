@@ -546,6 +546,33 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert outcomes(run)["1"] == {:created, "frames_allowed"}
       assert Settings.get("security.frame_origins", [], site.id) == ["https://player.vimeo.com"]
     end
+
+    test "an admin who may not allow the player leaves the page for a decision, and Import without the player writes it without",
+         %{site: site, admin: admin} do
+      html =
+        ~s(<figure><iframe src="https://player.vimeo.com/video/76979871"></iframe></figure>) <>
+          ~s(<iframe src="https://maps.example.com/embed?q=1"></iframe>)
+
+      rows = [row(1, %{"content" => [%{"html" => html}]})]
+      run = fake_pages!(site, admin, rows)
+
+      assert outcomes(run)["1"] == {:undecided, "player_not_allowed"}
+      assert pages(site) == %{}
+
+      decide!(site, admin, "1", "keep")
+
+      assert outcomes(migrate!(site, admin, %{"page" => rows}))["1"] ==
+               {:skipped, "waits_for_admin"}
+
+      decide!(site, admin, "1", "import")
+      run = migrate!(site, admin, %{"page" => rows})
+
+      assert outcomes(run)["1"] == {:created, "player_left_out"}
+      assert [page] = Map.values(pages(site))
+      refute page.template =~ "player.vimeo.com"
+      assert page.template =~ "maps.example.com"
+      assert Settings.get("security.frame_origins", [], site.id) == []
+    end
   end
 
   describe "content" do

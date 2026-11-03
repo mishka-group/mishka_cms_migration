@@ -11,7 +11,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   email, the editor `shahryar@mishka.tools` in the seed's story, and under `"create"` of a new user.
 
   A second run sees an item WordPress changed when the item's hash is no longer the one the first
-  run recorded, so a test has WordPress change its items by changing the recorded hashes.
+  run recorded, so a test has WordPress change its items by changing the recorded hashes. The admin
+  may change the site's settings, so a post's YouTube or Vimeo player is allowed on the site,
+  except where a test takes that away.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -29,7 +31,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
-  @admin ["admin:dashboard:migration", "admin:dashboard:blog:post"]
+  @admin ["admin:dashboard:migration", "admin:dashboard:blog:post", "admin:dashboard:setting"]
   @people @admin ++ ["admin:dashboard:user"]
   @editor "shahryar@mishka.tools"
 
@@ -809,7 +811,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "42" => {:created, "draft_from_password"},
                "53" => {:created, "unconverted: acme/callout, core/latest-posts"},
                "34" =>
-                 {:created, "frames_blocked; unconverted: unknown_plugin_shortcode, pullbox"}
+                 {:created, "frames_allowed; unconverted: unknown_plugin_shortcode, pullbox"}
              } = outcomes
 
       assert posts(site) == %{}
@@ -1218,7 +1220,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     ]
 
     setup %{site: site},
-      do: %{admin: migration_admin!(site, @admin ++ ["admin:dashboard:setting"])}
+      do: %{admin: migration_admin!(site, @admin)}
 
     defp frame_origins(site) do
       Setting
@@ -1271,18 +1273,32 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                ]
     end
 
-    test "an admin who may not change the site's settings has the posts written with their players blocked, and says so",
-         %{site: site} do
-      admin = migration_admin!(site, @admin)
-      run = imported!(site, admin)
-      outcomes = outcomes(run, "post")
+    test "an admin who may not change the site's settings leaves the posts with a player for a decision, which the next runs follow",
+         %{site: site, admin: allowed} do
+      admin = migration_admin!(site, List.delete(@admin, "admin:dashboard:setting"))
+      outcomes = site |> imported!(admin) |> outcomes("post")
 
-      for id <- ["33", "34", "49"] do
-        assert {:created, _reason} = outcomes[id]
-        assert "frames_blocked" in reasons(outcomes[id])
-      end
+      for id <- ["33", "34", "49"],
+          do: assert(outcomes[id] == {:undecided, "player_not_allowed"})
 
+      decide!(site, admin, [{"post", "33"}], "keep")
+      decide!(site, admin, [{"post", "49"}], "import")
+      outcomes = site |> imported!(admin) |> outcomes("post")
+
+      assert outcomes["33"] == {:skipped, "waits_for_admin"}
+      assert outcomes["34"] == {:undecided, "player_not_allowed"}
+      assert "player_left_out" in reasons(outcomes["49"])
       assert frame_origins(site) == []
+
+      for post <- Map.values(posts(site)),
+          src <- post |> content() |> LazyHTML.query("iframe") |> LazyHTML.attribute("src"),
+          do: refute(src =~ ~r{youtube|vimeo})
+
+      outcomes = site |> imported!(allowed) |> outcomes("post")
+
+      assert {:created, _reason} = outcomes["33"]
+      assert "frames_allowed" in reasons(outcomes["33"])
+      assert [_origins] = frame_origins(site)
     end
   end
 

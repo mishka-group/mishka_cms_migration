@@ -105,6 +105,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp settled({:skipped, reason}, state, item, _outcome),
     do: entry(state, item, :skipped, reason)
 
+  defp settled({:undecided, conflict}, state, item, _outcome),
+    do: entry(state, item, :undecided, conflict)
+
   defp settled({:error, error}, state, item, _outcome),
     do: entry(state, item, :failed, Report.reason(error))
 

@@ -1012,8 +1012,21 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 2, failed: 0, undecided: 0}
 
+      assert counts(run, "post") == %{
+               created: length(recorded("posts")) - 3,
+               updated: 0,
+               skipped: 0,
+               failed: 0,
+               undecided: 3
+             }
+
+      assert for(
+               %{kind: "post", outcome: :undecided} = entry <- run.report.entries,
+               do: entry.reason
+             ) == List.duplicate("player_not_allowed", 3)
+
       for %{kind: kind} = counts <- run.report.kinds,
-          kind not in ["post_redirect", "media", "setting", "menu"] do
+          kind not in ["post_redirect", "media", "setting", "menu", "post"] do
         planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, MishkaCmsMigration.Report.outcomes()) ==

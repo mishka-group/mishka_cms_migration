@@ -890,7 +890,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 89, "skipped" => 26}
+      assert outcomes(view) == %{"created" => 86, "skipped" => 26, "undecided" => 3}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
@@ -922,7 +922,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 89, "skipped" => 26}
+               %{"created" => 86, "skipped" => 26, "undecided" => 3}
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-outcome"][data-outcome="undecided"]|,
+               "3 need your decision"
+             )
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
@@ -945,7 +951,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
 
-      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"page", 11}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -953,6 +959,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
         refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
       end
+
+      post = ~s|[data-role="run-details-kind"][data-kind="post"]|
+
+      assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", post) ==
+               %{"created" => 18, "undecided" => 3}
+
+      assert has_element?(
+               view,
+               ~s|#{post} [data-role="run-details-kind-reason"][data-outcome="undecided"]|,
+               "Sites pages may embed"
+             )
 
       media = ~s|[data-role="run-details-kind"][data-kind="media"]|
 

@@ -1946,12 +1946,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("frames_allowed"),
     do: dgettext("mishka_gervaz", "Its YouTube or Vimeo player is allowed on the site")
 
-  defp said("frames_blocked"),
+  defp said("player_not_allowed"),
     do:
       dgettext(
         "mishka_gervaz",
-        "Its YouTube or Vimeo player stays blocked until an admin allows it in Settings"
+        "Its YouTube or Vimeo player needs Sites pages may embed, which you may not change"
       )
+
+  defp said("waits_for_admin"),
+    do: dgettext("mishka_gervaz", "Waits for an admin who may allow its player, as you decided")
+
+  defp said("player_left_out"),
+    do: dgettext("mishka_gervaz", "Imported without its YouTube or Vimeo player, as you decided")
 
   defp said("site_own_kept"),
     do: dgettext("mishka_gervaz", "The site already has its own, so it is kept")

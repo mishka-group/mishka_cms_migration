@@ -89,10 +89,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
     allowed on the site before the post is written, in an import only, as the admin
     (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
-    the dry run too. For an admin who may not change the site's settings the post is written with
-    its player blocked until an admin allows it, and the report says so (`"frames_blocked"`). The
-    Blog keeps an `<iframe>`'s address, title and size, and leaves out
-    its other attributes, such as `allowfullscreen`.
+    the dry run too. For an admin who may not change the site's settings the post waits for an
+    admin's decision (`"player_not_allowed"`): Wait for an admin keeps it for a run by one who may,
+    and Import without the player writes it with that player left out (`"player_left_out"`). The
+    Blog keeps an `<iframe>`'s address, title and size, and leaves out its other attributes, such
+    as `allowfullscreen`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).
@@ -123,6 +124,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         content:
           item
           |> Item.html()
+          |> Frames.playable(context)
           |> relinked(item.attrs["links"], context)
           |> CmsPage.relinked(item.attrs["pages"])
           |> CmsMedia.relinked(item.attrs["media"], context),
@@ -154,8 +156,18 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
+    def existing(items, context),
+      do:
+        for(
+          item <- items,
+          found = Frames.waiting(item, context),
+          into: %{},
+          do: {item.source_id, found}
+        )
+
+    @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
-      do: with(:ok <- item |> Item.html() |> Frames.call(context), do: write.(context))
+      do: with(:ok <- Frames.call(item, context), do: write.(context))
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
@@ -163,7 +175,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         item |> Status.call() |> drafted(),
         authored(item, context),
         pictured(item, context),
-        item |> Item.html() |> Frames.note(context)
+        Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)
       |> noted()

@@ -40,6 +40,8 @@ defmodule MishkaCmsMigration.Report do
       deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
     * `"waits_for_blog"` — the Blog is not installed, and an admin decided the item waits for it.
+    * `"waits_for_admin"` — the admin who ran the import may not allow the item's video player on
+      the site, and an admin decided it waits for one who may.
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
       never written), so it is left out until a run writes the parent.
@@ -62,7 +64,10 @@ defmodule MishkaCmsMigration.Report do
     * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
       its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
     * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed
-      (`MishkaCmsMigration.Application.blog_kinds/0`).
+      (`MishkaCmsMigration.Application.blog_kinds/0`);
+    * `"player_not_allowed"` — the item's content frames a YouTube or Vimeo player the site does
+      not allow, and the admin who ran it may not allow it
+      (`MishkaCmsMigration.Targets.Helpers.Frames`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
