@@ -12,7 +12,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   use AshOban.Test, repo: MishkaCmsMigration.Repo
 
   import Phoenix.LiveViewTest
-  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2, without_blog!: 0]
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.States.SiteState
@@ -413,6 +413,19 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                view,
                "#migration-run-form-modal",
                "needs the Blog to serve posts there"
+             )
+    end
+
+    test "asks for the pages alone on a node without the Blog", %{conn: conn, site: site} do
+      without_blog!()
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      assert Map.keys(choices(view)) == ["pages"]
+
+      refute has_element?(
+               view,
+               ~s|#migration-run-form-modal input[name="form[options][comments]"]|
              )
     end
 

@@ -143,7 +143,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   @choices %{
     "site_has_own" => ["keep", "import"],
     "header_has_links" => ["keep", "import"],
-    "slug_taken" => ["keep", "import"]
+    "slug_taken" => ["keep", "import"],
+    "blog_missing" => ["keep", "leave_out"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1295,6 +1296,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("slug_taken", "import"),
     do: dgettext("mishka_gervaz", "Import as new with another slug")
+
+  defp choice_word("blog_missing", "keep"), do: dgettext("mishka_gervaz", "Wait for the Blog")
+  defp choice_word("blog_missing", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
 
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 

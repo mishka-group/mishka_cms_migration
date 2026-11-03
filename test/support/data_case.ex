@@ -17,8 +17,9 @@ defmodule MishkaCmsMigration.DataCase do
   sites, users and runtime records of `MishkaCmsCore.Test.Factory`,
   `MishkaCmsCore.Test.VersionHelpers` — and this case adds this extension's fixtures
   (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
-  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), the items an
-  import recorded (`imported_items/1`), and the SQL a block ran (`queries_while/1`).
+  for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), a node without
+  the Blog (`without_blog!/0`, `with_blog!/0`), the items an import recorded (`imported_items/1`),
+  and the SQL a block ran (`queries_while/1`).
 
   ## How the suite boots
 
@@ -82,6 +83,33 @@ defmodule MishkaCmsMigration.DataCase do
     register(module, event)
     on_exit(fn -> MishkaInstaller.Event.Event.unregister(:name, module, false) end)
   end
+
+  @doc """
+  Stops every Blog target in the installer for the rest of the test, so the node reads as one
+  without the Blog, which `MishkaCmsMigration.Application.targets/0` leaves them out of, and starts
+  them again when the test exits. `with_blog!/0` starts them again sooner.
+
+      setup do: without_blog!()
+  """
+  def without_blog! do
+    for target <- blog_targets(),
+        do: {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, target, false)
+
+    on_exit(&with_blog!/0)
+  end
+
+  @doc "Starts the Blog targets `without_blog!/0` stopped again, as a node the Blog was installed on."
+  def with_blog! do
+    for target <- blog_targets(), do: MishkaInstaller.Event.Event.enable(target, false)
+    :ok
+  end
+
+  defp blog_targets,
+    do:
+      Enum.filter(
+        MishkaCmsMigration.Application.targets(),
+        &(&1.id() in MishkaCmsMigration.Application.blog_kinds())
+      )
 
   defp register(module, event) do
     {:ok, _registered} =

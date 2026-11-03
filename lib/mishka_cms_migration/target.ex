@@ -39,7 +39,8 @@ defmodule MishkaCmsMigration.Target do
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
   this extension's; no list here names it. Which target writes a kind is read from
   mishka_installer's registry (`MishkaCmsMigration.Source.installed/2`): a target an operator stops
-  in the installer writes nothing, and its kind is skipped as `"no_target"`.
+  in the installer writes nothing, and its kind is skipped as `"no_target"`, or, for a kind the
+  Blog writes, waits for it (`"blog_missing"`, `MishkaCmsMigration.Application.blog_kinds/0`).
 
   ## What the resource needs
 

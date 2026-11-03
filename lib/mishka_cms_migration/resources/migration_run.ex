@@ -169,7 +169,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   it. Under them,
   Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
   the post addresses, each starting at the default the `sub_field` gives it, and a toggle for the
-  comments, off; its description says why a post's old address is redirected rather than kept. For
+  comments, off; its description says why a post's old address is redirected rather than kept. The
+  authors, post addresses and comments are the Blog's, asked only while the Blog target each is for
+  is installed (`run_choices/1`). For
   a master the form asks for the site the content moves to as well (`:master_create`). Its button,
   Check and save, creates the run, which connects to the source first, or reads its file
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
@@ -215,6 +217,42 @@ defmodule MishkaCmsMigration.MigrationRun do
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
+  @run_choices [
+    [
+      name: :authors,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Authors"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
+        {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
+      ]
+    ],
+    [
+      name: :pages,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Pages"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
+        {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
+      ]
+    ],
+    [
+      name: :post_address,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Post addresses"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
+        {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"), "blog_without_redirects"}
+      ]
+    ],
+    [
+      name: :comments,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Bring the comments too")
+    ]
+  ]
+
+  @choice_kinds %{authors: "user", post_address: "post_redirect", comments: "comment"}
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
@@ -692,41 +730,7 @@ defmodule MishkaCmsMigration.MigrationRun do
         field :options, :key_map do
           default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
 
-          options [
-            [
-              name: :authors,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Authors"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
-                {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
-              ]
-            ],
-            [
-              name: :pages,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Pages"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
-                {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
-              ]
-            ],
-            [
-              name: :post_address,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Post addresses"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
-                {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"),
-                 "blog_without_redirects"}
-              ]
-            ],
-            [
-              name: :comments,
-              type: :toggle,
-              label: dgettext_noop("mishka_gervaz", "Bring the comments too")
-            ]
-          ]
+          options fn state -> MishkaCmsMigration.MigrationRun.run_choices(state) end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Choices for this run") end
@@ -1681,6 +1685,19 @@ defmodule MishkaCmsMigration.MigrationRun do
       |> Enum.uniq()
       |> Enum.map(&{kind_label(&1), &1})
 
+  @doc """
+  The New import form's choices for the run (Choices for this run's keys): the authors, pages and
+  post addresses selects and the comments toggle, each Blog one only while the Blog target it is
+  for is installed (`MishkaCmsMigration.Target.fetch/1`): Authors for `"user"`, Post addresses for
+  `"post_redirect"` and the comments for `"comment"`. A node without the Blog asks for the pages
+  alone.
+  """
+  @spec run_choices(map()) :: [keyword()]
+  def run_choices(_state), do: Enum.filter(@run_choices, &offered?(@choice_kinds[&1[:name]]))
+
+  defp offered?(nil), do: true
+  defp offered?(kind), do: match?({:ok, _target}, MishkaCmsMigration.Target.fetch(kind))
+
   @doc "Every outcome as a `{word, outcome}` pair, in the order the report counts them."
   @spec outcome_options() :: [{String.t(), atom()}]
   def outcome_options, do: Enum.map(@outcomes, &{outcome_word(&1), &1})
@@ -1946,6 +1963,11 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("slug_taken"),
     do: dgettext("mishka_gervaz", "The site already has one at this address")
+
+  defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
+
+  defp said("waits_for_blog"),
+    do: dgettext("mishka_gervaz", "Waits for Mishka Blog, as you decided")
 
   defp said("another_slug"),
     do: dgettext("mishka_gervaz", "Imported as new beside the site's own, with another slug")

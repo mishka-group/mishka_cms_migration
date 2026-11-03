@@ -49,6 +49,8 @@ defmodule MishkaCmsMigration.Application do
     MishkaCmsMigration.Targets.PostRedirect
   ]
 
+  @blog_kinds ["user", "category", "tag", "post", "comment", "post_redirect"]
+
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
   @activity_sources [MishkaCmsMigration.Activity]
@@ -82,10 +84,20 @@ defmodule MishkaCmsMigration.Application do
   (`MishkaCmsMigration.Targets.PostRedirect`).
 
   Mishka Blog is an optional dependency, and each Blog target is defined only where it is loaded,
-  so on a node without it they are left out and their kinds are skipped as `"no_target"`.
+  so on a node without it they are left out, and the items of their kinds (`blog_kinds/0`) wait for
+  the Blog (`"blog_missing"`).
   """
   @spec targets() :: [module()]
   def targets, do: @core_targets ++ Enum.filter(@blog_targets, &Code.ensure_loaded?/1)
+
+  @doc """
+  The kinds the Blog targets write, known where the Blog is not loaded: an item of one of them whose
+  target is not installed waits for an admin's decision, Wait for the Blog or Leave out
+  (`"blog_missing"`, `MishkaCmsMigration.Workers.Helpers.Decision`), rather than being skipped as a
+  kind nothing imports.
+  """
+  @spec blog_kinds() :: [String.t()]
+  def blog_kinds, do: @blog_kinds
 
   @doc """
   Every mishka_installer plugin this extension ships, all of which `start/2` supervises. A plugin

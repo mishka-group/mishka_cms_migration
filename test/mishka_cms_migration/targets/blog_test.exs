@@ -25,7 +25,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
-  alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag, PostRedirect}
+  alias MishkaCmsMigration.Targets.{BlogTag, PostRedirect}
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
@@ -181,30 +181,62 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert blog(Tag, site) == %{}
       assert imported_items(site) == []
     end
+  end
 
-    test "skips them as no_target where the Blog targets are stopped", %{site: site, admin: admin} do
-      for target <- [BlogCollection, BlogTag] do
-        {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, target, false)
-        on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(target, false) end)
-      end
+  describe "a node without the Blog" do
+    setup do: without_blog!()
 
-      run = imported!(site, admin)
+    test "leaves every item the Blog would write waiting for it, in the dry run and the import, and writes none",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      for {kind, recording} <- [{"category", "categories"}, {"tag", "tags"}] do
-        assert counts(run, kind) ==
-                 %{
-                   created: 0,
-                   updated: 0,
-                   skipped: length(recorded(recording)),
-                   failed: 0,
-                   undecided: 0
-                 }
+      for kind <- ["user", "category", "tag", "post", "post_redirect"],
+          do:
+            assert(
+              run |> outcomes(kind) |> Map.values() |> Enum.uniq() == [
+                {:undecided, "blog_missing"}
+              ]
+            )
 
-        assert run |> outcomes(kind) |> Map.values() |> Enum.uniq() == [{:skipped, "no_target"}]
-      end
+      run = import!(run, admin)
+
+      assert counts(run, "category").undecided == length(recorded("categories"))
+
+      assert run |> outcomes("post") |> Map.values() |> Enum.uniq() == [
+               {:undecided, "blog_missing"}
+             ]
 
       assert blog(Collection, site) == %{}
       assert blog(Tag, site) == %{}
+      assert posts(site) == %{}
+    end
+
+    test "Wait for the Blog keeps an item until the Blog is there, and Leave out leaves it out",
+         %{
+           site: site,
+           admin: admin
+         } do
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"category", "6"}], "keep")
+      decide!(site, admin, [{"tag", "10"}], "leave_out")
+
+      run = imported!(site, admin)
+
+      assert %{"6" => {:skipped, "waits_for_blog"}} = outcomes(run, "category")
+      assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
+
+      assert run |> outcomes("tag") |> Map.delete("10") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+
+      assert blog(Collection, site) == %{}
+
+      with_blog!()
+      run = imported!(site, admin)
+
+      assert %{"6" => {:created, nil}} = outcomes(run, "category")
+      assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
+      assert is_map_key(blog(Collection, site), "Elixir")
+      refute is_map_key(blog(Tag, site), "Elixir")
     end
   end
 

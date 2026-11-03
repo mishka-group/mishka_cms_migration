@@ -13,7 +13,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   use MishkaCmsMigration.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2, without_blog!: 0]
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0]
 
   alias MishkaCmsCore.Runtime.Languages
@@ -588,6 +588,22 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
         assert decision_choices(view) ==
                  ["Connect to the existing record", "Import as new with another slug"]
       end
+    end
+
+    test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
+         %{conn: conn, site: site, admin: admin} do
+      without_blog!()
+      second = second_source!(site, admin)
+      tag = second_item(site, "tag", "10")
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+
+      assert plan_of(view, tag) == "undecided"
+      row_action!(view, "decide", tag)
+      assert decision_choices(view) == ["Wait for the Blog", "Leave out"]
+      decide!(view, "leave_out")
+
+      assert %{left_out: true, decisions: %{}} = item!(tag)
+      assert plan_of(view, tag) == "left_out"
     end
 
     test "the picked rows are decided together, and one with nothing to decide is left as it is",

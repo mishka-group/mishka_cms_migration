@@ -40,7 +40,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   job, under the CMS's own policies; a read the CMS refuses fails the attempt, as an error of the
   walk does (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
 
-  An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`.
+  An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`,
+  unless it is a kind the Blog writes (`MishkaCmsMigration.Application.blog_kinds/0`) on a node
+  without the Blog: then it waits for an admin's decision, `{:undecided, "blog_missing"}`, until the
+  admin left it out (`{:skipped, "left_out_by_admin"}`) or decided to wait for the Blog
+  (`{:skipped, "waits_for_blog"}`), and a later run, once the Blog is there, plans it as any other.
 
   Items are found by source host as well as by kind and id, so several sources moved into one site
   never meet: the same id from two hosts is two items, each with its own CMS record.
@@ -54,6 +58,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
+
+  @blog_kinds MishkaCmsMigration.Application.blog_kinds()
 
   @typedoc "An admin's answers to the conflicts an item met, by conflict."
   @type decisions :: %{String.t() => String.t()}
@@ -75,6 +81,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   def call(state, kind, items), do: kind |> Target.fetch() |> plans(state, kind, items)
 
   defp plans({:ok, target}, state, kind, items), do: plans(state, target, kind, items)
+
+  defp plans({:error, :not_installed}, state, kind, items) when kind in @blog_kinds do
+    known = known(state, kind, items)
+    Map.new(items, &{&1.source_id, blog_missing(Map.get(known, &1.source_id))})
+  end
 
   defp plans({:error, :not_installed}, _state, _kind, items),
     do: Map.new(items, &{&1.source_id, {:skipped, "no_target"}})
@@ -159,6 +170,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     do: DateTime.compare(now, then) != :eq
 
   defp edited?(_record, _known), do: true
+
+  defp blog_missing(%{left_out: true}), do: {:skipped, "left_out_by_admin"}
+  defp blog_missing(%{decisions: %{"blog_missing" => "keep"}}), do: {:skipped, "waits_for_blog"}
+  defp blog_missing(_known), do: {:undecided, "blog_missing"}
 
   defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
   defp mapped(record, target), do: {:mapped, target, record}

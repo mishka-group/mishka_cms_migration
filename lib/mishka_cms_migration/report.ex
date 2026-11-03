@@ -39,6 +39,7 @@ defmodule MishkaCmsMigration.Report do
     * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays
       deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
+    * `"waits_for_blog"` — the Blog is not installed, and an admin decided the item waits for it.
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
       never written), so it is left out until a run writes the parent.
@@ -59,7 +60,9 @@ defmodule MishkaCmsMigration.Report do
     * `"header_has_links"` — the site layout's header already has links of its own, where the
       main menu goes (`MishkaCmsMigration.Targets.CmsLayout`);
     * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
-      its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`).
+      its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
+    * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed
+      (`MishkaCmsMigration.Application.blog_kinds/0`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.

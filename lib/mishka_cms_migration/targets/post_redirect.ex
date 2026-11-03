@@ -44,7 +44,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     rules an earlier run wrote.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
-    only then; on a site without the Blog its kind is skipped as `"no_target"`.
+    only then; on a node without the Blog its items wait for it (`"blog_missing"`).
     """
 
     use MishkaCmsMigration.Target,
