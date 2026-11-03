@@ -84,6 +84,16 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     robots, share image and a canonical address on another site. A share image that is the post's
     featured image is left to the featured image, which the Blog shows as the post's share image.
 
+    ## Its videos
+
+    A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
+    allowed on the site before the post is written, in an import only, as the admin
+    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
+    the dry run too. For an admin who may not change the site's settings the post is written with
+    its player blocked until an admin allows it, and the report says so (`"frames_blocked"`). The
+    Blog keeps an `<iframe>`'s address, title and size, and leaves out
+    its other attributes, such as `allowfullscreen`.
+
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
     """
@@ -98,7 +108,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, SeoTags, Status}
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, SeoTags, Status}
 
     @drafted ["pending", "private", "password"]
 
@@ -144,8 +154,17 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
+    def prepare(item, context, write),
+      do: with(:ok <- item |> Item.html() |> Frames.call(context), do: write.(context))
+
+    @impl MishkaCmsMigration.Target
     def note(item, context) do
-      [item |> Status.call() |> drafted(), authored(item, context), pictured(item, context)]
+      [
+        item |> Status.call() |> drafted(),
+        authored(item, context),
+        pictured(item, context),
+        item |> Item.html() |> Frames.note(context)
+      ]
       |> Enum.reject(&is_nil/1)
       |> noted()
     end

@@ -23,7 +23,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
 
     * `core/columns` and `core/media-text` — a `<div class="grid gap-6 md:grid-cols-N">`, one
       column per inner block, and `core/group` a `<div class="grid gap-6">`;
-    * `core/embed` — a `<figure>` with a link to its address;
+    * `core/embed` — a `<figure>` with the player of a YouTube or Vimeo video (below), or with a link
+      to its address for any other;
     * `core/html` — the author's markup as it is, classes kept, without its comments;
     * `core/shortcode` — its shortcodes, below;
     * `core/block`, a reusable block — the content of the reusable block it names, read from
@@ -46,17 +47,31 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
     * `[gallery ids="…"]` — a `<figure>` of a figure per image, each image read from WordPress
       (`/wp/v2/media`) and linked to its file (`link="file"`), to nothing (`link="none"`) or to its
       attachment page;
-    * `[embed]` — a `<figure>` with a link to the address it encloses;
+    * `[embed]` — a `<figure>` with the player of the YouTube or Vimeo video it encloses, or with a
+      link to any other address;
     * `[video src="…"]` — a `<video>` with its controls.
 
   Any other shortcode, and a gallery none of whose images WordPress answers, is a piece named by the
   shortcode (no namespace, so never mistaken for a block), with its attributes and its text as
   `raw`. A shortcode inside a block other than `core/shortcode` is left as text.
 
+  A YouTube or Vimeo address alone on its line, which WordPress embeds by itself (oEmbed), is the
+  video's player too; any other address on its line stays text.
+
   Images and links keep the addresses WordPress gave them. The links to the site's own posts are
   named in the item's `links`, the links to its pages in its `pages`, and the files of its media
   library they show or link to in its `media` (`MishkaCmsMigration.Sources.WordPress`), for the
   target to point them at where the posts, the pages and the files move.
+
+  ## Players
+
+  A YouTube video (`youtube.com/watch?v=`, `youtu.be/`, `/embed/`, `/shorts/`, `/live/`) is played
+  by `https://www.youtube-nocookie.com/embed/<id>`, which sets no cookie until it plays, and a
+  Vimeo video (`vimeo.com/<id>`, its unlisted `vimeo.com/<id>/<hash>`, a channel's, and
+  `player.vimeo.com/video/<id>`) by `https://player.vimeo.com/video/<id>`: an `<iframe>` with a
+  title, 560 by 315, lazily loaded and allowed to go full screen. An `<iframe>` the author wrote,
+  in a `core/html` block or in classic content, keeps its own address. The targets that write the
+  content allow the players' origins on the site (`MishkaCmsMigration.Targets.Helpers.Frames`).
   """
 
   @piece "mishka:piece"
@@ -69,6 +84,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
                  header hr iframe nav ol p pre section table ul video)
 
   @shortcode ~r/\[(\/?)([A-Za-z][\w-]*)((?:\s[^\[\]]*)?)\]/u
+  @own_line ~r/^[^\S\n]*https?:\/\/[^\s<>"]+[^\S\n]*$/m
+
+  @schemes ["http", "https"]
+  @youtube ~w(youtube.com www.youtube.com m.youtube.com youtube-nocookie.com www.youtube-nocookie.com)
+  @vimeo ~w(vimeo.com www.vimeo.com player.vimeo.com)
   @shortcode_attr ~r/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"']+))/u
   @blank_line ~r/\n[^\S\n]*\n/
 
@@ -115,7 +135,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   defp run([{:block, _name, _attrs, _inner, _raw} | _] = blocks, ctx),
     do: Enum.flat_map(blocks, &block(&1, ctx))
 
-  defp run(nodes, ctx), do: nodes |> shortcodes(ctx) |> paragraphs()
+  defp run(nodes, ctx),
+    do: nodes |> shortcodes(ctx) |> Enum.flat_map(&own_lines/1) |> paragraphs()
 
   defp inner(nodes, ctx), do: nodes |> blocks() |> Enum.flat_map(&inner_node(&1, ctx))
 
@@ -236,7 +257,79 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   defp source(text) when is_binary(text), do: text
   defp source(node), do: LazyHTML.Tree.to_html([node])
 
-  defp embed(url), do: {"figure", [], [{"a", [{"href", url}], [url]}]}
+  defp embed(url), do: url |> player() |> embedded(url)
+
+  defp embedded({title, src}, _url),
+    do:
+      {"figure", [],
+       [
+         {"iframe",
+          [
+            {"src", src},
+            {"title", title},
+            {"width", "560"},
+            {"height", "315"},
+            {"loading", "lazy"},
+            {"allowfullscreen", ""}
+          ], []}
+       ]}
+
+  defp embedded(nil, url), do: {"figure", [], [{"a", [{"href", url}], [url]}]}
+
+  defp player(url), do: url |> String.trim() |> URI.parse() |> player_of()
+
+  defp player_of(%URI{scheme: scheme}) when scheme not in @schemes, do: nil
+  defp player_of(%URI{host: "youtu.be", path: "/" <> id}), do: youtube(id)
+
+  defp player_of(%URI{host: host, path: "/watch", query: query})
+       when host in @youtube and is_binary(query),
+       do: query |> URI.decode_query() |> Map.get("v") |> youtube()
+
+  defp player_of(%URI{host: host, path: "/" <> path}) when host in @youtube,
+    do: path |> String.split("/") |> youtube_path()
+
+  defp player_of(%URI{host: host, path: "/" <> path}) when host in @vimeo,
+    do: path |> String.split("/", trim: true) |> Enum.drop_while(&(not digits?(&1))) |> vimeo()
+
+  defp player_of(_uri), do: nil
+
+  defp youtube_path([kind, id | _]) when kind in ["embed", "shorts", "live"], do: youtube(id)
+  defp youtube_path(_path), do: nil
+
+  defp youtube(id) when is_binary(id), do: youtube(id, Regex.match?(~r/\A[\w-]{11}\z/, id))
+  defp youtube(_none), do: nil
+
+  defp youtube(id, true),
+    do: {"YouTube video player", "https://www.youtube-nocookie.com/embed/" <> id}
+
+  defp youtube(_id, false), do: nil
+
+  defp vimeo([id | rest]),
+    do: {"Vimeo video player", "https://player.vimeo.com/video/" <> id <> unlisted(rest)}
+
+  defp vimeo([]), do: nil
+
+  defp unlisted([hash | _]), do: unlisted(hash, hex?(hash))
+  defp unlisted([]), do: ""
+
+  defp unlisted(hash, true), do: "?h=" <> hash
+  defp unlisted(_segment, false), do: ""
+
+  defp digits?(segment), do: segment =~ ~r/\A\d+\z/
+  defp hex?(segment), do: segment =~ ~r/\A[0-9a-f]+\z/
+
+  defp own_lines(text) when is_binary(text),
+    do:
+      @own_line
+      |> Regex.split(text, include_captures: true, trim: true)
+      |> Enum.map(&own_line/1)
+
+  defp own_lines(node), do: [node]
+
+  defp own_line(part), do: part |> player() |> own_line_player(part)
+
+  defp own_line_player(nil, part), do: part
+  defp own_line_player(player, _part), do: embedded(player, nil)
 
   defp shortcodes(nodes, ctx),
     do: nodes |> Enum.flat_map(&tokens/1) |> shortcoded(ctx) |> Enum.flat_map(&clean(&1, ctx))

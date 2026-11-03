@@ -18,9 +18,12 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   alias MishkaCmsMigration.Source
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Sources.WordPress
+  alias MishkaCmsMigration.Sources.WordPress.Content
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
+  @youtube_player "https://www.youtube-nocookie.com/embed/jNQXAC9IVRw"
+  @vimeo_player "https://player.vimeo.com/video/76979871"
   @written %{"category" => :created, "tag" => :created, "page" => :created, "post" => :created}
   @recordings %{
     "user" => "users",
@@ -738,10 +741,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
              |> LazyHTML.attribute("href")
              |> Enum.member?("http://localhost:8089/contact/")
 
-      assert html
-             |> LazyHTML.query("figure > a")
-             |> LazyHTML.attribute("href")
-             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+      assert sources(html, "figure > iframe") == [@youtube_player]
     end
 
     test "makes paragraphs of a classic post and HTML of its core shortcodes" do
@@ -769,15 +769,54 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                "http://localhost:8089/wp-content/uploads/2026/11/sample.mp4"
              ]
 
-      assert html
-             |> LazyHTML.query("figure > a")
-             |> LazyHTML.attribute("href")
-             |> Enum.member?("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+      assert sources(html, "figure > iframe") == [@youtube_player, @vimeo_player]
+
+      assert "A video address alone on its line, which WordPress embeds by itself:" in texts(
+               html,
+               "p"
+             )
 
       assert html |> LazyHTML.query("p:has(> img) > br") |> Enum.count() == 2
       assert texts(html, "pre") == ["preformatted\n   text keeps its spaces"]
       refute Item.html(post) =~ "[caption"
       refute Item.html(post) =~ "[gallery"
+    end
+
+    test "plays a YouTube or Vimeo embed block, keeps an iframe the author wrote, and links any other embed" do
+      html = html(items!("post")["49"])
+
+      assert sources(html, "figure > iframe") == [@vimeo_player]
+
+      assert sources(html, "iframe") == [
+               @vimeo_player,
+               "https://www.youtube.com/embed/jNQXAC9IVRw"
+             ]
+
+      assert [iframe] = Enum.to_list(LazyHTML.query(html, "figure > iframe"))
+      assert LazyHTML.attribute(iframe, "title") == ["Vimeo video player"]
+
+      embedded =
+        ~s(<!-- wp:embed {"url":"https://x.example/status/1"} -->\n) <>
+          ~s(<figure class="wp-block-embed"><div>https://x.example/status/1</div></figure>\n) <>
+          ~s(<!-- /wp:embed -->\n\n) <>
+          ~s([embed]https://youtu.be/jNQXAC9IVRw[/embed]\n\n) <>
+          ~s(https://www.youtube.com/shorts/jNQXAC9IVRw\n\n) <>
+          ~s(https://vimeo.com/76979871/0123abcdef\n\n) <>
+          ~s(https://example.com/not-a-video\n)
+
+      converted = embedded |> Content.call(fn _route, _ids -> %{} end) |> Enum.map_join(& &1.html)
+      converted = LazyHTML.from_fragment(converted)
+
+      assert sources(converted, "figure > iframe") == [
+               @youtube_player,
+               @youtube_player,
+               @vimeo_player <> "?h=0123abcdef"
+             ]
+
+      assert converted |> LazyHTML.query("figure > a") |> LazyHTML.attribute("href") ==
+               ["https://x.example/status/1"]
+
+      assert texts(converted, "p") == ["https://example.com/not-a-video"]
     end
 
     test "leaves a shortcode, a plugin's block and a block WordPress draws itself to convert" do

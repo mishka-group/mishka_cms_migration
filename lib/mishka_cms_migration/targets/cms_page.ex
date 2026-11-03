@@ -96,6 +96,14 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
   page's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description, robots,
   share image, as the Media file it was imported as, and a canonical address on another site.
+
+  ## Its videos
+
+  A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
+  allowed on the site before the page is written, in an import only, as the admin
+  (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
+  the dry run too. For an admin who may not change the site's settings the page is written with
+  its player blocked until an admin allows it, and the report says so (`"frames_blocked"`).
   """
 
   use MishkaCmsMigration.Target,
@@ -109,7 +117,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{Read, SeoTags, Status}
+  alias MishkaCmsMigration.Targets.Helpers.{Frames, Read, SeoTags, Status}
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -137,8 +145,19 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   end
 
   @impl MishkaCmsMigration.Target
-  def note(item, _context),
-    do: [item |> Status.call() |> drafted(), moved(item)] |> Enum.reject(&is_nil/1) |> noted()
+  def prepare(item, context, write),
+    do: with(:ok <- item |> Item.html() |> Frames.call(context), do: write.(context))
+
+  @impl MishkaCmsMigration.Target
+  def note(item, context),
+    do:
+      [
+        item |> Status.call() |> drafted(),
+        moved(item),
+        item |> Item.html() |> Frames.note(context)
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> noted()
 
   @doc """
   `html` with each link that `pages` names, an `href` as the source wrote it to the address the

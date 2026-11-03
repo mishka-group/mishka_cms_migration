@@ -16,6 +16,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.{Page, Seo}
+  alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
 
@@ -461,6 +462,24 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert CmsPage.relinked(html, pages) == html
       assert CmsPage.relinked(html, %{}) == html
       assert CmsPage.relinked(html, nil) == html
+    end
+  end
+
+  describe "a page's videos" do
+    test "an import allows the YouTube or Vimeo player its content frames, and no other origin",
+         %{
+           site: site
+         } do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:setting"])
+
+      html =
+        ~s(<figure><iframe src="https://player.vimeo.com/video/76979871"></iframe></figure>) <>
+          ~s(<iframe src="https://maps.example.com/embed?q=1"></iframe>)
+
+      run = fake_pages!(site, admin, [row(1, %{"content" => [%{"html" => html}]})])
+
+      assert outcomes(run)["1"] == {:created, "frames_allowed"}
+      assert Settings.get("security.frame_origins", [], site.id) == ["https://player.vimeo.com"]
     end
   end
 
