@@ -72,6 +72,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers.attach/0`); `:cancel` is how an admin ends a run whose job was lost
   with its node.
 
+  Once a dry run or an import ends — it finished, its job failed, or an admin cancelled it while it
+  ran — the run's user and the admin whose job it was are told in the topbar bell
+  (`MishkaCmsMigration.Resources.Notifiers.Steps`).
+
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
   `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run was
@@ -152,7 +156,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     domain: MishkaCmsMigration,
     data_layer: AshPostgres.DataLayer,
     extensions: [GuardedStruct.AshResource, AshOban, MishkaGervaz.Resource],
-    notifiers: [Ash.Notifier.PubSub],
+    notifiers: [Ash.Notifier.PubSub, MishkaCmsMigration.Resources.Notifiers.Steps],
     authorizers: [Ash.Policy.Authorizer]
 
   use Gettext, backend: MishkaCmsCore.Gettext
