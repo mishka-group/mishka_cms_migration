@@ -19,7 +19,7 @@ defmodule MishkaCmsMigration.ReportTest do
 
     report = Report.new() |> add_many("post", 1..total, :created) |> Report.done()
 
-    assert report.counts == %{created: total, updated: 0, skipped: 0, failed: 0}
+    assert report.counts == %{created: total, updated: 0, skipped: 0, failed: 0, undecided: 0}
     assert length(report.entries) == Report.max_entries()
     assert hd(report.entries).source_id == "#{total - Report.max_entries() + 1}"
     assert List.last(report.entries).source_id == "#{total}"
@@ -47,13 +47,16 @@ defmodule MishkaCmsMigration.ReportTest do
     assert MigrationRun.reason_label("title: is required; slug: is required") ==
              "title: is required; slug: is required"
 
-    for code <- ["frames_allowed", "frames_blocked"] do
-      label =
-        MigrationRun.reason_label(code <> ": https://www.youtube.com, https://player.vimeo.com")
+    label =
+      MigrationRun.reason_label(
+        "frames_allowed: https://www.youtube.com, https://player.vimeo.com"
+      )
 
-      assert label =~ "https://www.youtube.com, https://player.vimeo.com"
-      refute label =~ code
-    end
+    assert label =~ "https://www.youtube.com, https://player.vimeo.com"
+    refute label =~ "frames_allowed"
+
+    for code <- ~w(player_not_allowed waits_for_admin player_left_out),
+        do: refute(MigrationRun.reason_label(code) == code)
   end
 
   test "a comment left out says why in words, and names the issue that will bring a guest's" do

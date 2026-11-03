@@ -19,13 +19,15 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     (`MishkaCmsCore.Runtime.Languages.primary/1`): a WordPress term has no language of its own.
 
     A category the run's site already has, with the slug as the Blog writes it and in that language,
-    is that category: the item is connected to it and not written, the posts that name it are linked
-    to it, and the categories that sat under it in the source go under it
-    (`MishkaCmsMigration.Targets.Helpers.BySlug`), and the report says `"connected"`. The category
-    is kept as it is, now and on every later run.
+    waits for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.Targets.Helpers.BySlug`).
+    Connect to the existing record makes the item that category: it is not written, the posts that
+    name it are linked to it, the categories that sat under it in the source go under it, the
+    report says `"connected"`, and the category is kept as it is, now and on every later run.
+    Import as new with another slug writes the item as a category of its own, its slug followed by
+    its source id, and the report says `"another_slug"`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
-    only then; on a site without the Blog its kind is skipped as `"no_target"`.
+    only then; on a node without the Blog its items wait for it (`"blog_missing"`).
     """
 
     use MishkaCmsMigration.Target,
@@ -34,17 +36,16 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
       create: :create,
       update: :update
 
+    use MishkaCmsMigration.Targets.Helpers.BySlug
+
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Targets.Helpers.BySlug
-
-    @impl MishkaCmsMigration.Target
-    def existing(items, context), do: BySlug.call(__MODULE__, items, context)
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
       %{
         name: item.title,
-        slug: item.attrs["slug"],
+        slug: BySlug.wanted(item, context),
         description: description(item.attrs["description"]),
         status: :active,
         language: Languages.primary(context.site_id),

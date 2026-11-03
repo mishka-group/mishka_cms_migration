@@ -12,7 +12,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   use AshOban.Test, repo: MishkaCmsMigration.Repo
 
   import Phoenix.LiveViewTest
-  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2, without_blog!: 0]
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.States.SiteState
@@ -416,6 +416,19 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
     end
 
+    test "asks for the pages alone on a node without the Blog", %{conn: conn, site: site} do
+      without_blog!()
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      assert Map.keys(choices(view)) == ["pages"]
+
+      refute has_element?(
+               view,
+               ~s|#migration-run-form-modal input[name="form[options][comments]"]|
+             )
+    end
+
     test "saves what the admin chose into the run's options, and the default of the rest", %{
       conn: conn,
       site: site
@@ -666,7 +679,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     defp walked!(run, kind, created) do
       MishkaCmsMigration.record_progress!(
         run,
-        %{kind: kind, counts: %{created: created, updated: 0, skipped: 0, failed: 0}},
+        %{
+          kind: kind,
+          counts: %{created: created, updated: 0, skipped: 0, failed: 0, undecided: 0}
+        },
         tenant: run.site_id,
         authorize?: false
       )
@@ -874,7 +890,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 89, "skipped" => 26}
+      assert outcomes(view) == %{"created" => 86, "skipped" => 26, "undecided" => 3}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
@@ -906,7 +922,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 89, "skipped" => 26}
+               %{"created" => 86, "skipped" => 26, "undecided" => 3}
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-outcome"][data-outcome="undecided"]|,
+               "3 need your decision"
+             )
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
     end
@@ -929,7 +951,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
       expand!(view, run)
 
-      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"page", 11}, {"post", 21}] do
+      for {kind, found} <- [{"category", 9}, {"tag", 11}, {"page", 11}] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
         assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", card) ==
@@ -937,6 +959,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
         refute has_element?(view, ~s|#{card} [data-role="run-details-kind-reason"]|)
       end
+
+      post = ~s|[data-role="run-details-kind"][data-kind="post"]|
+
+      assert detailed_counts(view, "run-details-segment", "data-outcome", "data-count", post) ==
+               %{"created" => 18, "undecided" => 3}
+
+      assert has_element?(
+               view,
+               ~s|#{post} [data-role="run-details-kind-reason"][data-outcome="undecided"]|,
+               "Sites pages may embed"
+             )
 
       media = ~s|[data-role="run-details-kind"][data-kind="media"]|
 

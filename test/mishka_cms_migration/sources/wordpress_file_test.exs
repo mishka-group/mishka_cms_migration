@@ -138,8 +138,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     """
 
   defp counts(run),
-    do:
-      Map.new(run.report.kinds, &{&1.kind, Map.take(&1, [:created, :updated, :skipped, :failed])})
+    do: Map.new(run.report.kinds, &{&1.kind, Map.take(&1, MishkaCmsMigration.Report.outcomes())})
 
   defp staged!(path) do
     staged =

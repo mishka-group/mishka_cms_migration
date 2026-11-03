@@ -8,8 +8,8 @@ defmodule MishkaCmsMigration.Report do
   (`MishkaCmsMigration.MigrationRun`'s `report`) and handed to `migration:import:finished`.
 
       %{
-        counts: %{created: 2, updated: 1, skipped: 1, failed: 0},
-        kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0}],
+        counts: %{created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0},
+        kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0}],
         entries: [
           %{kind: "post", source_id: "12", title: "Hello", outcome: :skipped, reason: "unchanged"},
           ...
@@ -39,6 +39,9 @@ defmodule MishkaCmsMigration.Report do
     * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays
       deleted.
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
+    * `"waits_for_blog"` — the Blog is not installed, and an admin decided the item waits for it.
+    * `"waits_for_admin"` — the admin who ran the import may not allow the item's video player on
+      the site, and an admin decided it waits for one who may.
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
       never written), so it is left out until a run writes the parent.
@@ -48,6 +51,24 @@ defmodule MishkaCmsMigration.Report do
       is not the payload (`MishkaCmsMigration.Events`).
     * for a failure, what the source or the CMS action answered.
 
+  An item is `:undecided` when the import cannot place it safely on its own: its target found a
+  conflict on the site (`MishkaCmsMigration.Target`'s `existing/2`) that only an admin can settle,
+  and no admin has answered it yet (`MishkaCmsMigration.MigrationItem`'s `decisions`). Nothing is
+  written for it, and every later dry run and import asks again until an admin decides. Its reason
+  is the conflict:
+
+    * `"site_has_own"` — the site already has a value of its own for the setting
+      (`MishkaCmsMigration.Targets.CmsSetting`);
+    * `"header_has_links"` — the site layout's header already has links of its own, where the
+      main menu goes (`MishkaCmsMigration.Targets.CmsLayout`);
+    * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
+      its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
+    * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed
+      (`MishkaCmsMigration.Application.blog_kinds/0`);
+    * `"player_not_allowed"` — the item's content frames a YouTube or Vimeo player the site does
+      not allow, and the admin who ran it may not allow it
+      (`MishkaCmsMigration.Targets.Helpers.Frames`).
+
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
@@ -56,11 +77,11 @@ defmodule MishkaCmsMigration.Report do
   still recorded (`MishkaCmsMigration.MigrationItem`).
   """
 
-  @outcomes [:created, :updated, :skipped, :failed]
+  @outcomes [:created, :updated, :skipped, :failed, :undecided]
   @max_entries 1_000
 
   @typedoc "What happened, or would happen, to an item."
-  @type outcome :: :created | :updated | :skipped | :failed
+  @type outcome :: :created | :updated | :skipped | :failed | :undecided
 
   @typedoc "One item's entry."
   @type entry :: %{

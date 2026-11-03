@@ -4,13 +4,15 @@
 
 defmodule MishkaCmsMigration.Resources.Validations.MappedRecord do
   @moduledoc """
-  Holds an item's `mapped_id` (`MishkaCmsMigration.MigrationItem`'s `:map_to`) to a record the item
+  Holds an item's `mapped_id` (`MishkaCmsMigration.MigrationItem`'s `:choose`) to a record the item
   may be mapped to: one of the CMS resource its kind is written to (`MishkaCmsMigration.Target`),
   on the item's site, that the admin may read. `nil`, importing the item as its own, is always
   taken.
 
-      update :map_to do
-        validate MishkaCmsMigration.Resources.Validations.MappedRecord, before_action?: true
+      update :choose do
+        validate MishkaCmsMigration.Resources.Validations.MappedRecord,
+          before_action?: true,
+          where: [changing(:mapped_id)]
       end
 
   The record is read as the admin, under the item's site and the CMS's own policies

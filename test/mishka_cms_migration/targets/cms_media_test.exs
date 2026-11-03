@@ -38,7 +38,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
   defp counts(run) do
     run.report.kinds
     |> Enum.find(&(&1.kind == "media"))
-    |> Map.take([:created, :updated, :skipped, :failed])
+    |> Map.take(MishkaCmsMigration.Report.outcomes())
   end
 
   defp outcomes(run) do
@@ -78,7 +78,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
          %{site: site, admin: admin} do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert counts(run) == %{created: files(), updated: 0, skipped: 1, failed: 0}
+      assert counts(run) == %{created: files(), updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert outcomes(run)["21"] == {:skipped, "type_not_allowed"}
       assert downloads() == []
       assert media(site) == %{}
@@ -92,7 +92,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       run = imported!(site, admin)
       media = media(site)
 
-      assert counts(run) == %{created: files(), updated: 0, skipped: 1, failed: 0}
+      assert counts(run) == %{created: files(), updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert map_size(media) == files()
       assert media(other) == %{}
 
@@ -160,7 +160,13 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
                "13" => {:failed, "not_downloaded"}
              }
 
-      assert counts(run) == %{created: files() - 4, updated: 0, skipped: 4, failed: 1}
+      assert counts(run) == %{
+               created: files() - 4,
+               updated: 0,
+               skipped: 4,
+               failed: 1,
+               undecided: 0
+             }
 
       for name <- ["diagram", "photo", "sample", "guide"],
           do: refute(is_map_key(media, name))
@@ -178,7 +184,13 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
 
       again = imported!(site, admin)
 
-      assert counts(again) == %{created: 0, updated: 0, skipped: files() + 1, failed: 0}
+      assert counts(again) == %{
+               created: 0,
+               updated: 0,
+               skipped: files() + 1,
+               failed: 0,
+               undecided: 0
+             }
 
       assert again |> outcomes() |> Map.delete("21") |> Map.values() |> Enum.uniq() ==
                [{:skipped, "unchanged"}]
@@ -201,7 +213,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
 
       again = imported!(site, admin)
 
-      assert counts(again) == %{created: 0, updated: files(), skipped: 1, failed: 0}
+      assert counts(again) == %{created: 0, updated: files(), skipped: 1, failed: 0, undecided: 0}
       assert downloads() == []
       assert media(site)["hero"].relative_path == hero.relative_path
       assert stored(media(site)["hero"]) == seeded("hero.jpg")

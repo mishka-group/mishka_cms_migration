@@ -84,7 +84,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     do:
       run.report.kinds
       |> Enum.find(&(&1.kind == kind))
-      |> Map.take([:created, :updated, :skipped, :failed])
+      |> Map.take(MishkaCmsMigration.Report.outcomes())
 
   describe "connecting" do
     test "signs in and keeps what the site says of itself" do
@@ -996,22 +996,49 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                  created: published,
                  updated: 0,
                  skipped: length(recorded("posts")) - published,
-                 failed: 0
+                 failed: 0,
+                 undecided: 0
                }
 
       assert counts(run, "media") ==
-               %{created: length(recorded("media")) - 1, updated: 0, skipped: 1, failed: 0}
+               %{
+                 created: length(recorded("media")) - 1,
+                 updated: 0,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
-      assert counts(run, "setting") == %{created: 3, updated: 0, skipped: 1, failed: 0}
-      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 2, failed: 0}
+      assert counts(run, "setting") == %{
+               created: 3,
+               updated: 0,
+               skipped: 1,
+               failed: 0,
+               undecided: 0
+             }
+
+      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 2, failed: 0, undecided: 0}
+
+      assert counts(run, "post") == %{
+               created: length(recorded("posts")) - 3,
+               updated: 0,
+               skipped: 0,
+               failed: 0,
+               undecided: 3
+             }
+
+      assert for(
+               %{kind: "post", outcome: :undecided} = entry <- run.report.entries,
+               do: entry.reason
+             ) == List.duplicate("player_not_allowed", 3)
 
       for %{kind: kind} = counts <- run.report.kinds,
-          kind not in ["post_redirect", "media", "setting", "menu"] do
+          kind not in ["post_redirect", "media", "setting", "menu", "post"] do
         planned = Map.get(@written, kind, :skipped)
 
-        assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
+        assert Map.take(counts, MishkaCmsMigration.Report.outcomes()) ==
                  Map.put(
-                   %{created: 0, updated: 0, skipped: 0, failed: 0},
+                   %{created: 0, updated: 0, skipped: 0, failed: 0, undecided: 0},
                    planned,
                    length(recorded(@recordings[kind]))
                  )

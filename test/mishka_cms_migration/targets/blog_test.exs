@@ -11,7 +11,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   email, the editor `shahryar@mishka.tools` in the seed's story, and under `"create"` of a new user.
 
   A second run sees an item WordPress changed when the item's hash is no longer the one the first
-  run recorded, so a test has WordPress change its items by changing the recorded hashes.
+  run recorded, so a test has WordPress change its items by changing the recorded hashes. The admin
+  may change the site's settings, so a post's YouTube or Vimeo player is allowed on the site,
+  except where a test takes that away.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -25,11 +27,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
-  alias MishkaCmsMigration.Targets.{BlogCollection, BlogTag, PostRedirect}
+  alias MishkaCmsMigration.Targets.{BlogTag, PostRedirect}
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
-  @admin ["admin:dashboard:migration", "admin:dashboard:blog:post"]
+  @admin ["admin:dashboard:migration", "admin:dashboard:blog:post", "admin:dashboard:setting"]
   @people @admin ++ ["admin:dashboard:user"]
   @editor "shahryar@mishka.tools"
 
@@ -50,7 +52,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   defp counts(run, kind) do
     run.report.kinds
     |> Enum.find(&(&1.kind == kind))
-    |> Map.take([:created, :updated, :skipped, :failed])
+    |> Map.take(MishkaCmsMigration.Report.outcomes())
   end
 
   defp outcomes(run, kind) do
@@ -135,6 +137,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     {tag!(site, admin, attrs), collection!(site, admin, attrs)}
   end
 
+  defp decide!(site, admin, items, choice) do
+    for item <- Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+        {item.source_kind, item.source_id} in items,
+        do: MishkaCmsMigration.decide_item!(item, choice, actor: admin, tenant: site.id)
+  end
+
   defp slugs(resource, site),
     do:
       resource |> Ash.read!(tenant: site.id, authorize?: false) |> Enum.frequencies_by(& &1.slug)
@@ -154,33 +162,83 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert counts(run, "category") ==
-               %{created: length(recorded("categories")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("categories")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert counts(run, "tag") ==
-               %{created: length(recorded("tags")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("tags")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert blog(Collection, site) == %{}
       assert blog(Tag, site) == %{}
       assert imported_items(site) == []
     end
+  end
 
-    test "skips them as no_target where the Blog targets are stopped", %{site: site, admin: admin} do
-      for target <- [BlogCollection, BlogTag] do
-        {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:name, target, false)
-        on_exit(fn -> {:ok, _enabled} = MishkaInstaller.Event.Event.enable(target, false) end)
-      end
+  describe "a node without the Blog" do
+    setup do: without_blog!()
 
-      run = imported!(site, admin)
+    test "leaves every item the Blog would write waiting for it, in the dry run and the import, and writes none",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      for {kind, recording} <- [{"category", "categories"}, {"tag", "tags"}] do
-        assert counts(run, kind) ==
-                 %{created: 0, updated: 0, skipped: length(recorded(recording)), failed: 0}
+      for kind <- ["user", "category", "tag", "post", "post_redirect"],
+          do:
+            assert(
+              run |> outcomes(kind) |> Map.values() |> Enum.uniq() == [
+                {:undecided, "blog_missing"}
+              ]
+            )
 
-        assert run |> outcomes(kind) |> Map.values() |> Enum.uniq() == [{:skipped, "no_target"}]
-      end
+      run = import!(run, admin)
+
+      assert counts(run, "category").undecided == length(recorded("categories"))
+
+      assert run |> outcomes("post") |> Map.values() |> Enum.uniq() == [
+               {:undecided, "blog_missing"}
+             ]
 
       assert blog(Collection, site) == %{}
       assert blog(Tag, site) == %{}
+      assert posts(site) == %{}
+    end
+
+    test "Wait for the Blog keeps an item until the Blog is there, and Leave out leaves it out",
+         %{
+           site: site,
+           admin: admin
+         } do
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"category", "6"}], "keep")
+      decide!(site, admin, [{"tag", "10"}], "leave_out")
+
+      run = imported!(site, admin)
+
+      assert %{"6" => {:skipped, "waits_for_blog"}} = outcomes(run, "category")
+      assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
+
+      assert run |> outcomes("tag") |> Map.delete("10") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+
+      assert blog(Collection, site) == %{}
+
+      with_blog!()
+      run = imported!(site, admin)
+
+      assert %{"6" => {:created, nil}} = outcomes(run, "category")
+      assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
+      assert is_map_key(blog(Collection, site), "Elixir")
+      refute is_map_key(blog(Tag, site), "Elixir")
     end
   end
 
@@ -255,30 +313,46 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   end
 
   describe "terms the site already has" do
-    test "a dry run reports the tag and the category of the same slug as connected, the others as ones to create, and writes nothing in the CMS",
+    test "a dry run and an import leave the tag and the category of the same slug for an admin's decision, and write no second copy",
          %{site: site, admin: admin} do
       own_terms!(site, admin)
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert %{"10" => {:skipped, "connected"}} = outcomes(run, "tag")
-      assert %{"6" => {:skipped, "connected"}} = outcomes(run, "category")
+      assert %{"10" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert %{"6" => {:undecided, "slug_taken"}} = outcomes(run, "category")
       assert counts(run, "tag").created == length(recorded("tags")) - 1
       assert counts(run, "category").created == length(recorded("categories")) - 1
       assert map_size(blog(Tag, site)) == 1
       assert map_size(blog(Collection, site)) == 1
+
+      run = import!(run, admin)
+
+      assert %{"10" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert {counts(run, "tag").undecided, counts(run, "category").undecided} == {1, 1}
+      assert slugs(Tag, site)["elixir"] == 1
+      assert slugs(Collection, site)["elixir"] == 1
     end
 
-    test "an import writes no second copy, keeps the site's own as it is, and links the posts to it",
+    test "Connect to the existing record writes no second copy, keeps the site's own as it is, and links the posts to it",
          %{site: site, admin: admin} do
       {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "keep")
+
       run = imported!(site, admin)
 
-      assert counts(run, "tag") ==
-               %{created: length(recorded("tags")) - 1, updated: 0, skipped: 1, failed: 0}
+      for {kind, recording} <- [{"tag", "tags"}, {"category", "categories"}] do
+        assert counts(run, kind) ==
+                 %{
+                   created: length(recorded(recording)) - 1,
+                   updated: 0,
+                   skipped: 1,
+                   failed: 0,
+                   undecided: 0
+                 }
+      end
 
-      assert counts(run, "category") ==
-               %{created: length(recorded("categories")) - 1, updated: 0, skipped: 1, failed: 0}
-
+      assert %{"10" => {:skipped, "connected"}} = outcomes(run, "tag")
       assert slugs(Tag, site)["elixir"] == 1
       assert slugs(Collection, site)["elixir"] == 1
       assert blog(Tag, site)["Elixir, as the site has it"].id == tag.id
@@ -296,6 +370,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       admin: admin
     } do
       {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "keep")
       imported!(site, admin)
       change_in_wordpress!("tag")
       change_in_wordpress!("category")
@@ -310,21 +386,56 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                collection.updated_at
     end
 
-    test "a slug WordPress keeps percent-encoded is matched as the Blog stores it", %{
-      site: site,
-      admin: admin
-    } do
-      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})
-      collection = collection!(site, admin, %{name: "Tutorials, in Persian", slug: "amwzsh"})
+    test "Import as new writes a tag and a category of their own beside the site's, with another slug, and links the posts to them",
+         %{site: site, admin: admin} do
+      {tag, collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}, {"category", "6"}], "import")
 
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert %{"10" => {:created, "another_slug"}} = outcomes(run, "tag")
+
+      run = import!(run, admin)
+
+      assert %{"10" => {:created, "another_slug"}} = outcomes(run, "tag")
+      assert %{"6" => {:created, "another_slug"}} = outcomes(run, "category")
+
+      assert {blog(Tag, site)["Elixir"].slug, blog(Tag, site)["Elixir"].id != tag.id} ==
+               {"elixir-10", true}
+
+      assert blog(Collection, site)["Elixir"].slug == "elixir-6"
+      assert blog(Collection, site)["Elixir, as the site has it"].id == collection.id
+
+      post = posts(site)["Phoenix LiveView tips"]
+      assert blog(Tag, site)["Elixir"].id in Enum.map(post.tenant_tags, & &1.id)
+      refute tag.id in Enum.map(post.tenant_tags, & &1.id)
+
+      change_in_wordpress!("tag")
+      again = imported!(site, admin)
+      assert %{"10" => {:updated, "another_slug"}} = outcomes(again, "tag")
+      assert blog(Tag, site)["Elixir"].slug == "elixir-10"
+    end
+
+    test "a slug WordPress keeps percent-encoded is matched, and made anew, as the Blog stores it",
+         %{site: site, admin: admin} do
+      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})
+      collection!(site, admin, %{name: "Tutorials, in Persian", slug: "amwzsh"})
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert %{"20" => {:undecided, "slug_taken"}} = outcomes(run, "tag")
+      assert %{"9" => {:undecided, "slug_taken"}} = outcomes(run, "category")
+
+      decide!(site, admin, [{"tag", "20"}], "keep")
+      decide!(site, admin, [{"category", "9"}], "import")
       run = imported!(site, admin)
 
       assert %{"20" => {:skipped, "connected"}} = outcomes(run, "tag")
-      assert %{"9" => {:skipped, "connected"}} = outcomes(run, "category")
+      assert blog(Collection, site)["آموزش‌ها"].slug == "amwzsh-9"
 
       post = posts(site)["نصب وردپرس روی سرور"]
       assert Enum.map(post.tenant_tags, & &1.id) == [tag.id]
-      assert Enum.map(post.tenant_collections, & &1.id) == [collection.id]
+      assert Enum.map(post.tenant_collections, & &1.id) == [blog(Collection, site)["آموزش‌ها"].id]
     end
 
     test "a category that sat under a connected one is written under the site's own", %{
@@ -332,6 +443,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       admin: admin
     } do
       own = collection!(site, admin, %{name: "Guides, as the site has it", slug: "tutorials"})
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      [tutorials] =
+        for %{source_kind: "category", source_slug: "tutorials"} = item <-
+              Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+            do: item
+
+      decide!(site, admin, [{"category", tutorials.source_id}], "keep")
 
       imported!(site, admin)
       collections = blog(Collection, site)
@@ -391,7 +510,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       again = imported!(site, admin)
 
       assert counts(again, "tag") ==
-               %{created: 0, updated: length(recorded("tags")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("tags")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"15" => {:skipped, "edited_in_cms"}} = outcomes(again, "tag")
 
@@ -427,7 +552,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       run = imported!(site, admin)
 
-      assert counts(run, "user") == %{created: 1, updated: 0, skipped: 4, failed: 0}
+      assert counts(run, "user") == %{created: 1, updated: 0, skipped: 4, failed: 0, undecided: 0}
       assert %{"shahryar" => blogger} = bloggers(site)
       assert map_size(bloggers(site)) == 1
       assert blogger.user_id == editor.id
@@ -473,7 +598,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       accounts = accounts(site)
 
       assert counts(run, "user") ==
-               %{created: map_size(wordpress), updated: 0, skipped: 0, failed: 0}
+               %{created: map_size(wordpress), updated: 0, skipped: 0, failed: 0, undecided: 0}
 
       assert accounts[@editor].id == editor.id
 
@@ -671,7 +796,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       outcomes = outcomes(run, "post")
 
       assert counts(run, "post") ==
-               %{created: length(recorded("posts")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("posts")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{
                "32" => {:created, nil},
@@ -681,7 +812,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "53" => {:created, "unconverted: acme/callout, core/latest-posts"},
                "34" =>
                  {:created,
-                  "frames_blocked: https://www.youtube-nocookie.com, https://player.vimeo.com; " <>
+                  "frames_allowed: https://www.youtube-nocookie.com, https://player.vimeo.com; " <>
                     "unconverted: unknown_plugin_shortcode, pullbox"}
              } = outcomes
 
@@ -941,7 +1072,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       third = imported!(site, admin)
 
       assert counts(third, "post") ==
-               %{created: 0, updated: length(recorded("posts")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("posts")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"39" => {:skipped, "edited_in_cms"}} = outcomes(third, "post")
       posts = posts(site)
@@ -1090,7 +1227,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     ]
 
     setup %{site: site},
-      do: %{admin: migration_admin!(site, @admin ++ ["admin:dashboard:setting"])}
+      do: %{admin: migration_admin!(site, @admin)}
 
     defp frame_origins(site) do
       Setting
@@ -1098,19 +1235,17 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       |> Enum.filter(&(&1.site_id == site.id and &1.key == "security.frame_origins"))
     end
 
-    defp framed(run, note \\ "frames_allowed"),
+    defp framed(run),
       do:
         for(
           {id, outcome} <- outcomes(run, "post"),
-          origins = Enum.find_value(reasons(outcome), &noted_origins(&1, note)),
+          origins = Enum.find_value(reasons(outcome), &allowed_origins/1),
           into: %{},
           do: {id, origins}
         )
 
-    defp noted_origins(reason, note), do: reason |> String.split(": ", parts: 2) |> origins(note)
-
-    defp origins([note, origins], note), do: String.split(origins, ", ")
-    defp origins(_reason, _note), do: nil
+    defp allowed_origins("frames_allowed: " <> origins), do: String.split(origins, ", ")
+    defp allowed_origins(_reason), do: nil
 
     test "a dry run says which posts bring a player the site does not allow, and allows none", %{
       site: site,
@@ -1161,16 +1296,32 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                ]
     end
 
-    test "an admin who may not change the site's settings has the posts written with their players blocked, and says so",
-         %{site: site} do
-      admin = migration_admin!(site, @admin)
-      run = imported!(site, admin)
-      outcomes = outcomes(run, "post")
+    test "an admin who may not change the site's settings leaves the posts with a player for a decision, which the next runs follow",
+         %{site: site, admin: allowed} do
+      admin = migration_admin!(site, List.delete(@admin, "admin:dashboard:setting"))
+      outcomes = site |> imported!(admin) |> outcomes("post")
 
-      assert run |> framed("frames_blocked") |> Map.keys() |> Enum.sort() == ["33", "34", "49"]
-      for id <- ["33", "34", "49"], do: assert({:created, _reason} = outcomes[id])
+      for id <- ["33", "34", "49"],
+          do: assert(outcomes[id] == {:undecided, "player_not_allowed"})
 
+      decide!(site, admin, [{"post", "33"}], "keep")
+      decide!(site, admin, [{"post", "49"}], "import")
+      outcomes = site |> imported!(admin) |> outcomes("post")
+
+      assert outcomes["33"] == {:skipped, "waits_for_admin"}
+      assert outcomes["34"] == {:undecided, "player_not_allowed"}
+      assert "player_left_out" in reasons(outcomes["49"])
       assert frame_origins(site) == []
+
+      for post <- Map.values(posts(site)),
+          src <- post |> content() |> LazyHTML.query("iframe") |> LazyHTML.attribute("src"),
+          do: refute(src =~ ~r{youtube|vimeo})
+
+      run = imported!(site, allowed)
+
+      assert {:created, _reason} = outcomes(run, "post")["33"]
+      assert framed(run)["33"] == ["https://www.youtube-nocookie.com"]
+      assert [_origins] = frame_origins(site)
     end
   end
 
@@ -1205,7 +1356,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       unpublished = length(recorded("posts")) - length(published())
 
       assert counts(run, "post_redirect") ==
-               %{created: length(published()), updated: 0, skipped: unpublished, failed: 0}
+               %{
+                 created: length(published()),
+                 updated: 0,
+                 skipped: unpublished,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert for({_id, {:skipped, reason}} <- outcomes(run, "post_redirect"), do: reason) ==
                List.duplicate("no_old_address", unpublished)
@@ -1378,7 +1535,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       for run <- [dry, run] do
         assert counts(run, "comment") ==
-                 %{created: 0, updated: 0, skipped: length(recorded("comments")), failed: 0}
+                 %{
+                   created: 0,
+                   updated: 0,
+                   skipped: length(recorded("comments")),
+                   failed: 0,
+                   undecided: 0
+                 }
 
         assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
                  [{:skipped, "not_chosen"}]
@@ -1418,7 +1581,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin, @on)
       comments = comments(site)
 
-      assert counts(run, "comment") == %{created: 9, updated: 0, skipped: 4, failed: 0}
+      assert counts(run, "comment") == %{
+               created: 9,
+               updated: 0,
+               skipped: 4,
+               failed: 0,
+               undecided: 0
+             }
+
       assert map_size(comments) == 9
 
       for id <- [2, 3, 4, 5, 6, 7, 9],

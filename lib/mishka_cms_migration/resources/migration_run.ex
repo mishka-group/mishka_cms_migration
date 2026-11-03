@@ -80,8 +80,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   Running again means a new run; the items earlier runs wrote
   (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
-  `created_count`, `updated_count`, `skipped_count` and `failed_count` count the items this run's
-  import was the last to touch; a dry run records only each item's plan, which they do not count.
+  `created_count`, `updated_count`, `skipped_count`, `failed_count` and `undecided_count` count the
+  items this run's import was the last to touch; a dry run records only each item's plan, which
+  they do not count.
 
   ## The source's secret
 
@@ -168,7 +169,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   it. Under them,
   Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
   the post addresses, each starting at the default the `sub_field` gives it, and a toggle for the
-  comments, off; its description says why a post's old address is redirected rather than kept. For
+  comments, off; its description says why a post's old address is redirected rather than kept. The
+  authors, post addresses and comments are the Blog's, asked only while the Blog target each is for
+  is installed (`run_choices/1`). For
   a master the form asks for the site the content moves to as well (`:master_create`). Its button,
   Check and save, creates the run, which connects to the source first, or reads its file
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
@@ -214,6 +217,42 @@ defmodule MishkaCmsMigration.MigrationRun do
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
   @secret_salt "mishka migration source secret"
   @outcomes MishkaCmsMigration.Report.outcomes()
+  @run_choices [
+    [
+      name: :authors,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Authors"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
+        {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
+      ]
+    ],
+    [
+      name: :pages,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Pages"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
+        {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
+      ]
+    ],
+    [
+      name: :post_address,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Post addresses"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
+        {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"), "blog_without_redirects"}
+      ]
+    ],
+    [
+      name: :comments,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Bring the comments too")
+    ]
+  ]
+
+  @choice_kinds %{authors: "user", post_address: "post_redirect", comments: "comment"}
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
@@ -691,41 +730,7 @@ defmodule MishkaCmsMigration.MigrationRun do
         field :options, :key_map do
           default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
 
-          options [
-            [
-              name: :authors,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Authors"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "Match by email, skip the rest"), "connect"},
-                {dgettext_noop("mishka_gervaz", "Match by email, create the rest"), "create"}
-              ]
-            ],
-            [
-              name: :pages,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Pages"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "Drafts"), "draft"},
-                {dgettext_noop("mishka_gervaz", "Live at their old addresses"), "publish"}
-              ]
-            ],
-            [
-              name: :post_address,
-              type: :select,
-              label: dgettext_noop("mishka_gervaz", "Post addresses"),
-              options: [
-                {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
-                {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"),
-                 "blog_without_redirects"}
-              ]
-            ],
-            [
-              name: :comments,
-              type: :toggle,
-              label: dgettext_noop("mishka_gervaz", "Bring the comments too")
-            ]
-          ]
+          options fn state -> MishkaCmsMigration.MigrationRun.run_choices(state) end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Choices for this run") end
@@ -1205,6 +1210,11 @@ defmodule MishkaCmsMigration.MigrationRun do
       public? true
       filter expr(outcome == :failed)
     end
+
+    count :undecided_count, :items do
+      public? true
+      filter expr(outcome == :undecided)
+    end
   end
 
   identities do
@@ -1296,8 +1306,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   def source_icon(_other), do: "hero-server-stack"
 
   @doc """
-  What a run's `report` counts, in one line: `"3 created · 1 updated · 2 skipped · 0 failed"`, or
-  `"—"` before its first dry run.
+  What a run's `report` counts, in one line:
+  `"3 created · 1 updated · 2 skipped · 0 failed · 0 need your decision"`, or `"—"` before its
+  first dry run.
   """
   @spec result_summary(map() | nil) :: String.t()
   def result_summary(%{counts: counts}) do
@@ -1323,24 +1334,45 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   def result_outcomes(_no_report), do: []
 
-  @doc "One outcome's count in words, as a Result pill's tooltip begins: `\"3 created\"`."
+  @doc """
+  One outcome's count in words, as a Result pill's tooltip begins: `"3 created"`, or
+  `"2 need your decision"`.
+  """
   @spec outcome_count(atom(), non_neg_integer()) :: String.t()
+  def outcome_count(:undecided, count),
+    do:
+      dngettext(
+        "mishka_gervaz",
+        "%{number} needs your decision",
+        "%{number} need your decision",
+        count,
+        number: MishkaCmsCore.Localized.number(count)
+      )
+
   def outcome_count(outcome, count),
     do: "#{MishkaCmsCore.Localized.number(count)} #{outcome_label(outcome)}"
 
-  @doc "The pill colours of an outcome's count: green created, blue updated, grey skipped, red failed."
+  @doc """
+  The pill colours of an outcome's count: green created, blue updated, grey skipped, red failed,
+  amber waiting for a decision.
+  """
   @spec outcome_class(atom()) :: String.t()
   def outcome_class(:created), do: "bg-[#e6f6ee] text-[#177a53]"
   def outcome_class(:updated), do: "bg-[#eaf1fb] text-[#3a6cb5]"
   def outcome_class(:skipped), do: "bg-[#f2f1ec] text-[#8a877f]"
   def outcome_class(:failed), do: "bg-[#fdecea] text-[#c0473d]"
+  def outcome_class(:undecided), do: "bg-[#fff6e0] text-[#8a5a00]"
 
-  @doc "The heroicon of an outcome's pill: a plus created, arrows updated, a minus skipped, a warning failed."
+  @doc """
+  The heroicon of an outcome's pill: a plus created, arrows updated, a minus skipped, a warning
+  failed, a raised hand waiting for a decision.
+  """
   @spec outcome_icon(atom()) :: String.t()
   def outcome_icon(:created), do: "hero-plus"
   def outcome_icon(:updated), do: "hero-arrow-path"
   def outcome_icon(:skipped), do: "hero-minus"
   def outcome_icon(:failed), do: "hero-exclamation-triangle"
+  def outcome_icon(:undecided), do: "hero-hand-raised"
 
   @doc """
   The heroicon that stands for the items of `kind` in the admin's lists, such as
@@ -1369,8 +1401,9 @@ defmodule MishkaCmsMigration.MigrationRun do
       kinds of the source walked so far. Before the job's first page it reads Starting.
     * Otherwise, what its last report counted: a pill for each outcome counted more than none of,
       in `MishkaCmsMigration.Report.outcomes/0` order (green created, blue updated, grey skipped,
-      red failed), each an icon and its count, its tooltip the count in words and, for skipped or
-      failed items, the reason most of them share (`reason_label/1`). Under them a grey chip for
+      red failed, amber waiting for a decision), each an icon and its count, its tooltip the count
+      in words and, for skipped, failed or undecided items, the reason most of them share
+      (`reason_label/1`). Under them a grey chip for
       each kind it met, the kind's icon (`kind_icon/1`) and how many the source listed, its
       tooltip the kind in words (`kind_label/1`). "Nothing to move" when it counted nothing, and "—" before the first
       dry run.
@@ -1516,7 +1549,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp shortened({text, ""}), do: text
   defp shortened({text, _rest}), do: text <> "…"
 
-  defp shared_reason(%{entries: entries}, outcome) when outcome in [:skipped, :failed] do
+  defp shared_reason(%{entries: entries}, outcome)
+       when outcome in [:skipped, :failed, :undecided] do
     entries
     |> Enum.filter(&(&1.outcome == outcome and is_binary(&1.reason)))
     |> Enum.frequencies_by(& &1.reason)
@@ -1603,6 +1637,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp outcome_label(:updated), do: dgettext("mishka_gervaz", "updated")
   defp outcome_label(:skipped), do: dgettext("mishka_gervaz", "skipped")
   defp outcome_label(:failed), do: dgettext("mishka_gervaz", "failed")
+  defp outcome_label(:undecided), do: dgettext("mishka_gervaz", "need your decision")
 
   defp kind_noun("user"), do: dgettext("mishka_gervaz", "users")
   defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
@@ -1650,6 +1685,19 @@ defmodule MishkaCmsMigration.MigrationRun do
       |> Enum.uniq()
       |> Enum.map(&{kind_label(&1), &1})
 
+  @doc """
+  The New import form's choices for the run (Choices for this run's keys): the authors, pages and
+  post addresses selects and the comments toggle, each Blog one only while the Blog target it is
+  for is installed (`MishkaCmsMigration.Target.fetch/1`): Authors for `"user"`, Post addresses for
+  `"post_redirect"` and the comments for `"comment"`. A node without the Blog asks for the pages
+  alone.
+  """
+  @spec run_choices(map()) :: [keyword()]
+  def run_choices(_state), do: Enum.filter(@run_choices, &offered?(@choice_kinds[&1[:name]]))
+
+  defp offered?(nil), do: true
+  defp offered?(kind), do: match?({:ok, _target}, MishkaCmsMigration.Target.fetch(kind))
+
   @doc "Every outcome as a `{word, outcome}` pair, in the order the report counts them."
   @spec outcome_options() :: [{String.t(), atom()}]
   def outcome_options, do: Enum.map(@outcomes, &{outcome_word(&1), &1})
@@ -1660,6 +1708,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def outcome_word(:updated), do: dgettext("mishka_gervaz", "Updated")
   def outcome_word(:skipped), do: dgettext("mishka_gervaz", "Skipped")
   def outcome_word(:failed), do: dgettext("mishka_gervaz", "Failed")
+  def outcome_word(:undecided), do: dgettext("mishka_gervaz", "Needs your decision")
 
   @doc "The admin address of the page that lists the items of `run`'s source on its site."
   @spec items_path(%{id: String.t()}) :: String.t()
@@ -1875,9 +1924,6 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("draft_from_future"),
     do: dgettext("mishka_gervaz", "Scheduled at the source, so a draft")
 
-  defp said("path_taken"),
-    do: dgettext("mishka_gervaz", "The site already has a page at this address, so it is kept")
-
   defp said("path_made_ascii"),
     do: dgettext("mishka_gervaz", "Its address was made ASCII, so the old address is not served")
 
@@ -1903,16 +1949,40 @@ defmodule MishkaCmsMigration.MigrationRun do
         origins: origins
       )
 
-  defp said("frames_blocked: " <> origins),
+  defp said("player_not_allowed"),
     do:
       dgettext(
         "mishka_gervaz",
-        "Its video player stays blocked until an admin allows %{origins} in Settings",
-        origins: origins
+        "Its YouTube or Vimeo player needs Sites pages may embed, which you may not change"
       )
+
+  defp said("waits_for_admin"),
+    do: dgettext("mishka_gervaz", "Waits for an admin who may allow its player, as you decided")
+
+  defp said("player_left_out"),
+    do: dgettext("mishka_gervaz", "Imported without its YouTube or Vimeo player, as you decided")
 
   defp said("site_own_kept"),
     do: dgettext("mishka_gervaz", "The site already has its own, so it is kept")
+
+  defp said("site_has_own"), do: dgettext("mishka_gervaz", "The site already has its own")
+
+  defp said("header_has_links"),
+    do: dgettext("mishka_gervaz", "The site's header already has its own links")
+
+  defp said("slug_taken"),
+    do: dgettext("mishka_gervaz", "The site already has one at this address")
+
+  defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
+
+  defp said("waits_for_blog"),
+    do: dgettext("mishka_gervaz", "Waits for Mishka Blog, as you decided")
+
+  defp said("another_slug"),
+    do: dgettext("mishka_gervaz", "Imported as new beside the site's own, with another slug")
+
+  defp said("site_own_replaced"),
+    do: dgettext("mishka_gervaz", "Replaces the site's own, as you decided")
 
   defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
 

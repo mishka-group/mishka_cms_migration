@@ -32,8 +32,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   client and opens the item in the Gervaz form inside it (`MishkaCmsMigration.MigrationItem`'s
   form, through the table's `:edit` row action), whose choices are read from the item it loaded
   (`MishkaCmsMigration.MigrationItem.map_options/1`): the site's categories, or tags, in the
-  language it leads with, and Import as its own. Save maps it (`:map_to`), and the modal closes; the
+  language it leads with, and Import as its own. Save maps it (`:choose`), and the modal closes; the
   table draws the item again from its broadcast.
+
+  ## Decide…
+
+  An item the import cannot place safely on its own, whose plan reads Needs your decision, has
+  Decide… instead of Map to…: the same modal and form, with the conflict's choices in words
+  (`MishkaCmsMigration.MigrationItem.decision_options/1`). Save keeps the decision (`:choose`),
+  closes the modal and says that the next dry run and import follow it.
 
   The table's template switcher moves between the List and the Map view
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), which draws the items as the source
@@ -74,6 +81,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     :reason,
     :left_out,
     :mapped_id,
+    :decisions,
     :source_parent,
     :run_id,
     :inserted_at,
@@ -125,7 +133,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   end
 
   def handle_info({:form_saved, :update, %MigrationItem{} = item}, socket) do
-    {:noreply, socket |> close_map() |> put_flash(:info, mapped_words(item))}
+    {:noreply, socket |> close_map() |> put_flash(:info, saved_words(item))}
   end
 
   def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_map(socket)}
@@ -146,10 +154,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp mapped_words(%MigrationItem{mapped_id: nil}),
+  defp saved_words(item), do: item |> MigrationItem.conflict() |> saved_words(item)
+
+  defp saved_words(nil, %MigrationItem{mapped_id: nil}),
     do: gettext("It will be imported as its own.")
 
-  defp mapped_words(_item), do: gettext("Mapped. The import links it to that record.")
+  defp saved_words(nil, _item), do: gettext("Mapped. The import links it to that record.")
+
+  defp saved_words(_conflict, _item),
+    do: gettext("Decided. The next dry run and import follow your decision.")
 
   defp close_map(socket),
     do:

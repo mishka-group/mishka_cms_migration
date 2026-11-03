@@ -76,7 +76,7 @@ defmodule MishkaCmsMigration.TelemetryTest do
              } = start
 
       assert [{stop_measurements, stop}] = received([:mishka_cms_migration, :run, :stop])
-      assert %{created: 3, updated: 0, skipped: 0, failed: 0} = stop_measurements
+      assert %{created: 3, updated: 0, skipped: 0, failed: 0, undecided: 0} = stop_measurements
       assert is_integer(stop_measurements.duration)
       assert %{run_id: ^run_id, mode: :dry_run, result: :finished} = stop
       assert received([:mishka_cms_migration, :run, :exception]) == []

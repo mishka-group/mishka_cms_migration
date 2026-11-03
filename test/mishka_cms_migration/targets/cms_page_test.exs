@@ -55,7 +55,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   defp counts(run) do
     run.report.kinds
     |> Enum.find(&(&1.kind == "page"))
-    |> Map.take([:created, :updated, :skipped, :failed])
+    |> Map.take(MishkaCmsMigration.Report.outcomes())
   end
 
   defp outcomes(run) do
@@ -68,6 +68,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     do: Page |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.path, &1})
 
   defp by_source(pages), do: Map.new(@paths, fn {id, path} -> {id, pages[path]} end)
+
+  defp decide!(site, admin, source_id, choice),
+    do:
+      MishkaCmsMigration.MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == "page" and &1.source_id == source_id))
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   defp fake_pages!(site, admin, rows) do
     for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
@@ -114,22 +121,26 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert counts(run) ==
-               %{created: length(recorded("pages")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("pages")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"31" => {:created, "draft_from_private"}, "3" => {:created, nil}} = outcomes(run)
       assert pages(site) == %{}
       assert imported_items(site) == []
     end
 
-    test "reports a page whose path the site has as skipped, and writes nothing in the CMS", %{
-      site: site,
-      admin: admin
-    } do
+    test "leaves a page whose path the site has for an admin's decision, and writes nothing in the CMS",
+         %{site: site, admin: admin} do
       create_page!(site_id: site.id, path: "/contact")
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert %{"29" => {:skipped, "path_taken"}, "24" => {:created, nil}} = outcomes(run)
-      assert counts(run).skipped == 1
+      assert %{"29" => {:undecided, "slug_taken"}, "24" => {:created, nil}} = outcomes(run)
+      assert counts(run).undecided == 1
       assert map_size(pages(site)) == 1
     end
   end
@@ -142,7 +153,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       pages = pages(site)
 
       assert counts(run) ==
-               %{created: length(recorded("pages")), updated: 0, skipped: 0, failed: 0}
+               %{
+                 created: length(recorded("pages")),
+                 updated: 0,
+                 skipped: 0,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert pages |> Map.keys() |> Enum.sort() == @paths |> Map.values() |> Enum.sort()
       assert pages |> Map.values() |> Enum.all?(&(&1.active == false))
@@ -198,29 +215,65 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   end
 
   describe "a page the site has" do
-    test "is kept as it is, and the WordPress page at its path is skipped with the reason", %{
+    test "is kept as it is, and the WordPress page at its path waits for an admin's decision", %{
       site: site,
       admin: admin
     } do
       own = create_page!(site_id: site.id, path: "/contact", title: "Our own contact")
       run = imported!(site, admin)
 
-      assert %{"29" => {:skipped, "path_taken"}} = outcomes(run)
-      assert counts(run) == %{created: 10, updated: 0, skipped: 1, failed: 0}
+      assert %{"29" => {:undecided, "slug_taken"}} = outcomes(run)
+      assert counts(run) == %{created: 10, updated: 0, skipped: 0, failed: 0, undecided: 1}
 
       kept = pages(site)["/contact"]
       assert {kept.id, kept.title, kept.template} == {own.id, "Our own contact", own.template}
     end
 
-    test "leaves out the pages under it, which the walk does for any item whose parent is not imported",
+    test "leaves out the pages under one that waits, which the walk does for any item whose parent is not imported",
          %{site: site, admin: admin} do
       create_page!(site_id: site.id, path: "/docs")
       run = imported!(site, admin)
 
-      assert %{"27" => {:skipped, "path_taken"}, "28" => {:skipped, "parent_missing"}} =
+      assert %{"27" => {:undecided, "slug_taken"}, "28" => {:skipped, "parent_missing"}} =
                outcomes(run)
 
       refute is_map_key(pages(site), "/docs/getting-started")
+    end
+
+    test "Connect to the existing record keeps the site's page, and writes the pages under it",
+         %{site: site, admin: admin} do
+      own = create_page!(site_id: site.id, path: "/docs", title: "Our own docs")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "27", "keep")
+
+      run = imported!(site, admin)
+
+      assert %{"27" => {:skipped, "connected"}, "28" => {:created, _unconverted}} = outcomes(run)
+      assert pages(site)["/docs"].title == "Our own docs"
+      assert pages(site)["/docs"].updated_at == own.updated_at
+      assert is_map_key(pages(site), "/docs/getting-started")
+    end
+
+    test "Import as new writes the WordPress page beside the site's own at another path, and says so",
+         %{site: site, admin: admin} do
+      own = create_page!(site_id: site.id, path: "/contact", title: "Our own contact")
+      home = create_page!(site_id: site.id, path: "/", title: "Our own home")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      for id <- ["29", "22"], do: decide!(site, admin, id, "import")
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert {:created, "another_slug" <> _unconverted} = outcomes(run)["29"]
+
+      run = import!(run, admin)
+      pages = pages(site)
+
+      for id <- ["29", "22"],
+          do: assert({:created, "another_slug" <> _unconverted} = outcomes(run)[id])
+
+      assert pages["/contact-29"].title == "Contact"
+      assert {pages["/contact"].id, pages["/"].id} == {own.id, home.id}
+      assert [moved_home] = pages |> Map.keys() |> Enum.filter(&String.ends_with?(&1, "-22"))
+      assert moved_home =~ ~r{\A/[a-z0-9-]+-22\z}
     end
 
     test "answered by a pattern, as the Blog's /:lang/blog answers /blog, refuses the page live and has it as a draft",
@@ -252,7 +305,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     test "is found whether or not it is live, and a later run writes the page once the path is free",
          %{site: site, admin: admin} do
       own = create_page!(site_id: site.id, path: "/contact", active: false)
-      assert %{"29" => {:skipped, "path_taken"}} = site |> imported!(admin) |> outcomes()
+      assert %{"29" => {:undecided, "slug_taken"}} = site |> imported!(admin) |> outcomes()
 
       own |> Ash.destroy!(actor: admin, tenant: site.id)
       assert %{"29" => {:created, _unconverted}} = site |> imported!(admin) |> outcomes()
@@ -269,7 +322,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       again = imported!(site, admin)
 
       assert counts(again) ==
-               %{created: 0, updated: 0, skipped: length(recorded("pages")), failed: 0}
+               %{
+                 created: 0,
+                 updated: 0,
+                 skipped: length(recorded("pages")),
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert again |> outcomes() |> Map.values() |> Enum.uniq() == [{:skipped, "unchanged"}]
       assert map_size(pages(site)) == length(recorded("pages"))
@@ -291,7 +350,13 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       third = imported!(site, admin, %{pages: "publish"})
 
       assert counts(third) ==
-               %{created: 0, updated: length(recorded("pages")) - 1, skipped: 1, failed: 0}
+               %{
+                 created: 0,
+                 updated: length(recorded("pages")) - 1,
+                 skipped: 1,
+                 failed: 0,
+                 undecided: 0
+               }
 
       assert %{"24" => {:skipped, "edited_in_cms"}} = outcomes(third)
       pages = pages(site)
@@ -480,6 +545,33 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
       assert outcomes(run)["1"] == {:created, "frames_allowed: https://player.vimeo.com"}
       assert Settings.get("security.frame_origins", [], site.id) == ["https://player.vimeo.com"]
+    end
+
+    test "an admin who may not allow the player leaves the page for a decision, and Import without the player writes it without",
+         %{site: site, admin: admin} do
+      html =
+        ~s(<figure><iframe src="https://player.vimeo.com/video/76979871"></iframe></figure>) <>
+          ~s(<iframe src="https://maps.example.com/embed?q=1"></iframe>)
+
+      rows = [row(1, %{"content" => [%{"html" => html}]})]
+      run = fake_pages!(site, admin, rows)
+
+      assert outcomes(run)["1"] == {:undecided, "player_not_allowed"}
+      assert pages(site) == %{}
+
+      decide!(site, admin, "1", "keep")
+
+      assert outcomes(migrate!(site, admin, %{"page" => rows}))["1"] ==
+               {:skipped, "waits_for_admin"}
+
+      decide!(site, admin, "1", "import")
+      run = migrate!(site, admin, %{"page" => rows})
+
+      assert outcomes(run)["1"] == {:created, "player_left_out"}
+      assert [page] = Map.values(pages(site))
+      refute page.template =~ "player.vimeo.com"
+      assert page.template =~ "maps.example.com"
+      assert Settings.get("security.frame_origins", [], site.id) == []
     end
   end
 

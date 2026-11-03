@@ -371,7 +371,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       options: options,
       parent_id: nil,
       record: nil,
-      prepared: nil
+      prepared: nil,
+      decisions: %{}
     }
 
   defp source_context(state),

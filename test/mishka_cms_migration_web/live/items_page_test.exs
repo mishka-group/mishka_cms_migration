@@ -13,7 +13,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   use MishkaCmsMigration.ConnCase, async: false
 
   import Phoenix.LiveViewTest
-  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2, without_blog!: 0]
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0]
 
   alias MishkaCmsCore.Runtime.Languages
@@ -204,6 +204,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   end
 
   @map_field "#migration_item_map_form-form_mapped_id"
+  @decision_field "#migration_item_map_form-form_decision"
 
   # What Map to… offers, once its search field is focused, by label.
   defp map_choices(view) do
@@ -224,6 +225,45 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     view |> element("#migration-item-map-modal form") |> render_submit()
     settled(view)
   end
+
+  # What Decide… offers, once its field is focused, by label.
+  defp decision_choices(view) do
+    view |> element(@decision_field) |> render_focus()
+
+    view
+    |> parts(~s|#migration-item-map-modal [role="option"]|)
+    |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+  end
+
+  defp decide!(view, choice) do
+    view |> element(@decision_field) |> render_focus()
+
+    view
+    |> element(~s|#migration-item-map-modal [role="option"][phx-value-id="#{choice}"]|)
+    |> render_click()
+
+    view |> element("#migration-item-map-modal form") |> render_submit()
+    settled(view)
+  end
+
+  # A second WordPress site moved into the same site: its items meet what the first one wrote.
+  defp second_source!(site, admin) do
+    %{
+      source: "wordpress",
+      source_host: "second.example",
+      connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+      secret: "app password"
+    }
+    |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+    |> dry_run!(admin)
+  end
+
+  defp second_item(site, kind, source_id),
+    do:
+      Enum.find(
+        stored(site),
+        &({&1.source_host, &1.source_kind, &1.source_id} == {"second.example", kind, source_id})
+      )
 
   defp tree_roots(view) do
     view
@@ -501,6 +541,117 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
                stored(site),
                &(&1.source_kind != "tag" or &1.plan_reason == "left_out_by_admin")
              )
+    end
+  end
+
+  describe "Decide…" do
+    test "a setting the site has its own of needs a decision, and Decide… keeps the admin's choice",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+      title = second_item(site, "setting", "title")
+      view = open!(conn, admin, second, "?items_filter_source_kind=setting")
+
+      assert plan_of(view, title) == "undecided"
+
+      assert view
+             |> parts(~s|#{@table} [id$="#{title.id}"] [data-role="item-plan-reason"]|)
+             |> LazyHTML.text() =~ "already has its own"
+
+      refute has_element?(view, row_button("map_to", title))
+      refute has_element?(view, row_button("decide", second_item(site, "setting", "tagline")))
+
+      row_action!(view, "decide", title)
+      assert decision_choices(view) == ["Keep the site's own", "Use the WordPress one"]
+      assert decide!(view, "import") =~ "Decided."
+
+      assert item!(title).decisions == %{"site_has_own" => "import"}
+      assert plan_of(view, title) == "decided"
+
+      row_action!(view, "decide", title)
+      decide!(view, "keep")
+
+      assert item!(title).decisions == %{"site_has_own" => "keep"}
+    end
+
+    test "a category or a page whose address the site has offers Connect or Import as new, in place of Map to…",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+
+      for {kind, source_id} <- [{"category", "6"}, {"page", "29"}] do
+        item = second_item(site, kind, source_id)
+        view = open!(conn, admin, second, "?items_filter_source_kind=#{kind}")
+
+        assert plan_of(view, item) == "undecided"
+        refute has_element?(view, row_button("map_to", item))
+        row_action!(view, "decide", item)
+
+        assert decision_choices(view) ==
+                 ["Connect to the existing record", "Import as new with another slug"]
+      end
+    end
+
+    test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
+         %{conn: conn, site: site, admin: admin} do
+      without_blog!()
+      second = second_source!(site, admin)
+      tag = second_item(site, "tag", "10")
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+
+      assert plan_of(view, tag) == "undecided"
+      row_action!(view, "decide", tag)
+      assert decision_choices(view) == ["Wait for the Blog", "Leave out"]
+      decide!(view, "leave_out")
+
+      assert %{left_out: true, decisions: %{}} = item!(tag)
+      assert plan_of(view, tag) == "left_out"
+    end
+
+    test "the picked rows are decided together, and one with nothing to decide is left as it is",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+      [title, tagline] = for id <- ["title", "tagline"], do: second_item(site, "setting", id)
+      view = open!(conn, admin, second, "?items_filter_source_kind=setting")
+
+      for item <- [title, tagline], do: pick!(view, item)
+
+      assert bulk!(view, "decide_import") =~
+               "1 item decided. 1 left as it was: nothing on it takes this choice."
+
+      assert item!(title).decisions == %{"site_has_own" => "import"}
+      assert item!(tagline).decisions == %{}
+
+      pick!(view, title)
+      assert bulk!(view, "decide_keep") =~ "1 item decided."
+      assert item!(title).decisions == %{"site_has_own" => "keep"}
+    end
+
+    test "the Plan filter finds them, and the run's card says how many need a decision", %{
+      conn: conn,
+      site: site,
+      admin: admin
+    } do
+      second = second_source!(site, admin)
+
+      waiting =
+        Enum.filter(stored(site), &(&1.source_host == "second.example" and &1.plan == :undecided))
+
+      view = open!(conn, admin, second)
+      filter!(view, %{"plan" => "undecided"})
+      assert [_ | _] = waiting
+      assert total(view) == length(waiting)
+
+      card =
+        (&MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails.panel/1)
+        |> render_component(run: second)
+        |> LazyHTML.from_fragment()
+
+      pill = LazyHTML.query(card, ~s|[data-role="run-details-outcome"][data-outcome="undecided"]|)
+      assert LazyHTML.attribute(pill, "data-count") == ["#{length(waiting)}"]
+      assert LazyHTML.text(pill) =~ "need"
+
+      assert card
+             |> LazyHTML.query(~s|[data-kind="setting"] [data-role="run-details-kind-reason"]|)
+             |> LazyHTML.text() =~ "your decision: The site already has its own"
     end
   end
 

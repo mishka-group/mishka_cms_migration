@@ -4,8 +4,9 @@
 
 defmodule MishkaCmsMigration.Resources.Validations.SiteIdle do
   @moduledoc """
-  Holds an admin's choice on an item (`MishkaCmsMigration.MigrationItem`'s `:leave_out` and
-  `:bring_back`, and their master actions) while one of the item's site's runs is dry running or
+  Holds an admin's choice on an item (`MishkaCmsMigration.MigrationItem`'s `:leave_out`,
+  `:bring_back`, `:choose`, `:decide_keep` and `:decide_import`, and their master actions) while
+  one of the item's site's runs is dry running or
   importing: the job reads the choices as it walks, so one made halfway would hold for part of the
   run alone.
 
