@@ -12,8 +12,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
   form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
   Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
-  secret as a masked password input. Its Check connection creates the run once the source answers;
-  the modal then closes and the run shows in the table.
+  secret as a masked password input, or, for a source that reads a file
+  (`MishkaCmsMigration.Source.file?/1`) such as the WordPress export file, its Export file upload
+  instead. Its Check connection creates the run once the source answers, or reads the file; the
+  modal then closes and the run shows in the table.
 
   ## A run's row
 

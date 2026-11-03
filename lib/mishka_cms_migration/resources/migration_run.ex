@@ -159,7 +159,10 @@ defmodule MishkaCmsMigration.MigrationRun do
   read, so each source's New import asks for its own: WordPress's address, user and application
   password, and a plugin's source what its `form_fields/0` names. The secret's key is a masked
   password input that never shows what was typed. The field's description says where WordPress
-  makes an application password, as a Gervaz key carries no description of its own. Under it,
+  makes an application password, as a Gervaz key carries no description of its own. A source that
+  reads a file asks for no Connection: the form shows its Export file instead, a dropzone taking
+  one `.xml` file of up to 100 MB (see "The source's file"), the reason a file is refused under
+  it. Under them,
   Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
   the post addresses, each starting at the default the `sub_field` gives it; its description says
   why a post's old address is redirected rather than kept. Comments are not asked for until a
@@ -632,6 +635,7 @@ defmodule MishkaCmsMigration.MigrationRun do
         field :connection, :key_map do
           required true
           options fn state -> MishkaCmsMigration.Source.form_fields(state) end
+          visible fn state -> MishkaCmsMigration.Source.form_fields(state) != [] end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Connection") end
@@ -640,6 +644,22 @@ defmodule MishkaCmsMigration.MigrationRun do
               dgettext(
                 "mishka_gervaz",
                 "A WordPress application password is made under Users, Profile, Application Passwords. The password is kept sealed until the run ends."
+              )
+            end
+          end
+        end
+
+        field :file, :upload do
+          required true
+          visible fn state -> MishkaCmsMigration.Source.file?(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Export file") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "The .xml file WordPress makes under Tools, Export, with All content chosen. It is kept privately until the run ends, then deleted."
               )
             end
           end
@@ -694,7 +714,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       groups do
         group :connection do
-          fields [:site_id, :connection]
+          fields [:site_id, :connection, :file]
 
           ui do
             columns 1
@@ -707,6 +727,15 @@ defmodule MishkaCmsMigration.MigrationRun do
           ui do
             columns 1
           end
+        end
+      end
+
+      uploads do
+        upload :file do
+          accept ~w(.xml)
+          max_entries 1
+          max_file_size 100_000_000
+          style :dropzone
         end
       end
 
@@ -1222,6 +1251,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @doc "The heroicon that stands for the source whose id is `id` in the admin's lists."
   @spec source_icon(String.t()) :: String.t()
   def source_icon("wordpress"), do: "hero-globe-alt"
+  def source_icon("wordpress_file"), do: "hero-document-arrow-up"
   def source_icon(_other), do: "hero-server-stack"
 
   @doc """

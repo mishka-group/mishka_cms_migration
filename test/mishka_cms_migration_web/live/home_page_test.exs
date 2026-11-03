@@ -443,6 +443,132 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "the WordPress export file's New import" do
+    @describetag :tmp_dir
+
+    defp export_input(view, content) do
+      upload =
+        MishkaGervaz.Form.Web.UploadHelpers.namespaced_upload_name(
+          :file,
+          MishkaGervaz.Resource.Info.Form.component_id(MigrationRun)
+        )
+
+      file_input(view, "#migration-run-form-modal form", upload, [
+        %{name: "mishka.WordPress.2026-11-02.xml", content: content, type: "text/xml"}
+      ])
+    end
+
+    defp send_export!(view, content) do
+      view |> export_input(content) |> render_upload("mishka.WordPress.2026-11-02.xml")
+      view |> element("#migration-run-form-modal form") |> render_submit(%{"form" => %{}})
+    end
+
+    test "asks for the export file and no connection, and WordPress's asks for no file", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+
+      new_import!(view, "wordpress_file")
+
+      assert has_element?(view, ~s|#migration-run-form-modal input[type="file"][accept=".xml"]|)
+      assert has_element?(view, "#migration-run-form-modal label", "Export file")
+      assert connection_inputs(view) == []
+      refute has_element?(view, "#migration-run-form-modal label", "Connection")
+
+      new_import!(view)
+      refute has_element?(view, ~s|#migration-run-form-modal input[type="file"]|)
+      assert connection_inputs(view) == @wordpress_inputs
+    end
+
+    test "reads the uploaded export, keeps it for the run, and its dry run reads it; cancelled, the file is gone",
+         %{conn: conn, site: site} do
+      export = File.read!(Path.expand("../../fixtures/wordpress/wxr/all-content.xml", __DIR__))
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      new_import!(view, "wordpress_file")
+      send_export!(view, export)
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      kept = stored(run).connection["file"]
+      on_exit(fn -> File.rm(kept) end)
+
+      assert {run.source, run.source_host, run.extra["name"]} ==
+               {"wordpress_file", "localhost:8089", "Mishka Test Blog"}
+
+      assert File.read!(kept) == export
+      assert settled(view) =~ "Connected to Mishka Test Blog."
+      assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress export file")
+
+      row_action!(view, "dry_run", run)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Map.take(kinds(view), ~w(post page media)) == %{
+               "post" => 21,
+               "page" => 11,
+               "media" => 18
+             }
+
+      row_action!(view, "cancel", run)
+      assert status(run) == :cancelled
+      refute File.exists?(kept)
+    end
+
+    test "refuses a file that is not an export, or that declares entities, under the file and saves nothing",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+
+      for content <- [
+            "Some notes, not an export.",
+            ~s(<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY x SYSTEM "file:///etc/passwd">]>) <>
+              "<rss><channel><link>&x;</link></channel></rss>"
+          ] do
+        new_import!(view, "wordpress_file")
+        html = send_export!(view, content)
+
+        assert html =~ "This is not a WordPress export file, or it is damaged."
+        refute html =~ "root:"
+      end
+
+      assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
+    end
+
+    @tag capture_log: true
+    test "a run whose export was damaged since says in words why it stopped, and keeps no file",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      staged = Path.join(System.tmp_dir!(), "gervaz_#{System.unique_integer([:positive])}_x.xml")
+      File.cp!(Path.expand("../../fixtures/wordpress/wxr/posts-only.xml", __DIR__), staged)
+      on_exit(fn -> File.rm(staged) end)
+
+      run =
+        MishkaCmsMigration.create_run!(
+          %{source: "wordpress_file", file: [%{path: staged, client_name: "export.xml"}]},
+          actor: admin,
+          tenant: site.id
+        )
+
+      File.write!(run.connection["file"], staged |> File.read!() |> binary_part(0, 500))
+      run = start_dry_run!(run, admin)
+      [job] = assert_triggered(run, :run_dry_run)
+      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="run-details-reason"][data-reason="unreadable_file"]|,
+               "The file this run was given is not a WordPress export file, or it is damaged."
+             )
+
+      refute File.exists?(run.connection["file"])
+    end
+  end
+
   describe "the runs table" do
     setup do
       for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)

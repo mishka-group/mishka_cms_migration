@@ -796,6 +796,16 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         "The saved password can no longer be opened, as this CMS's secret key has changed since. Start a new run and type it again."
       )
 
+  defp stopped_because("no_file", _run),
+    do: gettext("The file this run was given is no longer there. Start a new run with it.")
+
+  defp stopped_because("unreadable_file", run),
+    do:
+      gettext(
+        "The file this run was given is not a %{source}, or it is damaged. Start a new run with the export made again.",
+        source: Source.label(run.source)
+      )
+
   defp stopped_because("forbidden", _run),
     do: gettext("The CMS refused what this run writes to the admin who started it.")
 
