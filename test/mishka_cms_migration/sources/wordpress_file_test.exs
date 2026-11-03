@@ -36,7 +36,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     "post_redirect" => ["posts"]
   }
 
-  # What an export does not carry ("Where it differs from the REST API" in the source's docs).
+  # What an export does not carry ("Where it differs from the REST API" in the source's docs): the
+  # site's logo and icon among its settings, and these attrs.
+  @unexported_settings ["logo", "icon"]
+
   @not_exported %{
     "user" => ~w(avatar_urls description link nickname roles url),
     "category" => ["link"],
@@ -62,8 +65,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   defp rest_items!(kind) do
     stub!()
     {:ok, conn} = WordPress.connect(@connection, "app password")
-    built!(WordPress, conn, Enum.flat_map(@recordings[kind], &recorded/1), kind)
+    built!(WordPress, conn, rest_rows(conn, kind), kind)
   end
+
+  defp rest_rows(conn, "setting") do
+    {:ok, rows, nil} = WordPress.list(conn, "setting", nil)
+    Enum.reject(rows, &(&1["id"] in @unexported_settings))
+  end
+
+  defp rest_rows(_conn, kind), do: Enum.flat_map(@recordings[kind], &recorded/1)
 
   defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
 
@@ -143,7 +153,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert WordPressFile.kinds() == WordPress.kinds()
     end
 
-    test "takes the run's host from the export's home, and keeps the site's name and home" do
+    test "takes the run's host from the export's home, and keeps the site's name, tagline and home" do
       assert WordPressFile.host(%{"file" => @all}) == "localhost:8089"
       assert WordPressFile.host(%{}) == nil
 
@@ -151,6 +161,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
       assert WordPressFile.extra(conn) == %{
                "name" => "Mishka Test Blog",
+               "description" =>
+                 "A WordPress site filled with realistic content for testing the Mishka CMS migration",
                "home" => "http://localhost:8089"
              }
     end
@@ -308,7 +320,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   end
 
   describe "a dry run" do
-    test "of the export reports what a dry run over the REST API reports for the same site, the pingback the REST recording left out besides" do
+    test "of the export reports what a dry run over the REST API reports for the same site, but the logo and icon an export does not carry, and the pingback the REST recording left out besides" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -327,7 +339,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds()
 
       assert counts(file) ==
-               Map.update!(counts(rest), "comment", &%{&1 | skipped: &1.skipped + pingbacks})
+               counts(rest)
+               |> Map.update!("comment", &%{&1 | skipped: &1.skipped + pingbacks})
+               |> Map.update!("setting", &%{&1 | created: &1.created - 2})
 
       assert imported_items(site) == []
     end

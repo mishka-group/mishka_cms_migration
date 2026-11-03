@@ -33,12 +33,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]`:
-  authors, terms and files before the pages and posts that point at them, the comments after the
-  posts they are on, and each post's old address after its post. `list/3` reads each from its REST
-  route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`,
-  `/wp/v2/posts`, `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress
-  answers the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with
+  `kinds/0` is `["user", "category", "tag", "media", "setting", "page", "post", "comment",
+  "post_redirect"]`: authors, terms and files before the site's settings, pages and posts that point
+  at them, the comments after the posts they are on, and each post's old address after its post.
+  `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
+  site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
+  when the site has it. `list/3` reads each other kind from its REST route (`/wp/v2/users`,
+  `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`,
+  `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress answers the raw fields
+  an editor sees, 100 rows a page. Pages and posts are asked for with
   `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
   asked for with `status=all` and `type=all`: approved and held for moderation, of every type
   (WordPress answers only plain comments unless asked), but not spam and not the trash.
@@ -103,6 +106,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
       `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
       address, website, user agent and the rest are kept in `extra`.
+    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"` or
+      `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
+      text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
+      `&amp;`), and the media id of the logo and the icon.
     * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
@@ -123,8 +130,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
   such as one read with `_fields`, is refused as `:unreadable`.
 
-  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), pages as
-  the CMS's own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
+  name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
+  own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
   users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
@@ -146,7 +154,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Sources.WordPress.Content
 
-  @kinds ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
+  @kinds [
+    "user",
+    "category",
+    "tag",
+    "media",
+    "setting",
+    "page",
+    "post",
+    "comment",
+    "post_redirect"
+  ]
 
   @form_fields [
     [
@@ -205,6 +223,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
 
+  @settings [
+    {"title", "name", "Site Title"},
+    {"tagline", "description", "Tagline"},
+    {"logo", "site_logo", "Site Logo"},
+    {"icon", "site_icon", "Site Icon"}
+  ]
+  @texts ["title", "tagline"]
+
   @comment_attrs ~w(post author author_name author_email status type date_gmt)
   @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
@@ -244,6 +270,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page] ++ params)
     |> listed(page)
   end
+
+  def list(%{index: index}, "setting", _cursor),
+    do:
+      {:ok,
+       for(
+         {id, field, label} <- @settings,
+         value = setting(id, index[field]),
+         do: %{"id" => id, "label" => label, "value" => value}
+       ), nil}
 
   def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
 
@@ -335,8 +370,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      }}
   end
 
+  def normalize(%{"id" => id, "label" => label, "value" => value}, "setting", _context),
+    do: {:ok, %{source_id: id, title: label, attrs: %{"value" => value}}}
+
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp setting(id, value) when id in @texts and is_binary(value),
+    do: value |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim() |> filled()
+
+  defp setting(_file, id) when is_integer(id) and id > 0, do: id
+  defp setting(_id, _none), do: nil
+
+  defp filled(""), do: nil
+  defp filled(text), do: text
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end

@@ -30,7 +30,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   page, the address, alt text and sizes of each file, and the content of each reusable block. That
   is how it answers the reads the WordPress source's `normalize/3` makes with its connection's
   `read` (the blocks and gallery images of a post's content, the posts, pages and files its links
-  point at), from the file instead of the site. `extra/1` keeps the site's name and home.
+  point at), from the file instead of the site. `extra/1` keeps the site's name, tagline and home.
 
   ## What it reads
 
@@ -40,6 +40,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   export, and `normalize/3` is the WordPress source's own, so its items carry the same attrs, extra
   and content, converted the same way:
 
+    * setting — the site's name and tagline, the channel's `title` and `description`, read once
+      when the file is opened;
     * user — each `wp:author`: its id, login (`username`), display name (`name`), first and last
       name, email, and a `slug` made of the login the way the CMS slugs a name;
     * category and tag — each `wp:category` and `wp:tag`: its id, name, slug, description, how
@@ -62,6 +64,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   An export carries less than the REST API answers, and some of it otherwise:
 
+    * the site's logo and icon are options, which an export does not carry, so only its name and
+      tagline are read;
     * an author has no bio, website, avatar, nickname or roles, so a blogger made from one has
       none, and its slug is made of its login rather than WordPress's own `user_nicename`;
     * a term has no `link`;
@@ -90,7 +94,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   @hidden ["trash", "auto-draft"]
   @entries ["page", "post"]
   @listed_comments %{"1" => "approved", "0" => "hold"}
-  @site ["title", "link", "wp:wxr_version"]
+  @site ["title", "description", "link", "wp:wxr_version"]
 
   @routes %{
     "post" => "/wp/v2/posts",
@@ -145,6 +149,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   def extra(%{index: index}), do: index
 
   @impl MishkaCmsMigration.Source
+  def list(conn, "setting", cursor), do: WordPress.list(conn, "setting", cursor)
+
   def list(%{file: path} = conn, kind, cursor) when kind in @kinds do
     page = cursor || 0
 
@@ -243,7 +249,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     {:ok,
      %{
        file: path,
-       index: %{"name" => site["title"], "home" => home},
+       index: %{"name" => site["title"], "description" => site["description"], "home" => home},
        read: &read(rows, &1, &2),
        authors: found.authors,
        terms: found.terms,

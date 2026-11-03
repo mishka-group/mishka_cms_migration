@@ -11,7 +11,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   is offered to the plugins (`migration:item:before_import`), is handed to its target's `prepare/3`
   (`MishkaCmsMigration.Target`), which may fetch what the write needs from the source or skip it,
   is written through its target's create or update action as the admin who pressed Import (a create
-  that is a generic action, such as the core Media's `:upload`, is run as one), and is recorded
+  that is a generic action, such as the core Media's `:upload`, is run as one, and an update that is
+  an upserting create, such as the core Setting's `:set`, is run as that create), and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
   so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
@@ -167,10 +168,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   end
 
   defp write(target, item, record, context) do
-    record
-    |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
-    |> Ash.update()
+    target.resource()
+    |> Info.action(target.actions().update)
+    |> update(record, target.attrs(item, context), context)
   end
+
+  defp update(%{type: :create} = upsert, %resource{}, attrs, context),
+    do: create(upsert, resource, attrs, context)
+
+  defp update(%{name: name}, record, attrs, context),
+    do: record |> Ash.Changeset.for_update(name, attrs, as(context)) |> Ash.update()
 
   defp create(%{type: :action, name: name}, resource, attrs, context),
     do: resource |> Ash.ActionInput.for_action(name, attrs, as(context)) |> Ash.run_action()

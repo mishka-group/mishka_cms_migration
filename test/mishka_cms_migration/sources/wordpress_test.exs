@@ -59,6 +59,14 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
   defp pieces(item), do: for(%{name: name} = piece <- item.content, name != nil, do: piece)
 
+  defp requested do
+    receive do
+      {:wordpress_request, %{request_path: path}} -> [path | requested()]
+    after
+      0 -> []
+    end
+  end
+
   defp recorded_ids(recording), do: recording |> recorded() |> Enum.map(&to_string(&1["id"]))
 
   defp counts(run, kind),
@@ -170,7 +178,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {:ok, WordPress} = Source.fetch("wordpress")
 
       assert WordPress.kinds() ==
-               ["user", "category", "tag", "media", "page", "post", "comment", "post_redirect"]
+               ~w(user category tag media setting page post comment post_redirect)
     end
   end
 
@@ -420,6 +428,28 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       for kept <- ["content", "post", "author", "status", "_links"],
           do: refute(is_map_key(reply.extra, kept))
+    end
+
+    test "a setting is the site's name, tagline, logo or icon, read from the REST index with no request of its own" do
+      index = recorded("index")
+
+      assert "setting" |> items!() |> Map.new(fn {id, item} -> {id, {item.title, item.attrs}} end) ==
+               %{
+                 "title" => {"Site Title", %{"value" => index["name"]}},
+                 "tagline" => {"Tagline", %{"value" => index["description"]}},
+                 "logo" => {"Site Logo", %{"value" => index["site_logo"]}},
+                 "icon" => {"Site Icon", %{"value" => index["site_icon"]}}
+               }
+
+      assert requested() == ["/wp-json/", "/wp-json/wp/v2/users/me"]
+
+      bare =
+        Map.merge(index, %{"name" => "Tom &amp; Jerry", "description" => "", "site_logo" => 0})
+
+      settings = items!("setting", %{"/wp-json/" => {"application/json", Jason.encode!(bare)}})
+
+      assert Map.keys(settings) |> Enum.sort() == ["icon", "title"]
+      assert settings["title"].attrs["value"] == "Tom & Jerry"
     end
 
     test "a spam comment and a pingback read as what they are, for the target to leave out" do
@@ -764,7 +794,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, file, page, post, comment and old address it found: pages, terms, files and posts to create, users with no CMS user, a file Media cannot keep, a redirect from each published post's address" do
+    test "reports every item it found: what to create, users with no CMS user, a file Media cannot keep, a tagline the CMS has no setting for, a redirect from each published post's address" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -790,7 +820,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert counts(run, "media") ==
                %{created: length(recorded("media")) - 1, updated: 0, skipped: 1, failed: 0}
 
-      for %{kind: kind} = counts <- run.report.kinds, kind not in ["post_redirect", "media"] do
+      assert counts(run, "setting") == %{created: 3, updated: 0, skipped: 1, failed: 0}
+
+      for %{kind: kind} = counts <- run.report.kinds,
+          kind not in ["post_redirect", "media", "setting"] do
         planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
@@ -807,6 +840,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
                    {:skipped, "no_user"},
+                   {:skipped, "no_setting"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}

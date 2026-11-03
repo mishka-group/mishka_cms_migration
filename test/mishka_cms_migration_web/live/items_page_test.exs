@@ -25,7 +25,8 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     "admin:dashboard:blog:post",
     "admin:dashboard:runtime:page",
     "admin:dashboard:runtime:redirect",
-    "admin:dashboard:runtime:media"
+    "admin:dashboard:runtime:media",
+    "admin:dashboard:setting"
   ]
   @table "#migration-items-table"
   @filter "migration-items-table_migration_items-filter"
