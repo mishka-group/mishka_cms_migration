@@ -75,18 +75,21 @@ defmodule MishkaCmsMigration.MigrationItem do
   a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), its Last
   import (`last_import_cell/1`): what the last import did with it, the same way, or Not imported,
   links to its CMS record (`record_paths`, below) and when a run or a choice last changed it. It
-  filters by kind, plan and last import, searches the title and the source id, and keeps them in
-  the address under `items`. A row expands to what is kept of the item, as JSON.
+  filters by kind, plan and last import, searches the title and the source id, and keeps them and
+  the view it shows in the address under `items`. A row expands to what is kept of the item, as
+  JSON.
 
   A row's Leave out or Bring back makes that choice (Gervaz's `:update` row actions), and so do the
-  bulk actions of the same names for the rows picked with the checkboxes (`choose/3`), Leave out
-  once the admin confirms. A category's or a tag's Map to… (Gervaz's `:edit` row action, which
-  shows the page's modal first) opens this resource's Gervaz form on the item, one `mapped_id`
-  field whose choices are the site's records of that kind in the language it leads with, and
-  Import as its own (`map_options/1`). The Plan cell shows the choice before the plan,
-  and the record a mapped item is connected to (`mapped_paths`). The table's other view, Map,
-  draws the items as the source nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`),
-  from the rows it keeps loaded.
+  bulk actions of the same names (Gervaz's `:update` bulk actions) for the rows picked with the
+  checkboxes, Leave out once the admin confirms; picking every row picks what the table's filters
+  find, of the run's site and source host alone. A flash says how many they changed
+  (`chosen/2`). A category's or a tag's Map to… (Gervaz's `:edit` row action, which shows the
+  page's modal first) opens this resource's Gervaz form on the item, one `mapped_id` field whose
+  choices are the site's records of that kind in the language it leads with, and Import as its own
+  (`map_options/1`). The Plan cell shows the choice before the plan, and the record a mapped item
+  is connected to (`mapped_paths`). The table's other view, Map, draws the items as the source
+  nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), from the rows it keeps
+  loaded.
 
   `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
   (`MishkaCmsMigration.MigrationRun.record_paths/2`), with its name, `nil` for an item with no
@@ -115,13 +118,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsMigration.Resources.Calculations.RecordPaths
   alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
   alias MishkaCmsMigration.Targets.Helpers.Read
-  alias MishkaGervaz.Table.Web.{DataLoader, State}
+  alias MishkaGervaz.Table.Web.Events.{BulkActionHooks, BulkActionResult}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
   @mappable ["category", "tag"]
-  # The Items table keeps the rows it has loaded and reads them again in one query on each page
-  # (`keep_loaded_records`), so its reads take as many rows as an admin may load.
-  @loaded_rows 10_000
   @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
   @written [
@@ -433,9 +433,8 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       bulk_actions do
         action :leave_out do
-          handler fn ids, state ->
-            MishkaCmsMigration.MigrationItem.choose(:leave_out, ids, state)
-          end
+          type :update
+          action {:master_leave_out, :leave_out}
 
           confirm dgettext_noop(
                     "mishka_gervaz",
@@ -449,9 +448,8 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
 
         action :bring_back do
-          handler fn ids, state ->
-            MishkaCmsMigration.MigrationItem.choose(:bring_back, ids, state)
-          end
+          type :update
+          action {:master_bring_back, :bring_back}
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Bring back") end
@@ -461,12 +459,8 @@ defmodule MishkaCmsMigration.MigrationItem do
       end
 
       hooks do
-        on_realtime fn notification, socket ->
-          {:halt, MishkaCmsMigration.MigrationItem.followed(notification, socket)}
-        end
-
-        on_bulk_action_success [:leave_out, :bring_back], fn _result, _state, socket ->
-          MishkaCmsMigration.MigrationItem.reloaded(socket)
+        on_bulk_action_success [:leave_out, :bring_back], fn summary, _state, socket ->
+          MishkaCmsMigration.MigrationItem.chosen(summary, socket)
         end
       end
 
@@ -480,7 +474,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       url_sync do
         mode :bidirectional
-        params [:filters, :sort, :page]
+        params [:filters, :sort, :page, :template]
         prefix "items"
         max_filter_length 500
       end
@@ -545,7 +539,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       pagination offset?: true,
                  keyset?: true,
                  default_limit: 20,
-                 max_page_size: @loaded_rows,
+                 max_page_size: 100,
                  countable: true,
                  required?: false
     end
@@ -557,7 +551,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       pagination offset?: true,
                  keyset?: true,
                  default_limit: 20,
-                 max_page_size: @loaded_rows,
+                 max_page_size: 100,
                  countable: true,
                  required?: false
 
@@ -983,59 +977,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   def unmapped(changeset, _context), do: changeset
 
   @doc """
-  The Items table's bulk Leave out and Bring back: runs `action` (`:leave_out` or `:bring_back`)
-  on the rows `selected` names, as the table's admin, under the run's site. `selected` is a list of
-  ids, or every row the table's filters find (`:all`, or `{:all_except, ids}`): the rows are read
-  with the table's own query, its path params and filters, so a selection never reaches past the
-  run's site and source host. Says how many it changed in a flash, and answers the table's state
-  with the selection cleared, or the first error, which the table says in words; the table then
-  reloads its rows (`reloaded/1`).
+  What the Items table says after its bulk Leave out or Bring back changed the rows `summary` names
+  (Gervaz's `MishkaGervaz.Table.Web.Events.BulkActionResult`): how many items it left out or
+  brought back, in a flash.
   """
-  @spec choose(atom(), list() | :all | {:all_except, list()}, State.t()) ::
-          {:ok, State.t()} | {:error, term()}
-  def choose(action, selected, %State{path_params: %{site_id: site_id}} = state) do
-    state
-    |> DataLoader.QueryBuilder.Default.build_query()
-    |> Ash.Query.unload(State.get_preloads(state))
-    |> selected(selected)
-    |> Ash.bulk_update(action, %{},
-      actor: state.current_user,
-      tenant: site_id,
-      strategy: [:stream],
-      return_records?: true,
-      return_errors?: true,
-      notify?: false
-    )
-    |> chosen(action, state)
-  end
-
-  @doc """
-  What the Items table does with an item's PubSub notification (`pub_sub` below, an admin's
-  choice): an item of the run's site and source host is read again as the table reads its rows,
-  with what the table preloads, and drawn in its place, in the rows a template keeps too; any other
-  is left alone.
-  """
-  @spec followed(Ash.Notifier.Notification.t(), Phoenix.LiveView.Socket.t()) ::
-          Phoenix.LiveView.Socket.t()
-  def followed(
-        %{data: %{site_id: site_id, source_host: host} = item},
-        %{assigns: %{table_state: %{path_params: %{site_id: site_id, source_host: host}} = state}} =
-          socket
-      ) do
-    item
-    |> Ash.load(State.get_preloads(state), actor: state.current_user, tenant: site_id)
-    |> drawn(socket, state)
-  end
-
-  def followed(_notification, socket), do: socket
-
-  @doc """
-  The Items table's rows read again, in one read: every page it has loaded where it keeps its
-  loaded rows, its first page otherwise.
-  """
-  @spec reloaded(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def reloaded(%{assigns: %{table_state: state}} = socket),
-    do: DataLoader.load_async(socket, state, page: loaded_pages(state), reset: true)
+  @spec chosen(BulkActionResult.t(), Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def chosen(%BulkActionResult{action_name: action, succeeded_count: count}, socket),
+    do: BulkActionHooks.put_flash(socket, :info, chosen_words(action, count))
 
   @doc """
   The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
@@ -1097,27 +1045,6 @@ defmodule MishkaCmsMigration.MigrationItem do
     """
   end
 
-  defp selected(query, :all), do: query
-  defp selected(query, {:all_except, ids}), do: Ash.Query.filter(query, id not in ^ids)
-  defp selected(query, ids) when is_list(ids), do: Ash.Query.filter(query, id in ^ids)
-
-  defp chosen(%Ash.BulkResult{status: :success} = result, action, state) do
-    send(
-      self(),
-      {:put_flash, :info, chosen_words(action, result.records |> List.wrap() |> length())}
-    )
-
-    {:ok,
-     State.update(state,
-       selected_ids: MapSet.new(),
-       excluded_ids: MapSet.new(),
-       select_all?: false
-     )}
-  end
-
-  defp chosen(%Ash.BulkResult{errors: [error | _]}, _action, _state), do: {:error, error}
-  defp chosen(%Ash.BulkResult{} = result, _action, _state), do: {:error, result}
-
   defp chosen_words(:leave_out, count),
     do: dngettext("mishka_gervaz", "%{count} item left out.", "%{count} items left out.", count)
 
@@ -1129,19 +1056,6 @@ defmodule MishkaCmsMigration.MigrationItem do
         "%{count} items brought back.",
         count
       )
-
-  defp drawn({:ok, item}, socket, state) do
-    rows = Enum.map(state.loaded_records, &if(&1.id == item.id, do: item, else: &1))
-
-    socket
-    |> Phoenix.LiveView.stream_insert(state.static.stream_name, item)
-    |> Phoenix.Component.assign(:table_state, State.update(state, loaded_records: rows))
-  end
-
-  defp drawn({:error, _unreadable}, socket, _state), do: socket
-
-  defp loaded_pages(%State{static: %{keep_loaded_records: true}, page: page}), do: page
-  defp loaded_pages(_state), do: 1
 
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 

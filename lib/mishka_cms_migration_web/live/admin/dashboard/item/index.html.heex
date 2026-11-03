@@ -38,7 +38,7 @@ SPDX-License-Identifier: Apache-2.0
         path(
           @socket,
           MishkaCmsMigration.MigrationRun.items_path(@run) <>
-            "?view=map&items_filter_source_kind=category"
+            "?items_template=item_tree&items_filter_source_kind=category"
         )
       }
       data-role="items-map-categories"
@@ -63,6 +63,5 @@ SPDX-License-Identifier: Apache-2.0
     resource={MishkaCmsMigration.MigrationItem}
     current_user={@current_user}
     url_state={@url_state}
-    template={@template}
   />
 </div>

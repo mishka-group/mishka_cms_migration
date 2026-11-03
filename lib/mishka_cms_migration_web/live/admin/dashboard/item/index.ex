@@ -37,8 +37,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   The table's template switcher moves between the List and the Map view
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), which draws the items as the source
-  nests them, each with its plan and its row actions. Map categories, in the head, opens the page
-  in the Map view on the categories (`?view=map`, read when the page mounts, and the kind filter).
+  nests them, each with its plan and its row actions; the table keeps the view in the address
+  (`items_template`), so a reload shows the same one. Map categories, in the head, opens the page
+  in the Map view on the categories (`items_template=item_tree` and the kind filter).
 
   An expanded row (`{:expand_row, id}`) shows what is kept of the item as JSON: its stored
   attributes and its `extra`, the source's fields the CMS has no home for, with the value of
@@ -82,7 +83,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   @hidden "[hidden]"
 
   @impl true
-  def mount(%{"run" => id} = params, _session, socket) do
+  def mount(%{"run" => id}, _session, socket) do
     socket = assign_new(socket, :current_user, fn -> nil end)
 
     case MigrationRun.fetch(id, socket.assigns.current_user) do
@@ -92,8 +93,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
            page_title: gettext("Items"),
            run: run,
            source: Source.label(run.source),
-           url_state: nil,
-           template: template(params)
+           url_state: nil
          )}
 
       _unreadable ->
@@ -145,9 +145,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: {:noreply, put_flash(socket, kind, message)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
-
-  defp template(%{"view" => "map"}), do: :item_tree
-  defp template(_params), do: nil
 
   defp mapped_words(%MigrationItem{mapped_id: nil}),
     do: gettext("It will be imported as its own.")

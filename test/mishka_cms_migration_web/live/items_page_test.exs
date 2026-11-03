@@ -589,7 +589,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       elixir = Enum.find(tags, &(&1.name == "Elixir"))
       list = open!(conn, admin, run, "?items_filter_source_kind=tag")
-      tree = open!(conn, admin, run, "?view=map&items_filter_source_kind=tag")
+      tree = open!(conn, admin, run, "?items_template=item_tree&items_filter_source_kind=tag")
 
       assert has_element?(tree, ~s|#{@table}[data-role="item-tree"]|)
 
@@ -629,7 +629,8 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   describe "the Map view" do
     test "draws the categories as WordPress nests them, each with its plan, and folds a parent's children",
          %{conn: conn, admin: admin, run: run} do
-      view = open!(conn, admin, run, "?view=map&items_filter_source_kind=category")
+      view =
+        open!(conn, admin, run, "?items_template=item_tree&items_filter_source_kind=category")
 
       assert has_element?(view, ~s|#{@table}[data-role="item-tree"]|)
       assert tree_roots(view) == ["2", "5", "1", "9"]
@@ -688,7 +689,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       query = URI.parse(to).query
 
-      assert %{"view" => "map", "items_filter_source_kind" => "category"} =
+      assert %{"items_template" => "item_tree", "items_filter_source_kind" => "category"} =
                URI.decode_query(query)
 
       tree = open!(conn, admin, run, "?" <> query)
