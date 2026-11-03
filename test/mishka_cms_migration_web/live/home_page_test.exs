@@ -1656,6 +1656,42 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert [more] = detailed(view, "run-details-items-link", "href")
       assert more == MigrationRun.items_path(run)
     end
+
+    test "the latest items link to their CMS record, when they have one", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      run = import!(run, admin)
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      items = MishkaCmsMigration.MigrationItem |> Ash.read!(tenant: site.id, authorize?: false)
+      panel = LazyHTML.from_fragment(render(view))
+      rows = LazyHTML.query(panel, ~s|#{@details} [data-role="run-details-item"]|)
+
+      linked =
+        for row <- rows do
+          [kind] = LazyHTML.attribute(row, "data-kind")
+          [source_id] = LazyHTML.attribute(row, "data-source-id")
+          item = Enum.find(items, &({&1.source_kind, &1.source_id} == {kind, source_id}))
+
+          hrefs =
+            row |> LazyHTML.query(~s|[data-role="record-admin"]|) |> LazyHTML.attribute("href")
+
+          assert is_nil(item.target_id) == (hrefs == []), "#{kind} #{source_id}"
+          hrefs
+        end
+
+      assert length(linked) == 8
+      assert List.flatten(linked) != []
+
+      assert Enum.all?(
+               List.flatten(linked),
+               &String.starts_with?(&1, "/admin/dashboard/runtime/redirects?")
+             )
+    end
   end
 
   describe "the sidebar" do

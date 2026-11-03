@@ -439,4 +439,83 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert total(open!(conn, master, run)) == length(stored(site))
     end
   end
+
+  describe "the links to the CMS record" do
+    test "open the record's place in the admin, and its page on the site where it has one", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      records = Ash.read!(MishkaBlog.BlogPost, tenant: site.id, authorize?: false)
+      record = Enum.find(records, &(&1.status == :published))
+      post = Enum.find(stored(site), &(&1.target_id == record.id))
+      filter!(view, %{"search" => post.title, "source_kind" => "post"})
+
+      hrefs =
+        view |> parts(~s|#{@table} [data-role="record-links"] a|) |> LazyHTML.attribute("href")
+
+      assert "/admin/dashboard/blog/posts?posts_search=#{URI.encode_www_form(record.slug)}" in hrefs
+      assert "/blog/#{record.slug}" in hrefs
+    end
+
+    test "name each kind's own list, found by the record", %{
+      conn: conn,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+
+      for {kind, list} <- [
+            {"page", "/admin/dashboard/runtime/pages?pages_search="},
+            {"media", "/admin/dashboard/runtime/medias?search="},
+            {"post_redirect", "/admin/dashboard/runtime/redirects?redirects_search="},
+            {"category", "/admin/dashboard/blog/collections?collections_search="},
+            {"tag", "/admin/dashboard/blog/tags?tags_search="}
+          ] do
+        filter!(view, %{"source_kind" => kind})
+
+        hrefs = attributes(view, "record-admin", "href")
+        assert hrefs != [], kind
+        assert Enum.all?(hrefs, &String.starts_with?(&1, list)), "#{kind}: #{inspect(hrefs)}"
+      end
+    end
+
+    test "are left out for an item with no record and for a record that was deleted", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      items = stored(site)
+
+      skipped = Enum.find(items, &(&1.source_kind == "post_redirect" and is_nil(&1.target_id)))
+      filter!(view, %{"source_kind" => "post_redirect", "search" => skipped.source_id})
+      assert {"post_redirect", skipped.source_id, "skipped"} in rows(view)
+      refute has_element?(view, ~s|#{@table} [data-role="record-links"]|)
+
+      gone = Enum.find(items, &(&1.source_kind == "tag"))
+      tag = Ash.get!(MishkaBlog.Tag, gone.target_id, tenant: site.id, authorize?: false)
+      Ash.destroy!(tag, tenant: site.id, authorize?: false)
+
+      filter!(view, %{"source_kind" => "tag", "search" => gone.title})
+      assert {"tag", gone.source_id, "created"} in rows(view)
+      refute has_element?(view, ~s|#{@table} [data-role="record-links"]|)
+    end
+
+    test "are left out for a record the admin may not read", %{
+      conn: conn,
+      site: site,
+      run: run
+    } do
+      reader = migration_admin!(site, ["admin:dashboard:migration"])
+      view = open!(conn, reader, run)
+
+      filter!(view, %{"source_kind" => "post"})
+      assert rows(view) != []
+      refute has_element?(view, ~s|#{@table} [data-role="record-links"]|)
+    end
+  end
 end

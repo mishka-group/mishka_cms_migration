@@ -153,7 +153,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   `width`), so a row whose status changes its buttons never moves the other columns. A row
   expands to what its last dry run or import found, kind by kind: the kind in words
   (`kind_label/1`), how many items the source listed, what was done with them
-  (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`).
+  (`result_summary/1`) and why the skipped ones were skipped (`reason_label/1`), and its latest
+  items, each with links to its CMS record (`record_paths/2`, `record_links/1`).
 
   A source's card opens the run's Gervaz form with the card's source as the form's default. Its
   Connection is a `:key_map` whose keys the source names
@@ -191,6 +192,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
+  alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
 
   alias MishkaCmsMigration.Resources.Changes.{
@@ -203,6 +205,10 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
+  alias MishkaGervaz.Table.Web.UrlSync
+
+  # Mishka Blog is optional: its pages are linked only for the kinds its targets write.
+  @compile {:no_warn_undefined, MishkaBlog.Provision}
 
   @statuses [:pending, :dry_running, :dry_run, :importing, :done, :failed, :cancelled]
   @endpoint Application.compile_env!(:mishka_cms_core, :endpoint)
@@ -1651,6 +1657,126 @@ defmodule MishkaCmsMigration.MigrationRun do
   @doc "The admin address of the page that lists the items of `run`'s source on its site."
   @spec items_path(%{id: String.t()}) :: String.t()
   def items_path(%{id: id}), do: "/admin/dashboard/migration/runs/#{id}/items"
+
+  @doc """
+  Where the CMS record an item of `kind` was written to is, given `record` as its target's resource
+  reads it: `%{admin: path, public: path | nil}`, or `nil` for a kind this extension names no pages
+  for, such as one a source plugin lists.
+
+  The admin has no address for one record: its pages edit in a modal over a list. `admin` is the
+  record's list opened on the record, the way the list's own search writes its address
+  (`MishkaGervaz.Table.Web.UrlSync`): a post, category, tag or blogger by its slug, a page by its
+  path, a file by its name, a redirect by its old address, and a comment on the list of its post's
+  comments. `public` is the record's page on the site where it is live: a published post, an active
+  category, a tag, a blogger's page, an active page and a file; a comment and a redirect have none.
+  """
+  @spec record_paths(String.t(), struct()) :: %{admin: String.t(), public: String.t() | nil} | nil
+  def record_paths("post", post),
+    do: %{
+      admin: listed("/admin/dashboard/blog/posts", post, %{search: post.slug}),
+      public: site_page(:post, post, post.status == :published)
+    }
+
+  def record_paths("category", category),
+    do: %{
+      admin: listed("/admin/dashboard/blog/collections", category, %{search: category.slug}),
+      public: site_page(:category, category, category.status == :active)
+    }
+
+  def record_paths("tag", tag),
+    do: %{
+      admin: listed("/admin/dashboard/blog/tags", tag, %{search: tag.slug}),
+      public: site_page(:tag, tag, true)
+    }
+
+  def record_paths("user", blogger),
+    do: %{
+      admin: listed("/admin/dashboard/blog/bloggers", blogger, %{search: blogger.slug}),
+      public: site_page(:author, blogger, true)
+    }
+
+  def record_paths("comment", comment),
+    do: %{
+      admin: listed("/admin/dashboard/blog/comments", comment, %{post_id: comment.post_id}),
+      public: nil
+    }
+
+  def record_paths("page", page),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/pages", page, %{search: page.path}),
+      public: page_address(page)
+    }
+
+  def record_paths("media", media),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/medias", media, %{search: media.name}),
+      public: media.relative_path
+    }
+
+  def record_paths("post_redirect", redirect),
+    do: %{
+      admin:
+        listed("/admin/dashboard/runtime/redirects", redirect, %{search: redirect.from_path}),
+      public: nil
+    }
+
+  def record_paths(_other, _record), do: nil
+
+  defp listed(path, %resource{}, filters) do
+    config = resource |> MishkaGervaz.Resource.Info.Table.url_sync() |> Map.new()
+    UrlSync.build_path(path, %{filter_values: filters}, config)
+  end
+
+  defp page_address(%{active: true} = page),
+    do: Languages.url(page.path, %{Languages.capture() => page.language}, page.site_id)
+
+  defp page_address(_inactive), do: nil
+
+  defp site_page(key, record, true) do
+    captures = %{
+      Languages.capture() => Map.get(record, :language) || Languages.primary(record.site_id),
+      "slug" => record.slug
+    }
+
+    Languages.url(Map.fetch!(MishkaBlog.Provision.item_paths(), key), captures, record.site_id)
+  end
+
+  defp site_page(_key, _record, false), do: nil
+
+  @doc """
+  The links to the CMS record `paths` (`record_paths/2`) names: an icon link to its place in the
+  admin, and one to its page on the site where it has one. Nothing for `nil`.
+  """
+  def record_links(assigns) do
+    ~H"""
+    <span :if={@paths} data-role="record-links" class="inline-flex items-center gap-[6px]">
+      <a
+        href={@paths.admin}
+        data-role="record-admin"
+        title={dgettext("mishka_gervaz", "Open in the admin")}
+        aria-label={dgettext("mishka_gervaz", "Open in the admin")}
+        class="grid size-[26px] place-items-center rounded-[8px] bg-[#eeedfb] text-[#5b57d6] transition-opacity hover:opacity-80"
+      >
+        <MishkaCmsCore.CoreComponents.icon name="hero-pencil-square" class="size-[14px]" />
+      </a>
+      <a
+        :if={@paths.public}
+        href={@paths.public}
+        target="_blank"
+        rel="noopener"
+        data-role="record-public"
+        title={dgettext("mishka_gervaz", "View on the site")}
+        aria-label={dgettext("mishka_gervaz", "View on the site")}
+        class="grid size-[26px] place-items-center rounded-[8px] bg-[#f2f1ec] text-[#7c7a75] transition-opacity hover:opacity-80"
+      >
+        <MishkaCmsCore.CoreComponents.icon
+          name="hero-arrow-top-right-on-square"
+          class="size-[14px]"
+        />
+      </a>
+    </span>
+    """
+  end
 
   @doc """
   Why an item was skipped or failed, or what was written otherwise than the source has it (a

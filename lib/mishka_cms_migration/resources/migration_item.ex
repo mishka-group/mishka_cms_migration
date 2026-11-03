@@ -34,9 +34,14 @@ defmodule MishkaCmsMigration.MigrationItem do
   run met it last; its "Only this run's" filter narrows them to the ones this run met last. Each row
   shows the item's kind (`MishkaCmsMigration.MigrationRun.kind_label/1`), title and source id, what
   the last run did with it as an outcome pill with its reason in words
-  (`MishkaCmsMigration.MigrationRun.reason_label/1`) and when the last run met it. It filters by
-  kind and outcome, searches the title and the source id, and keeps them in the address under
-  `items`. A row expands to what is kept of the item, as JSON.
+  (`MishkaCmsMigration.MigrationRun.reason_label/1`), links to its CMS record (`record_paths`,
+  below) and when the last run met it. It filters by kind and outcome, searches the title and the
+  source id, and keeps them in the address under `items`. A row expands to what is kept of the
+  item, as JSON.
+
+  `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
+  (`MishkaCmsMigration.MigrationRun.record_paths/2`), `nil` for an item with no record or whose
+  record is gone. It reads the records of a page together, as the reader.
   """
 
   use Ash.Resource,
@@ -55,6 +60,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
   alias MishkaCmsMigration.MigrationRun
+  alias MishkaCmsMigration.Resources.Calculations.RecordPaths
 
   @outcomes MishkaCmsMigration.Report.outcomes()
   @source [:source_host, :source_kind, :source_id]
@@ -106,6 +112,12 @@ defmodule MishkaCmsMigration.MigrationItem do
         name :migration_items
         route "/admin/dashboard/migration/runs/:run/items"
         stream_name :migration_items
+      end
+
+      source do
+        preload do
+          always [:record_paths]
+        end
       end
 
       columns do
@@ -219,6 +231,25 @@ defmodule MishkaCmsMigration.MigrationItem do
                 {@reason}
               </div>
             </div>
+            """
+          end
+        end
+
+        column :record do
+          static true
+          requires [:target_id, :record_paths]
+          label fn -> dgettext("mishka_gervaz", "CMS record") end
+
+          ui do
+            width "minmax(96px,0.6fr)"
+          end
+
+          render fn item ->
+            assigns = %{paths: item.record_paths}
+
+            ~H"""
+            <MigrationRun.record_links paths={@paths} />
+            <span :if={!@paths} class="text-[12px] text-[#bcb9b2]">—</span>
             """
           end
         end
@@ -508,6 +539,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       attribute_writable? true
       public? true
       description "The last run that met the item"
+    end
+  end
+
+  calculations do
+    calculate :record_paths, :map, RecordPaths do
+      public? true
+
+      description "Where the item's CMS record is in the admin and on the site, nil when it has none"
     end
   end
 

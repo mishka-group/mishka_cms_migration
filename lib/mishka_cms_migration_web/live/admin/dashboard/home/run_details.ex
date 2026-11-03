@@ -21,8 +21,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       many of them failed, else were skipped, with the reason most of those entries give
       (`reason_label/1`): "54 skipped: No public address at the source" when that reason covers all
       54, "most often" before it when others are among them.
-    * The latest items, the report's last entries newest first, and how many more it counted, which
-      opens the run's Items page.
+    * The latest items, the report's last entries newest first, each with links to its CMS record
+      when it has one (`item_paths/2`, `MishkaCmsMigration.MigrationRun.record_links/1`), and how
+      many more it counted, which opens the run's Items page.
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
@@ -53,6 +54,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   @card "rounded-[16px] border border-[#ecebe6] bg-white px-5 py-[18px] shadow-[0_1px_2px_rgba(30,28,24,0.04)]"
 
   attr :run, MigrationRun, required: true, doc: "the run, with its report, progress and extra"
+
+  attr :paths, :map,
+    default: %{},
+    doc: "the CMS record paths of the latest items by `{kind, source id}`, from `item_paths/2`"
 
   @doc "The expanded row of `run`: its head, its kinds, its latest items and its source."
   def panel(assigns) do
@@ -103,7 +108,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         <div class="col-span-2 min-w-0 max-[980px]:col-span-1!">
           <.progress_card :if={@progress} id={@id} progress={@progress} />
           <.first_dry_run :if={@run.status == :pending} run={@run} />
-          <.latest :if={@kinds != []} id={@id} run={@run} report={@report} total={@total} />
+          <.latest
+            :if={@kinds != []}
+            id={@id}
+            run={@run}
+            report={@report}
+            total={@total}
+            paths={@paths}
+          />
           <.no_report
             :if={!@progress and @run.status != :pending and @kinds == []}
             report={@report}
@@ -113,6 +125,48 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       </div>
     </section>
     """
+  end
+
+  @doc """
+  The report's entries the panel lists as the latest items, newest first.
+  """
+  @spec latest_entries(map()) :: [Report.entry()]
+  def latest_entries(%{entries: entries}), do: entries |> Enum.take(-@latest) |> Enum.reverse()
+
+  @doc """
+  The CMS record paths (`MishkaCmsMigration.MigrationRun.record_paths/2`) of `run`'s latest items,
+  by `{kind, source id}`, read as `user` under the run's site. An item with no record, one whose
+  record is gone, and every item when the read fails, have none.
+  """
+  @spec item_paths(MigrationRun.t(), map()) :: %{{String.t(), String.t()} => map()}
+  def item_paths(%MigrationRun{report: %{entries: _entries} = report} = run, user) do
+    report
+    |> latest_entries()
+    |> Enum.filter(& &1.source_id)
+    |> Enum.group_by(& &1.kind, & &1.source_id)
+    |> Enum.flat_map(fn {kind, ids} -> kept(run, kind, ids, user) end)
+    |> loaded(run, user)
+  end
+
+  def item_paths(_run, _user), do: %{}
+
+  defp kept(run, kind, ids, user) do
+    case MishkaCmsMigration.items_by_sources(run.source_host, kind, ids,
+           actor: user,
+           tenant: run.site_id
+         ) do
+      {:ok, items} -> items
+      {:error, _unreadable} -> []
+    end
+  end
+
+  defp loaded([], _run, _user), do: %{}
+
+  defp loaded(items, run, user) do
+    case Ash.load(items, :record_paths, actor: user, tenant: run.site_id) do
+      {:ok, items} -> Map.new(items, &{{&1.source_kind, &1.source_id}, &1.record_paths})
+      {:error, _unreadable} -> %{}
+    end
   end
 
   attr :id, :string, required: true
@@ -325,9 +379,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   attr :run, MigrationRun, required: true
   attr :report, :map, required: true
   attr :total, :integer, required: true
+  attr :paths, :map, default: %{}
 
   defp latest(assigns) do
-    items = assigns.report.entries |> Enum.take(-@latest) |> Enum.reverse()
+    items = latest_entries(assigns.report)
     assigns = assign(assigns, items: items, more: max(assigns.total - length(items), 0))
 
     ~H"""
@@ -372,6 +427,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
               </span>
             </div>
           </div>
+          <MigrationRun.record_links paths={@paths[{item.kind, item.source_id}]} />
           <span class={[
             "inline-flex flex-none items-center rounded-[20px] px-[9px] py-[3px] text-[10px] font-bold whitespace-nowrap",
             MigrationRun.outcome_class(item.outcome)

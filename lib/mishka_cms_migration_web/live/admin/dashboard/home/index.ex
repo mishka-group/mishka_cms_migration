@@ -33,8 +33,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
   `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
-  got there, what its last report found kind by kind and its latest items, how far a running job
-  is, why a failed run stopped, and what its source said of itself and the admin chose. The page keeps which row it last expanded and draws it again on each
+  got there, what its last report found kind by kind and its latest items, each with links to its
+  CMS record, how far a running job is, why a failed run stopped, and what its source said of
+  itself and the admin chose. The page keeps which row it last expanded and draws it again on each
   of that run's notifications, so a dry run moving on, or finishing, shows in it without a reload.
 
   ## Logs
@@ -179,7 +180,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   end
 
   defp expand(socket, id) do
-    id |> MigrationRun.fetch(socket.assigns.current_user) |> expanded()
+    user = socket.assigns.current_user
+    id |> MigrationRun.fetch(user) |> expanded(user)
     assign(socket, :expanded_id, id)
   end
 
@@ -188,20 +190,24 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   defp refresh(socket, _notification), do: socket
 
-  defp expanded({:ok, %MigrationRun{} = run}),
-    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(run))
+  defp expanded({:ok, %MigrationRun{} = run}, user),
+    do:
+      send_update(MishkaGervaz.Table.Web.Live,
+        id: @table_id,
+        expanded_html: details_html(run, user)
+      )
 
-  defp expanded({:ok, nil}),
+  defp expanded({:ok, nil}, _user),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: :not_found)
 
-  defp expanded({:error, reason}),
+  defp expanded({:error, reason}, _user),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
 
-  defp details_html(run) do
-    assigns = %{run: run}
+  defp details_html(run, user) do
+    assigns = %{run: run, paths: RunDetails.item_paths(run, user)}
 
     ~H"""
-    <RunDetails.panel run={@run} />
+    <RunDetails.panel run={@run} paths={@paths} />
     """
     |> Phoenix.HTML.Safe.to_iodata()
     |> IO.iodata_to_binary()
