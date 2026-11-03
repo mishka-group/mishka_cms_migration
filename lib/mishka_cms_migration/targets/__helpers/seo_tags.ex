@@ -17,8 +17,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.SeoTags do
     * `"image"` — the `og:image` meta: the Media address of the file the same run, or an earlier
       one, wrote for its `"image_id"` (`MishkaCmsMigration.Targets.CmsMedia.addresses/2`). An image
       on another site than the source keeps its address; one on the source that was not imported
-      is left out, and so is the target's `featured` file, which a Blog post already shows as its
-      share image;
+      is left out, and so is the target's `featured` file: a page with no stored `og:image` gets the
+      core's share card (`MishkaCmsCore.Runtime.ShareCard`), which draws a Blog post's featured
+      image, and a stored one would replace that card;
     * `"canonical"` — the `canonical` link. The source keeps only a canonical on another site.
 
   An item without `"seo"` has no tags.
