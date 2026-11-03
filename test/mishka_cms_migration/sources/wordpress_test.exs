@@ -26,6 +26,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     "user" => "users",
     "category" => "categories",
     "tag" => "tags",
+    "media" => "media",
     "page" => "pages",
     "post" => "posts",
     "post_redirect" => "posts"
@@ -167,7 +168,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     test "is installed with the extension, and lists authors and terms before what points at them" do
       assert {:ok, WordPress} = Source.fetch("wordpress")
 
-      assert WordPress.kinds() == ["user", "category", "tag", "page", "post", "post_redirect"]
+      assert WordPress.kinds() ==
+               ["user", "category", "tag", "media", "page", "post", "post_redirect"]
     end
   end
 
@@ -180,6 +182,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             {"user", "/wp-json/wp/v2/users", nil},
             {"category", "/wp-json/wp/v2/categories", nil},
             {"tag", "/wp-json/wp/v2/tags", nil},
+            {"media", "/wp-json/wp/v2/media", nil},
             {"page", "/wp-json/wp/v2/pages", "any"},
             {"post", "/wp-json/wp/v2/posts", "any"},
             {"post_redirect", "/wp-json/wp/v2/posts", "any"}
@@ -377,6 +380,74 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {redirects["39"].attrs["from"], redirects["41"].attrs["from"]} == {nil, nil}
     end
 
+    test "a file carries where it is, its type and size, its alt text, caption and description" do
+      hero = items!("media")["4"]
+
+      assert hero.title == "Hero image"
+      assert hero.modified_at == ~U[2026-11-02 06:22:14Z]
+
+      assert Map.take(hero.attrs, ~w(source_url filename mime_type filesize post)) == %{
+               "source_url" => "http://localhost:8089/wp-content/uploads/2026/11/hero.jpg",
+               "filename" => "hero.jpg",
+               "mime_type" => "image/jpeg",
+               "filesize" => 43_354,
+               "post" => 32
+             }
+
+      assert {hero.attrs["alt_text"], hero.attrs["caption"], hero.attrs["description"]} ==
+               {"A blue gradient hero image with a white circle",
+                "The hero image of the welcome post", "A 1600 by 900 JPEG drawn by the seed."}
+
+      assert %{"medium" => %{"source_url" => "http" <> _}} = hero.extra["media_details"]["sizes"]
+
+      for rendered <- ["_links", "modified", "title", "caption", "description"] do
+        refute is_map_key(hero.extra, rendered)
+      end
+    end
+
+    test "a post's media name each file of the site its content shows or links to, by the file's id, a size of it too" do
+      posts = items!("post")
+      uploads = "http://localhost:8089/wp-content/uploads/2026/11/"
+
+      assert posts["35"].attrs["media"] == %{
+               (uploads <> "guide.pdf") => 13,
+               (uploads <> "hero-300x169.jpg") => 4,
+               (uploads <> "diagram.png") => 10
+             }
+
+      assert posts["34"].attrs["media"] == %{
+               (uploads <> "hero.jpg") => 4,
+               (uploads <> "hero-300x169.jpg") => 4,
+               (uploads <> "gallery-1.jpg") => 6,
+               (uploads <> "gallery-2.jpg") => 7,
+               (uploads <> "gallery-3.jpg") => 8,
+               (uploads <> "sample.mp4") => 14,
+               (uploads <> "animated.gif") => 12
+             }
+
+      assert posts["52"].attrs["media"] == %{}
+    end
+
+    test "a post's media are asked for by the ids of its images and by the slugs of its files, with only the fields they need" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
+
+      assert {:ok, _attrs} = WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/media",
+                         query_params: %{"include" => "10", "_fields" => fields}
+                       }}
+
+      assert_received {:wordpress_request,
+                       %{request_path: "/wp-json/wp/v2/media", query_params: %{"slug" => slugs}}}
+
+      assert fields == "id,source_url,media_details"
+      assert ~w(guide hero diagram) -- String.split(slugs, ",") == []
+    end
+
     test "a post's links to the site's own posts name the post's slug, and its other links are left out" do
       posts = items!("post")
 
@@ -416,11 +487,13 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                String.split(slugs, ",") == []
     end
 
-    test "a post's links are left as they are without the connection to ask WordPress" do
+    test "a post's links and media are left as they are without the connection to ask WordPress" do
       [row] = Enum.filter(recorded("posts"), &(&1["id"] == 35))
 
-      assert {:ok, %{attrs: %{"links" => links}}} = WordPress.normalize(row, "post", @context)
-      assert links == %{}
+      assert {:ok, %{attrs: %{"links" => links, "media" => media}}} =
+               WordPress.normalize(row, "post", @context)
+
+      assert {links, media} == {%{}, %{}}
     end
 
     test "a row without the fields its kind needs is refused, and an unknown kind too" do
@@ -609,7 +682,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
                    {:skipped, "no_user"},
-                   {:skipped, "no_old_address"}
+                   {:skipped, "no_old_address"},
+                   {:skipped, "no_target"}
                  ])
              )
 

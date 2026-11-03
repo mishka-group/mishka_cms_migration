@@ -33,11 +33,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "page", "post", "post_redirect"]`: authors and terms
-  before the pages and posts that point at them, and each post's old address after its post.
-  `list/3` reads each from its REST route (`/wp/v2/users`, `/wp/v2/categories`, `/wp/v2/tags`,
-  `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with `context=edit`, so WordPress answers
-  the raw fields an editor sees, 100 rows a page. Pages and posts are asked for with `status=any`:
+  `kinds/0` is `["user", "category", "tag", "media", "page", "post", "post_redirect"]`: authors,
+  terms and files before the pages and posts that point at them, and each post's old address after
+  its post. `list/3` reads each from its REST route (`/wp/v2/users`, `/wp/v2/categories`,
+  `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`) as the signed-in user, with
+  `context=edit`, so WordPress answers the raw fields an editor sees, 100 rows a page. Pages and
+  posts are asked for with `status=any`:
   published, scheduled, draft, pending and private, but not the trash. `"post_redirect"` reads the
   posts again, only their `id`, `title`, `status`, `link` and `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there is one, and
   `nil` after the last. A list WordPress refuses fails the walk:
@@ -68,7 +69,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       segment of its path (`slug`), from `/wp/v2/posts` in any status with only `id`, `slug` and
       `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
       page, a category, a file, an attachment page or a post the site no longer has is left out,
-      and so is every link when the connection is not at hand.
+      and so is every link when the connection is not at hand. Its `media` are the addresses of
+      its converted content (`src` and `href`) that are a file of the site's media library, each
+      as written to the id of the file it is: the original or one of the sizes WordPress made of it
+      (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
+      with only `id`, `source_url` and `media_details`, by the ids of its `wp-image-<id>` images
+      (`include`) and by slugs made of the file names, without a size (`slug`), and an address is
+      a file's when its path is the path of the file or of one of its sizes. A file whose slug is
+      not its name and that no `wp-image-<id>` names is left out, and so is every address when the
+      connection is not at hand.
+    * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
+      `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
+      `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
+      WordPress that answers none of its own), `alt_text`, `caption` and `description` (their raw
+      text), `post` (the post it was uploaded to, `0` for none) and `date_gmt`.
     * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
       and `parent` for a category. A term has no `modified_at`.
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
@@ -81,15 +95,16 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   `extra` is every other field of the row: `meta` (Yoast's `_yoast_wpseo_*` fields and every other
   registered meta), `guid`, `password`, `comment_status`, `class_list`, a user's `capabilities`
-  and `registered_date`, a term's `taxonomy`, and what a plugin adds. It leaves out what WordPress
-  works out afresh for each answer rather than keeps: `_links`, the `rendered` halves of the fields
-  above, and Yoast's `yoast_head` and `yoast_head_json`; and the local `modified`, which
-  `modified_at` already says. Yoast's head carries the modified time too, so keeping either would
-  make an item that was only saved again look changed to `MishkaCmsMigration.Source.Item.hash/1`.
-  A row without the fields its kind needs, such as one read with `_fields`, is refused as
-  `:unreadable`.
+  and `registered_date`, a term's `taxonomy`, a file's `media_details` (its sizes among them), and
+  what a plugin adds. It leaves out what WordPress works out afresh for each answer rather than
+  keeps: `_links`, the `rendered` halves of the fields above, and Yoast's `yoast_head` and
+  `yoast_head_json`; and the local `modified`, which `modified_at` already says. Yoast's head
+  carries the modified time too, so keeping either would make an item that was only saved again
+  look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
+  such as one read with `_fields`, is refused as `:unreadable`.
 
-  Pages are written as the CMS's own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
+  Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), pages as
+  the CMS's own pages (`MishkaCmsMigration.Targets.CmsPage`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
   users, matched by email (`MishkaCmsMigration.Targets.BlogBlogger`), and
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
@@ -110,7 +125,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Sources.WordPress.Content
 
-  @kinds ["user", "category", "tag", "page", "post", "post_redirect"]
+  @kinds ["user", "category", "tag", "media", "page", "post", "post_redirect"]
 
   @form_fields [
     [
@@ -139,6 +154,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "user" => {"/wp/v2/users", []},
     "category" => {"/wp/v2/categories", []},
     "tag" => {"/wp/v2/tags", []},
+    "media" => {"/wp/v2/media", []},
     "page" => {"/wp/v2/pages", [status: "any"]},
     "post" => {"/wp/v2/posts", [status: "any"]},
     "post_redirect" =>
@@ -148,6 +164,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @per_page 100
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
+  @media_fields [_fields: "id,source_url,media_details"]
+  @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
 
   @rendered ~w(_links yoast_head yoast_head_json)
 
@@ -155,6 +173,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @entry_attrs ~w(slug status link parent author categories tags featured_media date_gmt
                   menu_order sticky format template)
   @entry_read ~w(id title content excerpt modified modified_gmt) ++ @entry_attrs ++ @rendered
+
+  @media_attrs ~w(slug source_url mime_type media_type alt_text post date_gmt)
+  @media_read ~w(id title caption description filesize modified modified_gmt) ++
+                @media_attrs ++ @rendered
 
   @term_attrs ~w(slug description parent count link)
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
@@ -207,15 +229,49 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         context
       )
       when kind in @entries do
+    content = Content.call(html, fetch(context))
+
     {:ok,
      %{
        source_id: id,
        title: title,
        parent: parent(row),
        modified_at: Map.get(row, "modified_gmt"),
-       attrs: row |> entry_attrs() |> decoded_slug() |> Map.put("links", links(html, context)),
+       attrs:
+         row
+         |> entry_attrs()
+         |> decoded_slug()
+         |> Map.merge(%{
+           "links" => links(html, context),
+           "media" => media(html, content, context)
+         }),
        extra: Map.drop(row, @entry_read),
-       content: Content.call(html, fetch(context))
+       content: content
+     }}
+  end
+
+  def normalize(
+        %{"id" => id, "title" => %{"raw" => title}, "source_url" => url} = row,
+        "media",
+        _context
+      )
+      when is_binary(url) do
+    {:ok,
+     %{
+       source_id: id,
+       title: title,
+       modified_at: Map.get(row, "modified_gmt"),
+       attrs:
+         row
+         |> Map.take(@media_attrs)
+         |> decoded_slug()
+         |> Map.merge(%{
+           "filename" => url |> URI.parse() |> file_name(),
+           "filesize" => filesize(row),
+           "caption" => raw(row["caption"]),
+           "description" => raw(row["description"])
+         }),
+       extra: Map.drop(row, @media_read)
      }}
   end
 
@@ -312,17 +368,103 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp linked_posts(req, asked) do
     Enum.flat_map([:include, :slug], fn by ->
-      asked_posts(req, by, for({_href, {^by, value}} <- asked, do: asked_value(by, value)))
+      asked_rows(
+        req,
+        {"/wp/v2/posts", @linked_fields},
+        {by, for({_href, {^by, value}} <- asked, do: asked_value(by, value))}
+      )
     end)
   end
 
-  defp asked_posts(_req, _by, []), do: []
+  defp asked_rows(_req, _route, {_by, []}), do: []
 
-  defp asked_posts(req, by, values),
+  defp asked_rows(req, {route, fields}, {by, values}),
     do:
       req
-      |> read("/wp/v2/posts", [{by, values |> Enum.uniq() |> Enum.join(",")} | @linked_fields])
+      |> read(route, [{by, values |> Enum.uniq() |> Enum.join(",")} | fields])
       |> Map.values()
+
+  defp media(html, content, %{conn: %{req: req, index: %{"home" => home}}})
+       when is_binary(home) do
+    files = content |> addresses() |> Enum.filter(&file?(&1, URI.parse(home)))
+
+    rows =
+      Enum.flat_map(
+        [include: image_ids(html), slug: Enum.flat_map(files, &file_slugs/1)],
+        &asked_rows(req, {"/wp/v2/media", @media_fields}, &1)
+      )
+
+    for href <- files, id = file_of(rows, href), into: %{}, do: {href, id}
+  end
+
+  defp media(_html, _content, _context), do: %{}
+
+  defp addresses(content) do
+    tree =
+      LazyHTML.from_fragment(
+        for %{html: html} when is_binary(html) <- content, into: "", do: html
+      )
+
+    for attribute <- ["src", "href"],
+        address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
+        uniq: true,
+        do: address
+  end
+
+  defp file?(href, home), do: href |> String.trim() |> URI.parse() |> file_on?(home)
+
+  defp file_on?(%URI{path: "/" <> _ = path} = uri, home),
+    do: on_site?(uri, home) and Path.extname(path) != ""
+
+  defp file_on?(_uri, _home), do: false
+
+  defp image_ids(html),
+    do:
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("img[class]")
+      |> LazyHTML.attribute("class")
+      |> Enum.flat_map(&String.split/1)
+      |> Enum.flat_map(&image_id/1)
+
+  defp image_id("wp-image-" <> id), do: id |> Integer.parse() |> whole_id()
+  defp image_id(_class), do: []
+
+  defp whole_id({id, ""}) when id > 0, do: [id]
+  defp whole_id(_not_an_id), do: []
+
+  defp file_slugs(href) do
+    name =
+      href |> String.trim() |> URI.parse() |> file_name() |> Path.rootname() |> String.downcase()
+
+    Enum.uniq([name, String.replace(name, @sized, "")])
+  end
+
+  defp file_of(rows, href) do
+    path = href |> String.trim() |> URI.parse() |> Map.get(:path)
+    Enum.find_value(rows, &(path in file_paths(&1) and &1["id"]))
+  end
+
+  defp file_paths(row),
+    do:
+      for(
+        url <- [row["source_url"] | Enum.map(sizes(row), & &1["source_url"])],
+        is_binary(url),
+        do: URI.parse(url).path
+      )
+
+  defp sizes(%{"media_details" => %{"sizes" => %{} = sizes}}), do: Map.values(sizes)
+  defp sizes(_row), do: []
+
+  defp file_name(%URI{path: path}) when is_binary(path), do: Path.basename(path)
+  defp file_name(_uri), do: ""
+
+  defp filesize(%{"filesize" => size}) when is_integer(size), do: size
+  defp filesize(%{"media_details" => %{"filesize" => size}}) when is_integer(size), do: size
+  defp filesize(_row), do: nil
+
+  defp raw(%{"raw" => raw}) when is_binary(raw), do: raw
+  defp raw(_none), do: nil
 
   defp asked_value(:include, id), do: id
   defp asked_value(:slug, path), do: path |> String.split("/") |> List.last()
