@@ -680,7 +680,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                "42" => {:created, "draft_from_password"},
                "53" => {:created, "unconverted: acme/callout, core/latest-posts"},
                "34" =>
-                 {:created, "frames_blocked; unconverted: unknown_plugin_shortcode, pullbox"}
+                 {:created,
+                  "frames_blocked: https://www.youtube-nocookie.com, https://player.vimeo.com; " <>
+                    "unconverted: unknown_plugin_shortcode, pullbox"}
              } = outcomes
 
       assert posts(site) == %{}
@@ -1091,9 +1093,19 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       |> Enum.filter(&(&1.site_id == site.id and &1.key == "security.frame_origins"))
     end
 
-    defp framed(run),
+    defp framed(run, note \\ "frames_allowed"),
       do:
-        for({id, outcome} <- outcomes(run, "post"), "frames_allowed" in reasons(outcome), do: id)
+        for(
+          {id, outcome} <- outcomes(run, "post"),
+          origins = Enum.find_value(reasons(outcome), &noted_origins(&1, note)),
+          into: %{},
+          do: {id, origins}
+        )
+
+    defp noted_origins(reason, note), do: reason |> String.split(": ", parts: 2) |> origins(note)
+
+    defp origins([note, origins], note), do: String.split(origins, ", ")
+    defp origins(_reason, _note), do: nil
 
     test "a dry run says which posts bring a player the site does not allow, and allows none", %{
       site: site,
@@ -1101,7 +1113,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     } do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
-      assert Enum.sort(framed(run)) == ["33", "34", "49"]
+      assert framed(run) == %{
+               "33" => ["https://www.youtube-nocookie.com"],
+               "34" => ["https://www.youtube-nocookie.com", "https://player.vimeo.com"],
+               "49" => ["https://player.vimeo.com", "https://www.youtube.com"]
+             }
+
       assert frame_origins(site) == []
     end
 
@@ -1121,7 +1138,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert [^maps | allowed] = origins.value["value"]
       assert Enum.sort(allowed) == Enum.sort(@players)
 
-      assert Enum.sort(framed(run)) == ["33", "49"],
+      assert framed(run) == %{
+               "49" => ["https://www.youtube.com"],
+               "33" => ["https://www.youtube-nocookie.com"]
+             },
              "WordPress lists 49 first, which adds YouTube's origin, then 33 the nocookie one, and 34 adds none"
 
       assert frame_origins(other) == []
@@ -1142,10 +1162,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin)
       outcomes = outcomes(run, "post")
 
-      for id <- ["33", "34", "49"] do
-        assert {:created, _reason} = outcomes[id]
-        assert "frames_blocked" in reasons(outcomes[id])
-      end
+      assert run |> framed("frames_blocked") |> Map.keys() |> Enum.sort() == ["33", "34", "49"]
+      for id <- ["33", "34", "49"], do: assert({:created, _reason} = outcomes[id])
 
       assert frame_origins(site) == []
     end

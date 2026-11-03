@@ -478,7 +478,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
       run = fake_pages!(site, admin, [row(1, %{"content" => [%{"html" => html}]})])
 
-      assert outcomes(run)["1"] == {:created, "frames_allowed"}
+      assert outcomes(run)["1"] == {:created, "frames_allowed: https://player.vimeo.com"}
       assert Settings.get("security.frame_origins", [], site.id) == ["https://player.vimeo.com"]
     end
   end

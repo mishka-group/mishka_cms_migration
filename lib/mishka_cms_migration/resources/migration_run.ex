@@ -1873,14 +1873,18 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("not_downloaded"), do: dgettext("mishka_gervaz", "The source did not send the file")
 
-  defp said("frames_allowed"),
-    do: dgettext("mishka_gervaz", "Its YouTube or Vimeo player is allowed on the site")
+  defp said("frames_allowed: " <> origins),
+    do:
+      dgettext("mishka_gervaz", "Allowed its video player on the site: %{origins}",
+        origins: origins
+      )
 
-  defp said("frames_blocked"),
+  defp said("frames_blocked: " <> origins),
     do:
       dgettext(
         "mishka_gervaz",
-        "Its YouTube or Vimeo player stays blocked until an admin allows it in Settings"
+        "Its video player stays blocked until an admin allows %{origins} in Settings",
+        origins: origins
       )
 
   defp said("site_own_kept"),

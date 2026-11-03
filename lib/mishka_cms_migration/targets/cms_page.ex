@@ -101,9 +101,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
   allowed on the site before the page is written, in an import only, as the admin
-  (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
+  (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them (`"frames_allowed: <origins>"`), in
   the dry run too. For an admin who may not change the site's settings the page is written with
-  its player blocked until an admin allows it, and the report says so (`"frames_blocked"`).
+  its player blocked until an admin allows it, and the report names what stays blocked (`"frames_blocked: <origins>"`).
   """
 
   use MishkaCmsMigration.Target,

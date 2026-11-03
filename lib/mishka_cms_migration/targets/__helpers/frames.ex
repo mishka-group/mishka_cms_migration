@@ -22,7 +22,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   An admin who may not write the setting (`MishkaCmsCore.Settings.write_permission/1`,
   `admin:dashboard:setting`; the job's admin carries their permissions, so it costs no query) adds
   none, and the content is written all the same: its player is blocked until an admin allows it.
-  `note/2` says which for the report, `"frames_allowed"` or `"frames_blocked"`, in a dry run too.
+  `note/2` says which for the report, naming the origins, `"frames_allowed: <origins>"` or
+  `"frames_blocked: <origins>"`, in a dry run too.
   """
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
@@ -41,8 +42,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   def call(html, context), do: html |> players() |> missing(context) |> allowed(context)
 
   @doc """
-  `"frames_allowed"` when `html` frames a player the run's site does not allow yet and the admin may
-  allow it, `"frames_blocked"` when they may not, else `nil`.
+  `"frames_allowed: <origins>"` when `html` frames players the run's site does not allow yet and
+  the admin may allow them, `"frames_blocked: <origins>"` when they may not, else `nil`; the
+  origins are joined by `", "`.
   """
   @spec note(String.t(), Target.context()) :: String.t() | nil
   def note(html, context), do: html |> players() |> missing(context) |> noted(context)
@@ -87,7 +89,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   defp written({:error, error}), do: {:error, error}
 
   defp noted([], _context), do: nil
-  defp noted(_missing, context), do: noted(permitted?(context.actor))
+
+  defp noted(missing, context),
+    do: noted(permitted?(context.actor)) <> ": " <> Enum.join(missing, ", ")
 
   defp noted(true), do: "frames_allowed"
   defp noted(false), do: "frames_blocked"

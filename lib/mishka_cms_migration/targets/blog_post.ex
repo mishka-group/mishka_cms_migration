@@ -88,9 +88,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     A YouTube or Vimeo player its content frames (the WordPress source makes one of each embed) is
     allowed on the site before the post is written, in an import only, as the admin
-    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report says so (`"frames_allowed"`), in
+    (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them (`"frames_allowed: <origins>"`), in
     the dry run too. For an admin who may not change the site's settings the post is written with
-    its player blocked until an admin allows it, and the report says so (`"frames_blocked"`). The
+    its player blocked until an admin allows it, and the report names what stays blocked (`"frames_blocked: <origins>"`). The
     Blog keeps an `<iframe>`'s address, title and size, and leaves out
     its other attributes, such as `allowfullscreen`.
 
