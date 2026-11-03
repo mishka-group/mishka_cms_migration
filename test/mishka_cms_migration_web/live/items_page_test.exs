@@ -147,8 +147,11 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   defp migrate_run!(run, admin), do: run |> dry_run!(admin) |> import!(admin)
 
+  # An `:update` row action names its row by `phx-value-id`, an `:event` one in `phx-value-values`.
   defp row_button(action, item),
-    do: ~s|#{@table} [phx-value-event="#{action}"][phx-value-id="#{item.id}"]|
+    do:
+      ~s|#{@table} [phx-value-event="#{action}"][phx-value-id="#{item.id}"], | <>
+        ~s|#{@table} [phx-value-event="#{action}"][phx-value-values*="#{item.id}"]|
 
   defp row_action!(view, action, item) do
     view |> element(row_button(action, item)) |> render_click()
@@ -179,6 +182,51 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   defp plan_of(view, item) do
     view
     |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-plan"]|)
+    |> LazyHTML.attribute("data-plan")
+    |> List.first()
+  end
+
+  @map_field "#migration_item_map_form-form_mapped_id"
+
+  # What Map to… offers, once its search field is focused, by label.
+  defp map_choices(view) do
+    view |> element(@map_field) |> render_focus()
+
+    view
+    |> parts(~s|#migration-item-map-modal [role="option"]|)
+    |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+  end
+
+  defp save_map!(view, id) do
+    view |> element(@map_field) |> render_focus()
+
+    view
+    |> element(~s|#migration-item-map-modal [role="option"][phx-value-id="#{id}"]|)
+    |> render_click()
+
+    view |> element("#migration-item-map-modal form") |> render_submit()
+    settled(view)
+  end
+
+  defp tree_roots(view) do
+    view
+    |> parts(~s|[data-role="item-tree-kind"] > ul > [data-role="item-tree-node"]|)
+    |> LazyHTML.attribute("data-source-id")
+  end
+
+  defp children_of(view, source_id) do
+    view
+    |> parts(
+      ~s|[data-role="item-tree-node"][data-source-id="#{source_id}"] > [data-role="item-tree-children"] > [data-role="item-tree-node"]|
+    )
+    |> LazyHTML.attribute("data-source-id")
+  end
+
+  defp node_plan(view, item) do
+    view
+    |> parts(
+      ~s|[data-role="item-tree-node"][data-item-id="#{item.id}"] > div [data-role="item-plan"]|
+    )
     |> LazyHTML.attribute("data-plan")
     |> List.first()
   end
@@ -436,6 +484,159 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
                stored(site),
                &(&1.source_kind != "tag" or &1.plan_reason == "left_out_by_admin")
              )
+    end
+  end
+
+  describe "Map to…" do
+    test "lists the site's categories in the language it leads with, and saving maps the item, or imports it as its own",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+
+      releases =
+        Enum.find(stored(site), &(&1.source_kind == "category" and &1.title == "Releases"))
+
+      collections = Ash.read!(MishkaBlog.Collection, tenant: site.id, authorize?: false)
+      news = Enum.find(collections, &(&1.name == "News"))
+
+      MishkaBlog.Collection
+      |> Ash.Changeset.for_create(
+        :create,
+        %{name: "Only in Persian", slug: "only-fa", status: :active, language: "fa"},
+        tenant: site.id,
+        authorize?: false
+      )
+      |> Ash.create!()
+
+      filter!(view, %{"source_kind" => "category"})
+
+      refute has_element?(
+               view,
+               row_button("map_to", Enum.find(stored(site), &(&1.source_kind == "post")))
+             )
+
+      row_action!(view, "map_to", releases)
+
+      File.write!(
+        "/private/tmp/claude-502/-Users-shahryar-Documents-Programming-Elixir/c14521e9-32f2-493c-8432-aa99832766a3/scratchpad/modal.html",
+        view |> parts("#migration-item-map-modal") |> LazyHTML.to_html()
+      )
+
+      assert map_choices(view) ==
+               ["Import as its own" | collections |> Enum.map(& &1.name) |> Enum.sort()]
+
+      save_map!(view, news.id)
+
+      assert %{mapped_id: mapped_id} = item!(releases)
+      assert mapped_id == news.id
+      assert plan_of(view, releases) == "mapped"
+
+      assert view
+             |> parts(~s|#{@table} [id$="#{releases.id}"] [data-role="item-plan-reason"]|)
+             |> LazyHTML.text() =~ "News"
+
+      row_action!(view, "map_to", releases)
+      save_map!(view, "__nil__")
+
+      assert %{mapped_id: nil} = item!(releases)
+      assert plan_of(view, releases) == "created"
+    end
+
+    test "Run again then reports the mapped category as connected, and Import writes none", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      news = Enum.find(stored(site), &(&1.source_kind == "category" and &1.title == "News"))
+
+      tutorials =
+        Ash.read!(MishkaBlog.Collection, tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.name == "Tutorials"))
+
+      filter!(view, %{"source_kind" => "category"})
+      row_action!(view, "map_to", news)
+      save_map!(view, tutorials.id)
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+
+      assert Enum.find(
+               later.report.entries,
+               &(&1.kind == "category" and &1.source_id == news.source_id)
+             ).reason == "connected"
+    end
+  end
+
+  describe "the Map view" do
+    test "draws the categories as WordPress nests them, each with its plan, and folds a parent's children",
+         %{conn: conn, admin: admin, run: run} do
+      view = open!(conn, admin, run, "?view=map&items_filter_source_kind=category")
+
+      assert has_element?(view, ~s|#{@table}[data-role="item-tree"]|)
+      assert tree_roots(view) == ["2", "5", "1", "9"]
+      assert children_of(view, "2") == ["4", "3"]
+      assert children_of(view, "5") == ["6", "7"]
+      assert children_of(view, "7") == ["8"]
+      assert children_of(view, "8") == []
+
+      assert view |> attributes("item-plan", "data-plan") |> Enum.uniq() == ["created"]
+
+      for parent <- ["2", "5", "7"] do
+        assert view
+               |> parts(
+                 ~s|[data-role="item-tree-node"][data-source-id="#{parent}"] > div [data-role="item-tree-fold"]|
+               )
+               |> LazyHTML.attribute("phx-click")
+               |> hd() =~ "-children"
+      end
+    end
+
+    test "is one click from the List, and a row's choice shows in the tree at once", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "category"})
+
+      view
+      |> element(~s|#{@table} [phx-click="switch_template"][phx-value-template="item_tree"]|)
+      |> render_click()
+
+      settled(view)
+
+      assert has_element?(view, ~s|#{@table}[data-role="item-tree"]|)
+
+      news = Enum.find(stored(site), &(&1.source_kind == "category" and &1.title == "News"))
+      row_action!(view, "leave_out", news)
+
+      assert node_plan(view, news) == "left_out"
+      pick!(view, news)
+      bulk!(view, "bring_back")
+      assert node_plan(view, news) == "created"
+    end
+
+    test "Map categories in the head opens the Map view on the categories", %{
+      conn: conn,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+
+      assert {:error, {:live_redirect, %{to: to}}} =
+               view |> element(~s|[data-role="items-map-categories"]|) |> render_click()
+
+      query = URI.parse(to).query
+
+      assert %{"view" => "map", "items_filter_source_kind" => "category"} =
+               URI.decode_query(query)
+
+      tree = open!(conn, admin, run, "?" <> query)
+      assert has_element?(tree, ~s|#{@table}[data-role="item-tree"]|)
+
+      assert tree |> parts(~s|[data-role="item-tree-kind"]|) |> LazyHTML.attribute("data-kind") ==
+               ["category"]
     end
   end
 

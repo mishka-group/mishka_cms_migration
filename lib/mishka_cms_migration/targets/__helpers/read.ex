@@ -13,8 +13,16 @@ defmodule MishkaCmsMigration.Targets.Helpers.Read do
 
   alias MishkaCmsMigration.Target
 
-  @doc "The records `query` finds in the run's site, `[]` when the admin may not read them."
-  @spec call(Ash.Query.t() | Ash.Resource.t(), Target.context()) :: [struct()]
+  @doc """
+  The records `query` finds in the run's site, `[]` when the admin may not read them. Of `context`
+  only its `actor` and `site_id` are read, so a check of the admin's own, such as what an item may
+  be mapped to, hands just those.
+  """
+  @spec call(
+          Ash.Query.t() | Ash.Resource.t(),
+          Target.context() | %{actor: term(), site_id: term()}
+        ) ::
+          [struct()]
   def call(query, context),
     do: query |> Ash.read(actor: context.actor, tenant: context.site_id) |> read()
 

@@ -32,7 +32,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   A parent an admin left out takes its children with it: an item whose parent was settled as
   `"left_out_by_admin"` or `"parent_left_out"` is skipped as `"parent_left_out"`, in a dry run and
   in an import, however deep it sits and whatever its own plan was, unless the admin chose for the
-  item itself. Its CMS record, if an earlier import wrote one, is kept.
+  item itself (left it out, or mapped it to a CMS record). Its CMS record, if an earlier import wrote
+  one, is kept. An item under one an admin mapped goes under the record it was mapped to.
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
@@ -256,6 +257,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp hold(state, held, placed), do: settle_tree(state, held, placed)
 
   defp under_left_out({:skipped, "left_out_by_admin"} = plan), do: plan
+  defp under_left_out({:mapped, _target, _record} = plan), do: plan
+  defp under_left_out({:skipped, "mapped_missing"} = plan), do: plan
   defp under_left_out(_plan), do: {:skipped, "parent_left_out"}
 
   defp settle_tree(state, {item, plan}, {report, walk}) do

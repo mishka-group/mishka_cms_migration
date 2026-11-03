@@ -26,9 +26,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   `"draft_from_pending; unconverted: acme/callout, gallery"`. A dry run asks no plugin, so it names
   every piece the source left to convert.
 
-  An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`)
-  is not written: in an import it is recorded against that record, with no `target_updated_at`, as
-  skipped, `"connected"`; a dry run reports it so.
+  An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
+  or mapped to one by an admin, is not written: in an import it is recorded against that record,
+  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so.
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
@@ -50,8 +50,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     * `{:created, target, nil}` or `{:updated, target, record}` — written in an import, reported
       and recorded as the item's plan in a dry run, with its target's note and the pieces of its
       content left unconverted as its reason;
-    * `{:connected, target, record}` — recorded against `record` in an import, never written, and
-      reported as skipped, `"connected"`;
+    * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
+      in an import, never written, and reported as skipped, `"connected"`;
     * `{:skipped, reason}` or `{:failed, reason}` — recorded with its reason, as what an import
       did or as a dry run's plan; an item whose row could not be read has only its kind and, when
       the row named one, its source id, and is recorded only with one;
@@ -63,6 +63,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   def call(state, %Item{} = item, {outcome, reason}) when outcome in [:skipped, :failed],
     do: entry(state, item, outcome, reason)
+
+  def call(state, %Item{} = item, {:mapped, target, record}),
+    do: call(state, item, {:connected, target, record})
 
   def call(%{mode: :dry_run} = state, %Item{} = item, {:connected, _target, _record}),
     do: entry(state, item, :skipped, "connected")
@@ -186,6 +189,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         run_id: state.run.id,
         title: item.title,
         source_slug: source_slug(item),
+        source_parent: item.parent,
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
         target_resource: inspect(target.resource()),
@@ -210,6 +214,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                run_id: state.run.id,
                title: item.title,
                source_slug: source_slug(item),
+               source_parent: item.parent,
                outcome: outcome,
                reason: reason
              },
@@ -228,6 +233,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_id: source_id,
                title: item.title,
                source_slug: source_slug(item),
+               source_parent: item.parent,
                plan: plan,
                plan_reason: reason
              },

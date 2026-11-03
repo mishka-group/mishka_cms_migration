@@ -10,7 +10,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   source or the CMS says:
 
     * the admin left it out (`left_out`) — `{:skipped, "left_out_by_admin"}`, whatever the source
-      changed and whatever the CMS holds; a CMS record an import wrote for it is kept as it is.
+      changed and whatever the CMS holds; a CMS record an import wrote for it is kept as it is;
+    * the admin mapped it to a CMS record (`mapped_id`) — `{:mapped, target, record}`, the record,
+      which the import connects it to and never writes, whatever the source changed, what an
+      earlier run wrote for it and what the target's `existing/2` would find; when that record is
+      gone, `{:skipped, "mapped_missing"}`.
 
   Then, what earlier runs recorded:
 
@@ -52,6 +56,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
           {:created, module(), nil}
           | {:updated, module(), struct()}
           | {:connected, module(), struct()}
+          | {:mapped, module(), struct()}
           | {:skipped, String.t()}
 
   @doc "The plan for each of `items`, a page of `kind`, by source id."
@@ -65,7 +70,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp plans(state, target, kind, items) do
     known = known(state, kind, items)
-    records = known |> Map.values() |> Enum.flat_map(&target_id/1) |> current(target, state)
+    records = known |> Map.values() |> Enum.flat_map(&record_ids/1) |> current(target, state)
 
     items
     |> Map.new(&{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records)})
@@ -100,6 +105,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   end
 
   defp plan(_target, _item, %{left_out: true}, _records), do: {:skipped, "left_out_by_admin"}
+
+  defp plan(target, _item, %{mapped_id: id}, records) when is_binary(id),
+    do: records |> Map.get(id) |> mapped(target)
+
   defp plan(target, _item, nil, _records), do: {:created, target, nil}
   defp plan(target, _item, %{target_id: nil}, _records), do: {:created, target, nil}
 
@@ -121,8 +130,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp edited?(_record, _known), do: true
 
-  defp target_id(%{target_id: nil}), do: []
-  defp target_id(%{target_id: id}), do: [id]
+  defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
+  defp mapped(record, target), do: {:mapped, target, record}
+
+  defp record_ids(item), do: Enum.reject([item.target_id, item.mapped_id], &is_nil/1)
 
   defp known(_state, _kind, []), do: %{}
 

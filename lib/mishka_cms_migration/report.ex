@@ -33,6 +33,7 @@ defmodule MishkaCmsMigration.Report do
       import wrote for it is kept as it is.
     * `"parent_left_out"` — the item sits under one an admin left out, however deep; a CMS record an
       import wrote for it is kept as it is.
+    * `"mapped_missing"` — an admin mapped the item to a CMS record that has since been deleted.
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.
     * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays

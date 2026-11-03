@@ -6,8 +6,11 @@ defmodule MishkaCmsMigration.Resources.Calculations.RecordPaths do
   @moduledoc """
   Where the CMS record of each item is, for the item's `:record_paths` calculation: the answer of
   `MishkaCmsMigration.MigrationRun.record_paths/2` for its kind and the record it was written to,
-  or `nil` for an item with no record, a kind with no pages, and a record that is gone or that the
-  reader may not read.
+  with the record's `name` (its name, or its title), or `nil` for an item with no record, a kind
+  with no pages, and a record that is gone or that the reader may not read.
+
+  `field` names the attribute that holds the record's id: `:target_id` (the default), the record an
+  import wrote, or `:mapped_id`, the record an admin mapped the item to (`:mapped_paths`).
 
   The records are read as the reader, under the site of each item, through the resource of the
   kind's target (`MishkaCmsMigration.Target`): one read for each kind and site of the items asked
@@ -21,23 +24,34 @@ defmodule MishkaCmsMigration.Resources.Calculations.RecordPaths do
   alias MishkaCmsMigration.{MigrationRun, Target}
 
   @impl true
-  def load(_query, _opts, _context), do: [:source_kind, :target_id, :site_id]
+  def load(_query, opts, _context), do: [:source_kind, :site_id, field(opts)]
 
   @impl true
-  def calculate(items, _opts, context) do
+  def calculate(items, opts, context) do
+    field = field(opts)
+
     found =
       items
-      |> Enum.filter(& &1.target_id)
-      |> Enum.group_by(&{&1.source_kind, &1.site_id}, & &1.target_id)
+      |> Enum.filter(&Map.get(&1, field))
+      |> Enum.group_by(&{&1.source_kind, &1.site_id}, &Map.get(&1, field))
       |> Enum.reduce(%{}, fn {{kind, site_id}, ids}, found ->
         kind |> records(site_id, ids, context.actor) |> Enum.into(found)
       end)
 
-    Enum.map(items, &paths(&1, found[{&1.source_kind, &1.target_id}]))
+    Enum.map(items, &paths(&1, found[{&1.source_kind, Map.get(&1, field)}]))
   end
 
+  defp field(opts), do: Keyword.get(opts, :field, :target_id)
+
   defp paths(_item, nil), do: nil
-  defp paths(item, record), do: MigrationRun.record_paths(item.source_kind, record)
+
+  defp paths(item, record),
+    do: item.source_kind |> MigrationRun.record_paths(record) |> named(record)
+
+  defp named(nil, _record), do: nil
+
+  defp named(paths, record),
+    do: Map.put(paths, :name, Map.get(record, :name) || Map.get(record, :title))
 
   defp records(kind, site_id, ids, actor) do
     with {:ok, target} <- Target.fetch(kind),

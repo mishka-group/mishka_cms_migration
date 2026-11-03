@@ -218,6 +218,42 @@ defmodule MishkaCmsMigration.SiteBoundaryTest do
                MishkaCmsMigration.leave_out_item(item, actor: admin_a, tenant: site_a.id)
     end
 
+    test "maps only to a record of the item's own kind on its own site", %{
+      site_a: site_a,
+      site_b: site_b,
+      admin_a: admin_a,
+      item: item
+    } do
+      redirect =
+        Ash.read_one!(MishkaCmsCore.Runtime.Redirect, tenant: site_a.id, authorize?: false)
+
+      assert {:ok, %{mapped_id: mapped_id, left_out: false}} =
+               item
+               |> MishkaCmsMigration.leave_out_item!(actor: admin_a, tenant: site_a.id)
+               |> MishkaCmsMigration.map_item(redirect.id, actor: admin_a, tenant: site_a.id)
+
+      assert mapped_id == redirect.id
+
+      theirs =
+        MishkaCmsCore.Runtime.Redirect
+        |> Ash.Changeset.for_create(:create, %{from_path: "/x", to: "/y", status: 301},
+          tenant: site_b.id,
+          authorize?: false
+        )
+        |> Ash.create!()
+
+      for id <- [theirs.id, Ecto.UUID.generate(), item.id] do
+        assert {:error, %Ash.Error.Invalid{errors: [%{field: :mapped_id}]}} =
+                 MishkaCmsMigration.map_item(item, id, actor: admin_a, tenant: site_a.id)
+      end
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.map_item(item, redirect.id,
+                 actor: create_user_with_permissions!(["*"], site_id: site_b.id),
+                 tenant: site_a.id
+               )
+    end
+
     test "is not held by another site's run", %{
       site_a: site_a,
       site_b: site_b,

@@ -26,6 +26,20 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   is broadcast, and this page hands the item's notifications on to the table, which draws the item
   again in its place, in every tab open on it.
 
+  ## Map to… and the Map view
+
+  A category's or a tag's Map to… (`{:row_action, "map_to", %{"id" => id}}`) opens the item's
+  Gervaz form in a modal (`MishkaCmsMigration.MigrationItem`'s form): the page reads the item as
+  the table does and hands the form its kind and site as `defaults`, which its choices are read
+  from (`MishkaCmsMigration.MigrationItem.map_options/1`): the site's categories, or tags, in the
+  language it leads with, and Import as its own. Save maps it (`:map_to`), and the modal closes; the
+  table draws the item again from its broadcast.
+
+  The table's template switcher moves between the List and the Map view
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), which draws the items as the source
+  nests them, each with its plan and its row actions. Map categories, in the head, opens the page
+  in the Map view on the categories (`?view=map`, read when the page mounts, and the kind filter).
+
   An expanded row (`{:expand_row, id}`) shows what is kept of the item as JSON: its stored
   attributes and its `extra`, the source's fields the CMS has no home for, with the value of
   anything named like a secret hidden. The item's content and its other fields are not kept, and
@@ -41,6 +55,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   alias MishkaGervaz.Table.Web.UrlSync
 
   @table_id "migration-items-table"
+  @map_modal "migration-item-map-modal"
   @kept [
     :source_host,
     :source_kind,
@@ -57,6 +72,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     :outcome,
     :reason,
     :left_out,
+    :mapped_id,
+    :source_parent,
     :run_id,
     :inserted_at,
     :updated_at
@@ -65,7 +82,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   @hidden "[hidden]"
 
   @impl true
-  def mount(%{"run" => id}, _session, socket) do
+  def mount(%{"run" => id} = params, _session, socket) do
     socket = assign_new(socket, :current_user, fn -> nil end)
 
     case MigrationRun.fetch(id, socket.assigns.current_user) do
@@ -75,7 +92,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
            page_title: gettext("Items"),
            run: run,
            source: Source.label(run.source),
-           url_state: nil
+           url_state: nil,
+           template: template(params)
          )}
 
       _unreadable ->
@@ -106,6 +124,16 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     {:noreply, socket}
   end
 
+  def handle_info({:row_action, "map_to", %{"id" => id}}, socket) do
+    id |> MigrationItem.fetch(socket.assigns.current_user) |> map_to(socket)
+  end
+
+  def handle_info({:form_saved, :update, %MigrationItem{} = item}, socket) do
+    {:noreply, socket |> close_map() |> put_flash(:info, mapped_words(item))}
+  end
+
+  def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_map(socket)}
+
   def handle_info(
         %Phoenix.Socket.Broadcast{
           topic: "migration_item" <> _rest,
@@ -121,6 +149,34 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: {:noreply, put_flash(socket, kind, message)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp template(%{"view" => "map"}), do: :item_tree
+  defp template(_params), do: nil
+
+  defp map_to({:ok, %MigrationItem{} = item}, socket) do
+    send_update(MishkaGervaz.Form.Web.Live,
+      id: MishkaGervaz.Resource.Info.Form.component_id(MigrationItem),
+      record_id: item.id,
+      defaults: %{source_kind: item.source_kind, site_id: item.site_id}
+    )
+
+    {:noreply, socket}
+  end
+
+  defp map_to(_unreadable, socket),
+    do: {:noreply, socket |> close_map() |> put_flash(:error, gettext("That item is not there."))}
+
+  defp mapped_words(%MigrationItem{mapped_id: nil}),
+    do: gettext("It will be imported as its own.")
+
+  defp mapped_words(_item), do: gettext("Mapped. The import links it to that record.")
+
+  defp close_map(socket),
+    do:
+      push_event(socket, "gervaz:exec-js", %{
+        target: @map_modal,
+        js: Jason.encode!(MishkaCmsCore.CoreComponents.hide_modal(@map_modal).ops)
+      })
 
   defp expanded({:ok, %MigrationItem{} = item}),
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(item))

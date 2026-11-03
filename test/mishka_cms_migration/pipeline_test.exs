@@ -559,6 +559,28 @@ defmodule MishkaCmsMigration.PipelineTest do
       |> Map.new(&{&1.name, &1})
     end
 
+    defp collection!(site, admin, name),
+      do:
+        MishkaBlog.Collection
+        |> Ash.Changeset.for_create(
+          :create,
+          %{
+            name: name,
+            slug: String.downcase(name),
+            status: :active,
+            language: MishkaCmsCore.Runtime.Languages.primary(site.id)
+          },
+          actor: admin,
+          tenant: site.id
+        )
+        |> Ash.create!()
+
+    defp map!(site, admin, source_id, mapped_id),
+      do:
+        site
+        |> item!(source_id)
+        |> MishkaCmsMigration.map_item!(mapped_id, actor: admin, tenant: site.id)
+
     defp parent_name(collections, name) do
       parent_id = collections[name].parent_collection_id
       Enum.find_value(collections, fn {parent, %{id: id}} -> id == parent_id && parent end)
@@ -662,6 +684,64 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert Map.new(collections(site), fn {name, c} -> {name, {c.id, c.description}} end) ==
                written
+    end
+
+    test "mapped to a Blog category is connected to it, never written, and its children go under it",
+         %{site: site, admin: admin} do
+      topics = collection!(site, admin, "Topics")
+      rows = [category(3, "Guides", 2), category(2, "News"), category(4, "Elixir", 3)]
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      map!(site, admin, "2", topics.id)
+
+      run = run |> dry_run!(admin) |> import!(admin)
+
+      assert %{"2" => {:skipped, "connected"}, "3" => {:created, nil}} = outcomes(run)
+      assert %{target_id: target_id, target_updated_at: nil} = item!(site, "2")
+      assert target_id == topics.id
+
+      collections = collections(site)
+      refute Map.has_key?(collections, "News")
+      assert parent_name(collections, "Guides") == "Topics"
+      assert parent_name(collections, "Elixir") == "Guides"
+      assert collections["Topics"].updated_at == topics.updated_at
+    end
+
+    test "mapped wins over what an import wrote and what the source changed, and unmapped finds its own record again",
+         %{site: site, admin: admin} do
+      migrate!(site, admin, %{"category" => [category(2, "News")]})
+      news = collections(site)["News"]
+      topics = collection!(site, admin, "Topics")
+
+      map!(site, admin, "2", topics.id)
+      changed = [Map.put(category(2, "News"), "description", "changed at the source")]
+      run = migrate!(site, admin, %{"category" => changed})
+
+      assert %{"2" => {:skipped, "connected"}} = outcomes(run)
+      assert collections(site)["News"].description == news.description
+      assert item!(site, "2").target_id == topics.id
+
+      map!(site, admin, "2", nil)
+      assert %{target_id: nil, mapped_id: nil} = item!(site, "2")
+
+      again = migrate!(site, admin, %{"category" => changed})
+      assert %{"2" => {:skipped, "connected"}} = outcomes(again)
+      assert item!(site, "2").target_id == news.id
+    end
+
+    test "mapped under a left-out parent keeps its mapping, and is skipped as mapped_missing once that record is gone",
+         %{site: site, admin: admin} do
+      topics = collection!(site, admin, "Topics")
+      rows = [category(2, "News"), category(3, "Guides", 2)]
+      run = site |> create_run!(admin, %{"category" => rows}) |> dry_run!(admin)
+      leave_out!(site, admin, "2")
+      map!(site, admin, "3", topics.id)
+
+      assert %{"2" => {:skipped, "left_out_by_admin"}, "3" => {:skipped, "connected"}} =
+               outcomes(dry_run!(run, admin))
+
+      Ash.destroy!(topics, tenant: site.id, authorize?: false)
+
+      assert %{"3" => {:skipped, "mapped_missing"}} = outcomes(dry_run!(run, admin))
     end
 
     test "whose parent the source never lists, or that is its own parent, is settled after the kind",

@@ -63,6 +63,33 @@ defmodule MishkaCmsMigration.EventsTest do
       assert actor_id == admin.id
     end
 
+    test "is never handed an item an admin left out or mapped to a CMS record", %{
+      site: site,
+      admin: admin
+    } do
+      migrate!(site, admin, %{"redirect" => [redirect_row(9, "/kept", "/k")]})
+      assert_receive {:before_import, %{item: %Item{source_id: "9"}}, _meta}
+
+      rows = [
+        redirect_row(1, "/one", "/1"),
+        redirect_row(2, "/two", "/2"),
+        redirect_row(3, "/three", "/3")
+      ]
+
+      run = site |> create_run!(admin, %{"redirect" => rows}) |> dry_run!(admin)
+      site |> item("1") |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
+
+      site
+      |> item("2")
+      |> MishkaCmsMigration.map_item!(redirect(site, "/kept").id, actor: admin, tenant: site.id)
+
+      import!(run, admin)
+
+      assert_received {:before_import, %{item: %Item{source_id: "3"}}, _meta}
+      refute_received {:before_import, %{item: %Item{source_id: "1"}}, _meta}
+      refute_received {:before_import, %{item: %Item{source_id: "2"}}, _meta}
+    end
+
     test "says :updated for an item a second run writes over its earlier row", %{
       site: site,
       admin: admin

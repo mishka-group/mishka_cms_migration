@@ -39,8 +39,18 @@ defmodule MishkaCmsMigration.MigrationItem do
   Before an import, an admin decides what it brings, item by item. `:leave_out` sets `left_out`:
   every later dry run and import skips the item as `"left_out_by_admin"`, whatever the source
   changed, and leaves the CMS record an earlier import wrote for it as it is, never deleting it.
-  `:bring_back` clears it, so the next run plans the item again. Each makes that one change. The
-  master actions (`:master_leave_out`, `:master_bring_back`) do the same on any site.
+  `:bring_back` clears it, so the next run plans the item again. Each makes that one change.
+
+  `:map_to` sets `mapped_id`, a record of the CMS resource the item's kind is written to, on its
+  site (`MishkaCmsMigration.Resources.Validations.MappedRecord`), and brings the item back: every
+  later run connects the item to that record and never writes it, whatever the source changed,
+  what an earlier import wrote and what the target would find by its slug; what sits under it in
+  the source goes under that record. Two of the source's terms are merged by mapping both to one
+  record, which the admin makes first. A record deleted since leaves the item skipped as
+  `"mapped_missing"`. `nil` imports the item as its own again, and an item an import connected
+  through its mapping forgets that record (`unmapped/2`). A mapping made after an import does not
+  link again the posts that import wrote and the source has not changed since. The master actions
+  (`:master_leave_out`, `:master_bring_back`, `:master_map_to`) do the same on any site.
 
   A left-out item takes what hangs on it along (`MishkaCmsMigration.Workers.Helpers.Pipeline`): the
   items under it in the source, such as a category's categories, a page's pages and a comment's
@@ -70,11 +80,17 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   A row's Leave out or Bring back makes that choice (Gervaz's `:update` row actions), and so do the
   bulk actions of the same names for the rows picked with the checkboxes (`choose/3`), Leave out
-  once the admin confirms. The Plan cell shows the choice before the plan.
+  once the admin confirms. A category's or a tag's Map to… opens this resource's Gervaz form, one
+  `mapped_id` field whose choices are the site's records of that kind in the language it leads
+  with, and Import as its own (`map_options/1`). The Plan cell shows the choice before the plan,
+  and the record a mapped item is connected to (`mapped_paths`). The table's other view, Map,
+  draws the items as the source nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`),
+  from the rows it keeps loaded.
 
   `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
-  (`MishkaCmsMigration.MigrationRun.record_paths/2`), `nil` for an item with no record or whose
-  record is gone. It reads the records of a page together, as the reader.
+  (`MishkaCmsMigration.MigrationRun.record_paths/2`), with its name, `nil` for an item with no
+  record or whose record is gone; `mapped_paths` is the same for the record an admin mapped it to.
+  Each reads the records of a page together, as the reader.
   """
 
   use Ash.Resource,
@@ -92,18 +108,26 @@ defmodule MishkaCmsMigration.MigrationItem do
   require Ash.Query
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
+  alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
-  alias MishkaCmsMigration.MigrationRun
+  alias MishkaCmsMigration.{MigrationRun, Target}
   alias MishkaCmsMigration.Resources.Calculations.RecordPaths
-  alias MishkaCmsMigration.Resources.Validations.SiteIdle
+  alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
+  alias MishkaCmsMigration.Targets.Helpers.Read
   alias MishkaGervaz.Table.Web.{DataLoader, State}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
+  @mappable ["category", "tag"]
+  # The Items table keeps the rows it has loaded and reads them again in one query on each page
+  # (`keep_loaded_records`), so its reads take as many rows as an admin may load.
+  @loaded_rows 10_000
+  @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
   @written [
     :run_id,
     :title,
     :source_slug,
+    :source_parent,
     :source_modified_at,
     :content_hash,
     :target_resource,
@@ -140,6 +164,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     field :source_slug, :string,
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=1000])"
 
+    field :source_parent, :string,
+      derives: "sanitize(trim) validate(optional=[string, max_len=255])"
+
     field :reason, :string,
       derives: "sanitize(trim, no_control) validate(optional=[string, max_len=2000])"
 
@@ -159,7 +186,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       source do
         preload do
-          always [:record_paths]
+          always [:record_paths, :mapped_paths]
         end
       end
 
@@ -228,7 +255,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
         column :planned do
           static true
-          requires [:plan, :plan_reason, :left_out]
+          requires [:plan, :plan_reason, :left_out, :mapped_id, :mapped_paths]
           label fn -> dgettext("mishka_gervaz", "Plan") end
 
           ui do
@@ -347,16 +374,39 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
       end
 
+      presentation do
+        template MishkaGervaz.Table.Templates.Table
+
+        switchable_templates [
+          MishkaGervaz.Table.Templates.Table,
+          MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree
+        ]
+
+        keep_loaded_records true
+      end
+
       row do
         selectable true
       end
 
       row_actions do
         actions_layout do
-          width "minmax(62px,max-content)"
+          width "minmax(96px,max-content)"
         end
 
         action :expand, type: :accordion
+
+        action :map_to do
+          type :event
+          event "map_to"
+          js fn _item -> MishkaCmsCore.CoreComponents.show_modal(@map_modal) end
+          visible fn item, _state -> MishkaCmsMigration.MigrationItem.mappable?(item) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Map to…") end
+            icon "hero-link"
+          end
+        end
 
         action :leave_out do
           type :update
@@ -438,6 +488,49 @@ defmodule MishkaCmsMigration.MigrationItem do
       empty_state message: dgettext_noop("mishka_gervaz", "No items found"),
                   icon: "hero-list-bullet"
     end
+
+    form do
+      identity do
+        name :migration_item_map_form
+      end
+
+      source do
+        access :create, false
+
+        actions do
+          update {:master_map_to, :map_to}
+          read {:master_get, :read}
+        end
+      end
+
+      fields do
+        field :mapped_id, :relation do
+          mode :search
+          options fn state -> MishkaCmsMigration.MigrationItem.map_options(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Map to") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Pick a record the site already has, in the language it leads with, and the import links to it and writes nothing; what sits under the item goes under it. Import as its own writes the item as the source has it."
+              )
+            end
+          end
+        end
+      end
+
+      submit do
+        update label: fn -> dgettext("mishka_gervaz", "Save") end
+        cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
+        position :bottom
+      end
+
+      presentation do
+        ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
+      end
+    end
   end
 
   actions do
@@ -448,7 +541,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       pagination offset?: true,
                  keyset?: true,
                  default_limit: 20,
-                 max_page_size: 100,
+                 max_page_size: @loaded_rows,
                  countable: true,
                  required?: false
     end
@@ -460,7 +553,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       pagination offset?: true,
                  keyset?: true,
                  default_limit: 20,
-                 max_page_size: 100,
+                 max_page_size: @loaded_rows,
                  countable: true,
                  required?: false
 
@@ -513,10 +606,19 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     create :record_outcome do
-      accept @source ++ [:run_id, :title, :source_slug, :outcome, :reason]
+      accept @source ++ [:run_id, :title, :source_slug, :source_parent, :outcome, :reason]
       upsert? true
       upsert_identity :unique_source_item
-      upsert_fields [:run_id, :title, :source_slug, :outcome, :reason, :updated_at]
+
+      upsert_fields [
+        :run_id,
+        :title,
+        :source_slug,
+        :source_parent,
+        :outcome,
+        :reason,
+        :updated_at
+      ]
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
@@ -573,11 +675,40 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "Brings a left out item of any site back (masters)"
     end
 
+    update :map_to do
+      accept [:mapped_id]
+      require_atomic? false
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+      validate MappedRecord, before_action?: true
+
+      change set_attribute(:left_out, false)
+      change &MishkaCmsMigration.MigrationItem.unmapped/2
+
+      description "Maps the item to a record the CMS holds, or back to importing as its own (nil)"
+    end
+
+    update :master_map_to do
+      accept [:mapped_id]
+      multitenancy :bypass
+      require_atomic? false
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+      validate MappedRecord, before_action?: true
+
+      change set_attribute(:left_out, false)
+      change &MishkaCmsMigration.MigrationItem.unmapped/2
+
+      description "Maps an item of any site to a record its site holds, or back (masters)"
+    end
+
     create :record_plan do
-      accept @source ++ [:title, :source_slug, :plan, :plan_reason]
+      accept @source ++ [:title, :source_slug, :source_parent, :plan, :plan_reason]
       upsert? true
       upsert_identity :unique_source_item
-      upsert_fields [:title, :source_slug, :plan, :plan_reason, :updated_at]
+      upsert_fields [:title, :source_slug, :source_parent, :plan, :plan_reason, :updated_at]
 
       change &Ash.Changeset.force_change_attribute(&1, :site_id, &2.tenant)
 
@@ -659,6 +790,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The item's slug at the source (Source.Item's attrs slug), as of the last run that met it"
     end
 
+    attribute :source_parent, :string do
+      allow_nil? true
+      public? true
+      constraints max_length: 255
+
+      description "The source id of the item of its kind it sits under at the source (Source.Item's parent)"
+    end
+
     attribute :source_modified_at, :utc_datetime_usec do
       allow_nil? true
       public? true
@@ -703,6 +842,13 @@ defmodule MishkaCmsMigration.MigrationItem do
       default false
 
       description "Whether an admin left the item out: no dry run or import writes it until brought back"
+    end
+
+    attribute :mapped_id, :uuid do
+      allow_nil? true
+      public? true
+
+      description "The record of the kind's CMS resource an admin mapped the item to, nil to import it as its own"
     end
 
     attribute :plan, :atom do
@@ -762,6 +908,12 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       description "Where the item's CMS record is in the admin and on the site, nil when it has none"
     end
+
+    calculate :mapped_paths, :map, {RecordPaths, field: :mapped_id} do
+      public? true
+
+      description "Where the record an admin mapped the item to is, with its name, nil when none"
+    end
   end
 
   identities do
@@ -782,6 +934,45 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   def fetch(id, %{site_id: site_id} = user),
     do: Ash.get(__MODULE__, id, actor: user, tenant: site_id, not_found_error?: false)
+
+  @doc """
+  Whether `item` has a Map to…: a category or a tag, the kinds whose CMS records an admin may
+  pick from (`map_options/1`).
+  """
+  @spec mappable?(map()) :: boolean()
+  def mappable?(%{source_kind: kind}), do: kind in @mappable
+
+  @doc """
+  The Map to… form's choices (`mapped_id`'s `options`): Import as its own, then the records of the
+  item's kind's CMS resource (`MishkaCmsMigration.Target`) on its site, in the language the site
+  leads with (`MishkaCmsCore.Runtime.Languages.primary/1`), by name, read as the admin. The page
+  opens the form with the item's kind and site as its `defaults`; a form opened with neither, a
+  kind with no Map to… (`mappable?/1`) or one no target writes has Import as its own alone.
+  """
+  @spec map_options(map()) :: [{String.t(), String.t()}]
+  def map_options(%{defaults: %{source_kind: kind, site_id: site_id}, current_user: user})
+      when kind in @mappable do
+    [{dgettext("mishka_gervaz", "Import as its own"), "__nil__"} | records(kind, site_id, user)]
+  end
+
+  def map_options(_state), do: [{dgettext("mishka_gervaz", "Import as its own"), "__nil__"}]
+
+  @doc """
+  What `:map_to` does to the record an item was connected to when its mapping is taken away: an
+  item an import connected (it recorded no `target_updated_at`) forgets that record, so the next
+  run creates it, or finds it by its slug, as an item never written. An item an import wrote keeps
+  its own record.
+  """
+  @spec unmapped(Ash.Changeset.t(), map()) :: Ash.Changeset.t()
+  def unmapped(%{data: %{mapped_id: was, target_updated_at: nil}} = changeset, _context)
+      when is_binary(was) do
+    case Ash.Changeset.get_attribute(changeset, :mapped_id) do
+      nil -> Ash.Changeset.force_change_attributes(changeset, target_id: nil, content_hash: nil)
+      _mapped -> changeset
+    end
+  end
+
+  def unmapped(changeset, _context), do: changeset
 
   @doc """
   The Items table's bulk Leave out and Bring back: runs `action` (`:leave_out` or `:bring_back`)
@@ -944,6 +1135,20 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp loaded_pages(%State{static: %{keep_loaded_records: true}, page: page}), do: page
   defp loaded_pages(_state), do: 1
 
+  defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
+
+  defp records_of({:ok, target}, site_id, user) do
+    language = Languages.primary(site_id)
+
+    target.resource()
+    |> Ash.Query.filter(language == ^language)
+    |> Ash.Query.sort(name: :asc)
+    |> Read.call(%{actor: user, site_id: site_id})
+    |> Enum.map(&{&1.name, &1.id})
+  end
+
+  defp records_of({:error, :not_installed}, _site_id, _user), do: []
+
   defp planned(%{left_out: true}),
     do: %{
       key: "left_out",
@@ -952,6 +1157,18 @@ defmodule MishkaCmsMigration.MigrationItem do
       icon: "hero-eye-slash",
       reason: nil
     }
+
+  defp planned(%{mapped_id: id, mapped_paths: %{name: name}}) when is_binary(id),
+    do: %{
+      key: "mapped",
+      word: dgettext("mishka_gervaz", "Connected"),
+      class: "bg-[#eeedfb] text-[#5b57d6]",
+      icon: "hero-link",
+      reason: dgettext("mishka_gervaz", "Mapped by you to %{name}", name: name)
+    }
+
+  defp planned(%{mapped_id: id}) when is_binary(id),
+    do: said(:skipped, plan_word(:skipped), "mapped_missing")
 
   defp planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
     do: %{
