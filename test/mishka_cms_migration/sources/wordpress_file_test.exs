@@ -78,9 +78,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
 
   # The attrs of an item read from the export and from the REST API, without what an export does
-  # not carry: a draft's GMT date WordPress kept none for among it.
+  # not carry: a draft's GMT date WordPress kept none for among it. An entry's SEO is compared on
+  # its own: the REST API answers what Yoast served, an export what Yoast and Rank Math kept.
   defp compared(from_file, from_rest, kind) do
-    left_out = Map.get(@not_exported, kind, []) ++ undated(from_file.attrs)
+    left_out = ["seo" | Map.get(@not_exported, kind, [])] ++ undated(from_file.attrs)
     {Map.drop(from_file.attrs, left_out), Map.drop(from_rest.attrs, left_out)}
   end
 
@@ -283,6 +284,27 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
                "subtitle" => "Start here",
                "_yoast_wpseo_title" => "Welcome to the Mishka Test Blog | Mishka Test Blog"
              }
+    end
+
+    test "carry what Rank Math and Yoast SEO kept for a post or page, their variables as the CMS's own" do
+      posts = file_items!(@all, "post")
+      hero = Enum.find(recorded("media"), &(&1["slug"] == "hero"))
+
+      assert posts["47"].attrs["seo"] == %{
+               "title" => "{{page.title}} - Speed notes - {{site.name}}",
+               "description" => "Where the time goes on a slow page, and what to measure first.",
+               "robots" => "noindex, noarchive",
+               "image" => hero["source_url"],
+               "image_id" => hero["id"],
+               "canonical" => "https://speed.example.test/performance-notes/"
+             }
+
+      assert posts["46"].attrs["seo"]["robots"] == "noindex, nofollow"
+      assert posts["43"].attrs["seo"] == rest_items!("post")["43"].attrs["seo"]
+      refute is_map_key(posts["33"].attrs["seo"], "canonical")
+
+      assert file_items!(@all, "page")["27"].attrs["seo"]["title"] ==
+               "{{page.title}} - Guides - {{site.name}}"
     end
 
     test "of an export of posts alone are its posts, with their authors, files and comments, and no page or term" do

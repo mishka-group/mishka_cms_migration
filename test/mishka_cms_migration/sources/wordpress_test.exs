@@ -452,6 +452,30 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert settings["title"].attrs["value"] == "Tom & Jerry"
     end
 
+    test "a post or page carries what Yoast SEO kept for it, and no Yoast default nor canonical on the site's own host" do
+      posts = items!("post")
+      pages = items!("page")
+      og_image = Enum.find(recorded("media"), &(&1["slug"] == "og-image"))
+
+      assert posts["46"].attrs["seo"] == %{
+               "title" => "An SEO checklist for moving a site",
+               "description" =>
+                 "Keep addresses, titles and descriptions when a site changes CMS.",
+               "robots" => "noindex, nofollow",
+               "image" => og_image["source_url"],
+               "image_id" => og_image["id"]
+             }
+
+      assert posts["43"].attrs["seo"]["canonical"] ==
+               "https://syndicated.example.test/phoenix-liveview-tips/"
+
+      refute is_map_key(posts["33"].attrs["seo"], "canonical")
+      assert posts["52"].attrs["seo"] == %{}
+      assert pages["24"].attrs["seo"]["title"] == "About the Mishka Test Blog"
+      assert pages["27"].attrs["seo"]["title"] == "Docs - Guides - Mishka Test Blog"
+      refute is_map_key(pages["22"].attrs["seo"], "title")
+    end
+
     test "a spam comment and a pingback read as what they are, for the target to leave out" do
       spam = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-spam"})["10"]
       pingback = items!("comment", %{"/wp-json/wp/v2/comments" => "comments-pingback"})["11"]

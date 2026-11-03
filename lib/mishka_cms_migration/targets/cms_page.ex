@@ -90,6 +90,12 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   address of its own yet, such as a draft, and any other link, such as a category's or a feed's,
   is kept as it is. The same links in a post point at the same paths
   (`MishkaCmsMigration.Targets.BlogPost`).
+
+  ## Its SEO
+
+  Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
+  page's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description, robots,
+  share image, as the Media file it was imported as, and a canonical address on another site.
   """
 
   use MishkaCmsMigration.Target,
@@ -103,7 +109,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{Read, Status}
+  alias MishkaCmsMigration.Targets.Helpers.{Read, SeoTags, Status}
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -114,6 +120,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       path: path(item),
       template: template(item, context),
       active: active?(item, context),
+      seo_tags: SeoTags.call(item, context, nil),
       language: Languages.primary(context.site_id),
       layout_id: SiteLayout.layout_id(context.site_id)
     }

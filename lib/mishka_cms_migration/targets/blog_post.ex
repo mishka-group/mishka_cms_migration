@@ -77,6 +77,13 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
     file that was not written is kept as it is.
 
+    ## Its SEO
+
+    Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
+    post's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description,
+    robots, share image and a canonical address on another site. A share image that is the post's
+    featured image is left to the featured image, which the Blog shows as the post's share image.
+
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a site without the Blog its kind is skipped as `"no_target"`.
     """
@@ -91,7 +98,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Status}
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, SeoTags, Status}
 
     @drafted ["pending", "private", "password"]
 
@@ -111,6 +118,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),
+        seo_tags: SeoTags.call(item, context, item.attrs["featured_media"]),
         featured: item.attrs["sticky"] == true,
         language: Languages.primary(context.site_id),
         collection_ids: written(context, "category", item.attrs["categories"]),

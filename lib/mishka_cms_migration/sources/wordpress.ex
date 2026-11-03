@@ -87,7 +87,21 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       (`include`) and by slugs made of the file names, without a size (`slug`), and an address is
       a file's when its path is the path of the file or of one of its sizes. A file whose slug is
       not its name and that no `wp-image-<id>` names is left out, and so is every address when the
-      connection is not at hand.
+      connection is not at hand. Its `seo` is what Yoast SEO or Rank Math kept for it, each key only
+      when it has one: `"title"`, `"description"`, `"robots"` (of `noindex`, `nofollow`,
+      `noarchive`, `nosnippet` and `noimageindex`, joined by `", "`), `"image"`, the share image's
+      address, with `"image_id"`, the file of the media library it is, found with the content's
+      files in the same request, and `"canonical"`, only when it is on another host than the
+      source's (every entry's own address is its canonical by default). Each is read from Rank
+      Math's `rank_math_*` fields in `meta`, then Yoast's `_yoast_wpseo_*`, then the head Yoast
+      answers (`yoast_head_json`), which is what the site served. An export carries every one of
+      these fields; the REST API answers only a post's Yoast title and description among them, and
+      none of Rank Math's, so the rest is read from Yoast's head: its title only when it is not the
+      entry's own title, alone or followed by the site's name (Yoast's default, which the CMS's
+      layout draws itself), and its robots only when they say `noindex` or `nofollow`. A variable
+      in a title or description is the CMS's own where it has one (`%%title%%` and `%title%` as
+      `{{page.title}}`, `sitename` as `{{site.name}}`, `excerpt` as `{{page.description}}`, `sep`
+      as `-` and `page` as nothing), and a value with any other variable is left out.
     * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
       `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
       `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
@@ -152,7 +166,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   use Gettext, backend: MishkaCmsCore.Gettext
 
   alias MishkaCmsCore.Runtime.Redirects
-  alias MishkaCmsMigration.Sources.WordPress.Content
+  alias MishkaCmsMigration.Source
+  alias MishkaCmsMigration.Sources.WordPress.{Content, Export}
 
   @kinds [
     "user",
@@ -231,6 +246,21 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   ]
   @texts ["title", "tagline"]
 
+  @seo_titles ["rank_math_title", "_yoast_wpseo_title"]
+  @seo_descriptions ["rank_math_description", "_yoast_wpseo_metadesc"]
+  @seo_images ["rank_math_facebook_image", "_yoast_wpseo_opengraph-image"]
+  @seo_canonicals ["rank_math_canonical_url", "_yoast_wpseo_canonical"]
+  @seo_robots ~w(noindex nofollow noarchive nosnippet noimageindex)
+  @seo_variable ~r/%%(\w+)%%|%(\w+)%/
+  @seo_unknown ~r/%%?[a-z_][^%]*%/i
+  @seo_variables %{
+    "title" => "{{page.title}}",
+    "sitename" => "{{site.name}}",
+    "sep" => "-",
+    "page" => "",
+    "excerpt" => "{{page.description}}"
+  }
+
   @comment_attrs ~w(post author author_name author_email status type date_gmt)
   @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
@@ -290,6 +320,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       )
       when kind in @entries do
     content = Content.call(html, fetch(context))
+    {media, seo} = media(html, content, seo(row, context), context)
 
     {:ok,
      %{
@@ -301,7 +332,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          row
          |> entry_attrs()
          |> decoded_slug()
-         |> Map.put("media", media(html, content, context))
+         |> Map.merge(%{"seo" => seo, "media" => media})
          |> Map.merge(links(html, context)),
        extra: Map.drop(row, @entry_read),
        content: content
@@ -473,20 +504,142 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp asked_rows(read, {route, fields}, {by, values}),
     do: route |> read.([{by, values |> Enum.uniq() |> Enum.join(",")} | fields]) |> Map.values()
 
-  defp media(html, content, %{conn: %{read: read, index: %{"home" => home}}})
+  defp media(html, content, seo, %{conn: %{read: read, index: %{"home" => home}}})
        when is_binary(home) do
-    files = content |> addresses() |> Enum.filter(&file?(&1, URI.parse(home)))
+    home = URI.parse(home)
+    files = content |> addresses() |> Enum.filter(&file?(&1, home))
+    image = seo |> Map.get("image") |> List.wrap() |> Enum.filter(&file?(&1, home))
 
     rows =
       Enum.flat_map(
-        [include: image_ids(html), slug: Enum.flat_map(files, &file_slugs/1)],
+        [
+          include: image_ids(html),
+          slug: files |> Enum.concat(image) |> Enum.flat_map(&file_slugs/1)
+        ],
         &asked_rows(read, {"/wp/v2/media", @media_fields}, &1)
       )
 
-    for href <- files, id = file_of(rows, href), into: %{}, do: {href, id}
+    {for(href <- files, id = file_of(rows, href), into: %{}, do: {href, id}),
+     image_id(seo, Enum.find_value(image, &file_of(rows, &1)))}
   end
 
-  defp media(_html, _content, _context), do: %{}
+  defp media(_html, _content, seo, _context), do: {%{}, seo}
+
+  defp image_id(seo, nil), do: seo
+  defp image_id(seo, id), do: Map.put(seo, "image_id", id)
+
+  defp seo(row, context) do
+    meta = with_map(row["meta"])
+    head = with_map(row["yoast_head_json"])
+
+    %{
+      "title" => typed(meta, @seo_titles) || served_title(head, row),
+      "description" => typed(meta, @seo_descriptions) || said(head["description"]),
+      "robots" => robots(meta) || served_robots(head["robots"]),
+      "image" => said(meta, @seo_images) || served_image(head["og_image"]),
+      "canonical" =>
+        (said(meta, @seo_canonicals) || said(head["canonical"])) |> elsewhere(context)
+    }
+    |> Map.reject(fn {_field, value} -> is_nil(value) end)
+  end
+
+  defp with_map(%{} = map), do: map
+  defp with_map(_none), do: %{}
+
+  defp typed(meta, keys), do: meta |> said(keys) |> variables()
+
+  defp said(meta, keys), do: Enum.find_value(keys, &said(meta[&1]))
+
+  defp said(text) when is_binary(text), do: text |> String.trim() |> filled()
+  defp said(_none), do: nil
+
+  defp variables(nil), do: nil
+
+  defp variables(text),
+    do:
+      @seo_variable
+      |> Regex.replace(text, fn whole, yoast, rank_math ->
+        Map.get(@seo_variables, yoast <> rank_math, whole)
+      end)
+      |> String.split()
+      |> Enum.join(" ")
+      |> resolved()
+
+  defp resolved(text), do: resolved(Regex.match?(@seo_unknown, text), text)
+  defp resolved(true, _text), do: nil
+  defp resolved(false, text), do: filled(text)
+
+  defp served_title(%{"title" => title, "og_site_name" => site}, %{"title" => %{"raw" => own}})
+       when is_binary(title) and is_binary(site) and is_binary(own),
+       do: title |> said() |> own_title(own, site)
+
+  defp served_title(head, _row), do: said(head["title"])
+
+  defp own_title(nil, _own, _site), do: nil
+  defp own_title(own, own, _site), do: nil
+
+  defp own_title(title, own, site),
+    do:
+      own_title(
+        title,
+        Regex.match?(
+          ~r/\A#{Regex.escape(own)} [^\p{L}\p{N}\s]{1,3} #{Regex.escape(site)}\z/u,
+          title
+        )
+      )
+
+  defp own_title(_title, true), do: nil
+  defp own_title(title, false), do: title
+
+  defp robots(meta) do
+    [
+      meta["rank_math_robots"] |> php_list() |> List.wrap(),
+      [yoast_robot(meta["_yoast_wpseo_meta-robots-noindex"], "noindex")],
+      [yoast_robot(meta["_yoast_wpseo_meta-robots-nofollow"], "nofollow")],
+      String.split(meta["_yoast_wpseo_meta-robots-adv"] || "", ",", trim: true)
+    ]
+    |> List.flatten()
+    |> robots_value()
+  end
+
+  defp php_list(value) when is_binary(value), do: Export.php(value)
+  defp php_list(value), do: value
+
+  defp yoast_robot("1", robot), do: robot
+  defp yoast_robot(_default, _robot), do: nil
+
+  defp served_robots(%{} = robots),
+    do: robots_value([robots["index"], robots["follow"]])
+
+  defp served_robots(_none), do: nil
+
+  defp robots_value(robots),
+    do:
+      for(
+        robot when is_binary(robot) <- robots,
+        robot = String.trim(robot),
+        robot in @seo_robots,
+        uniq: true,
+        do: robot
+      )
+      |> joined_robots()
+
+  defp joined_robots([]), do: nil
+  defp joined_robots(robots), do: Enum.join(robots, ", ")
+
+  defp served_image([%{"url" => url} | _]), do: said(url)
+  defp served_image(_none), do: nil
+
+  defp elsewhere(nil, _context), do: nil
+
+  defp elsewhere(url, %{source_host: host}),
+    do: url |> URI.parse() |> elsewhere(url, Source.url_host(%{"url" => url}) != host)
+
+  defp elsewhere(%URI{scheme: scheme, host: host}, url, true)
+       when scheme in ["http", "https"] and is_binary(host),
+       do: url
+
+  defp elsewhere(_uri, _url, _on_source), do: nil
 
   defp addresses(content) do
     tree =

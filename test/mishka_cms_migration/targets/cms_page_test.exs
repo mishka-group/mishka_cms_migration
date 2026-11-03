@@ -15,7 +15,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.Page
+  alias MishkaCmsCore.Runtime.{Page, Seo}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
 
@@ -378,6 +378,28 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
                Enum.sort([media["avatar-nadia"], media["avatar-omid"], media["avatar-shahryar"]])
 
       assert media["guide"] in hrefs
+    end
+  end
+
+  describe "SEO" do
+    test "an import keeps what Yoast SEO kept for a page as its SEO tags, its share image at its Media file",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])
+      imported!(site, admin)
+
+      cover =
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.name == "cover"))
+
+      pages = pages(site)
+      about = Seo.stored_tags(pages["/about"].seo_tags)
+
+      assert Seo.tag_value(about, "title") == "About the Mishka Test Blog"
+      assert Seo.tag_value(about, "description") =~ "Who writes the Mishka Test Blog"
+      assert Seo.tag_value(about, "og:image") == cover.relative_path
+      assert Seo.tag_value(Seo.stored_tags(pages["/docs"].seo_tags), "title") =~ "Guides"
+      assert pages["/"].seo_tags == []
     end
   end
 

@@ -20,7 +20,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
   alias MishkaCmsCore.Accounts.User
   alias MishkaCmsCore.PlainText
-  alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects}
+  alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects, Seo}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.{Events, MigrationItem}
   alias MishkaCmsMigration.MigrationRun.Options
@@ -1035,6 +1035,42 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
              |> LazyHTML.query("a")
              |> LazyHTML.attribute("href")
              |> Enum.member?(@uploads <> "hero.jpg")
+    end
+  end
+
+  describe "a post's SEO" do
+    setup %{site: site},
+      do: %{admin: migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])}
+
+    defp seo(post), do: Seo.stored_tags(post.seo_tags)
+
+    test "an import keeps what Yoast SEO kept for a post as its SEO tags, its share image at its Media file",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      posts = posts(site)
+
+      files =
+        MishkaCmsCore.Runtime.Media
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Map.new(&{&1.name, &1.relative_path})
+
+      checklist = seo(posts["SEO checklist for a migration"])
+      blocks = seo(posts["Every core block in one post"])
+      tips = seo(posts["Phoenix LiveView tips"])
+
+      assert Seo.tag_value(checklist, "title") == "An SEO checklist for moving a site"
+      assert Seo.tag_value(checklist, "description") =~ "Keep addresses"
+      assert Seo.tag_value(checklist, "robots") == "noindex, nofollow"
+      assert Seo.tag_value(blocks, "og:image") == files["diagram"]
+
+      assert Seo.tag_value(tips, "canonical") ==
+               "https://syndicated.example.test/phoenix-liveview-tips/"
+
+      refute Seo.tag_value(checklist, "og:image"),
+             "a share image that is the post's featured image is left to the featured image"
+
+      refute Seo.tag_value(blocks, "canonical"), "a canonical on the old host is dropped"
+      assert posts["A minimal post"].seo_tags == []
     end
   end
 
