@@ -53,12 +53,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       create: :create,
       update: :update
 
-    require Ash.Query
-
     alias MishkaBlog.BlogPost
     alias MishkaCmsCore.Runtime.Redirects
     alias MishkaCmsMigration.Targets.BlogPost, as: PostTarget
-    alias MishkaCmsMigration.Targets.Helpers.Read
+    alias MishkaCmsMigration.Targets.Helpers.Written
 
     @impl MishkaCmsMigration.Target
     def existing(items, %{options: %{post_address: "blog_without_redirects"}}),
@@ -110,30 +108,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     defp posts(_items, %{mode: :dry_run}), do: %{}
 
-    defp posts(items, context) do
-      written =
-        context.source_host
-        |> MishkaCmsMigration.items_by_sources!("post", Enum.map(items, & &1.source_id),
-          actor: context.actor,
-          tenant: context.site_id
-        )
-        |> Enum.filter(&is_binary(&1.target_id))
-
-      records = written |> Enum.map(& &1.target_id) |> records(context)
-
-      for %{source_id: source_id, target_id: id} <- written,
-          post = records[id],
-          into: %{},
-          do: {source_id, post}
-    end
-
-    defp records([], _context), do: %{}
-
-    defp records(ids, context) do
-      BlogPost
-      |> Ash.Query.filter(id in ^ids)
-      |> Read.call(context)
-      |> Map.new(&{&1.id, &1})
-    end
+    defp posts(items, context),
+      do: Written.call(BlogPost, "post", Enum.map(items, & &1.source_id), context)
   end
 end

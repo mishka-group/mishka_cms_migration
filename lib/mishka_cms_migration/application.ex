@@ -32,7 +32,7 @@ defmodule MishkaCmsMigration.Application do
 
   @sources [MishkaCmsMigration.Sources.WordPress]
 
-  @core_targets [MishkaCmsMigration.Targets.CmsPage]
+  @core_targets [MishkaCmsMigration.Targets.CmsMedia, MishkaCmsMigration.Targets.CmsPage]
 
   @blog_targets [
     MishkaCmsMigration.Targets.BlogBlogger,
@@ -60,7 +60,9 @@ defmodule MishkaCmsMigration.Application do
 
   @doc """
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
-  through an existing CMS action: pages into the CMS's pages (`MishkaCmsMigration.Targets.CmsPage`),
+  through an existing CMS action: files into the CMS's media library
+  (`MishkaCmsMigration.Targets.CmsMedia`), pages into the CMS's pages
+  (`MishkaCmsMigration.Targets.CmsPage`),
   authors, categories, tags and posts into Mishka Blog (`MishkaCmsMigration.Targets.BlogBlogger`,
   `MishkaCmsMigration.Targets.BlogCollection`, `MishkaCmsMigration.Targets.BlogTag`,
   `MishkaCmsMigration.Targets.BlogPost`), and each post's old address into a CMS redirect to it

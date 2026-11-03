@@ -30,9 +30,10 @@ defmodule MishkaCmsMigration.Target do
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
-  `actions/0`, a `note/2` that says nothing and an `existing/2` that finds nothing; a target writes
-  only `attrs/2`, `note/2` when it writes an item otherwise than the source has it, and
-  `existing/2` when the CMS may already hold some of its items.
+  `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing and a `prepare/3`
+  that writes at once; a target writes only `attrs/2`, `note/2` when it writes an item otherwise
+  than the source has it, `existing/2` when the CMS may already hold some of its items, and
+  `prepare/3` when a write needs something from the source first.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -50,7 +51,10 @@ defmodule MishkaCmsMigration.Target do
       set — a re-run compares it with the one recorded when the record was written, to keep an
       admin's edits (below); a plain `updated_at` attribute, or one an action may be handed, is
       refused;
-    * `:create` names one of its create actions and `:update` one of its update actions.
+    * `:create` names one of its create actions, or a generic action that answers one of its
+      records (`returns :struct, constraints: [instance_of: <the resource>]`), such as the core
+      Media's `:upload`, which stores a file and creates its record; `:update` names one of its
+      update actions.
 
   ## The source's other fields
 
@@ -84,6 +88,29 @@ defmodule MishkaCmsMigration.Target do
   admin: what it writes first for the record to point at (the Blog's author target makes the user
   its profile names) is rolled back with the record when the write fails, and one it cannot write
   raises, which fails the item with the error.
+
+  ## What a write needs first
+
+  A write that needs something from the source before it runs, such as a file to download, gets it
+  in `prepare/3`. It is handed the item, the context `attrs/2` gets and `write`, the item's write and
+  its record in one transaction, and answers what `write.(context)` answers, after putting what it
+  fetched in the context's `prepared` for `attrs/2` to read, or `{:skipped, reason}` or
+  `{:error, reason}` without writing: the item is then skipped or failed with `reason`. It runs in
+  an import only, after the item is converted and offered to the plugins, outside the write's
+  transaction, so a slow source holds no database transaction open, and it cleans up what it
+  fetched once `write` answers. `use` answers `write.(context)`.
+
+      def prepare(item, %{record: nil} = context, write) do
+        path = Plug.Upload.random_file!("migration")
+
+        try do
+          with :ok <- fetch(item, path), do: write.(%{context | prepared: path})
+        after
+          File.rm(path)
+        end
+      end
+
+      def prepare(_item, context, write), do: write.(context)
 
   ## What the CMS already holds
 
@@ -138,18 +165,21 @@ defmodule MishkaCmsMigration.Target do
 
   @typedoc """
   What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
-  from which run, with which choices, the CMS record of the item's parent (see "An item's parent")
-  and the record an update writes over (see "A create and an update").
+  from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
+  CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
+  "A create and an update") and what `prepare/3` fetched for the write (`nil` until it does).
   """
   @type context :: %{
           mode: :dry_run | :import,
           actor: map(),
           site_id: String.t(),
           run_id: String.t(),
+          source: String.t(),
           source_host: String.t(),
           options: map(),
           parent_id: Ecto.UUID.t() | nil,
-          record: struct() | nil
+          record: struct() | nil,
+          prepared: term()
         }
 
   @typedoc "What `existing/2` says of one item: the CMS record it already is, or why it is left out."
@@ -178,6 +208,15 @@ defmodule MishkaCmsMigration.Target do
   item left out is created (see "What the CMS already holds"). `use` answers `%{}`.
   """
   @callback existing([Item.t()], context()) :: %{String.t() => found()}
+
+  @doc """
+  Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
+  `{:skipped, reason}` or `{:error, reason}` without writing (see "What a write needs first"). `use`
+  answers `write.(context)`.
+  """
+  @callback prepare(Item.t(), context(), (context() -> result)) ::
+              result | {:skipped, String.t()} | {:error, term()}
+            when result: term()
 
   @doc false
   defmacro __using__(opts) do
@@ -215,7 +254,10 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def existing(_items, _context), do: %{}
 
-      defoverridable note: 2, existing: 2
+      @impl MishkaCmsMigration.Target
+      def prepare(_item, context, write), do: write.(context)
+
+      defoverridable note: 2, existing: 2, prepare: 3
     end
   end
 
@@ -253,8 +295,9 @@ defmodule MishkaCmsMigration.Target do
        "its primary key must be :id, a UUID"},
       {timestamped?(Info.attribute(resource, :updated_at)),
        "its updated_at must be an update_timestamp, set by Ash on every write and never by input"},
-      {action?(Info.action(resource, actions.create), :create),
-       "#{inspect(actions.create)} is not one of its create actions"},
+      {creates?(Info.action(resource, actions.create), resource),
+       "#{inspect(actions.create)} is not one of its create actions, nor a generic action " <>
+         "that answers one of its records"},
       {action?(Info.action(resource, actions.update), :update),
        "#{inspect(actions.update)} is not one of its update actions"}
     ]
@@ -270,6 +313,13 @@ defmodule MishkaCmsMigration.Target do
        do: true
 
   defp timestamped?(_updated_at), do: false
+
+  defp creates?(%{type: :create}, _resource), do: true
+
+  defp creates?(%{type: :action, returns: Ash.Type.Struct, constraints: constraints}, resource),
+    do: constraints[:instance_of] == resource
+
+  defp creates?(_action, _resource), do: false
 
   defp action?(%{type: type}, type), do: true
   defp action?(_action, _type), do: false

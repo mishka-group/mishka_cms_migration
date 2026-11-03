@@ -282,10 +282,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       actor: actor,
       site_id: run.site_id,
       run_id: run.id,
+      source: run.source,
       source_host: run.source_host,
       options: options,
       parent_id: nil,
-      record: nil
+      record: nil,
+      prepared: nil
     }
 
   defp source_context(state),

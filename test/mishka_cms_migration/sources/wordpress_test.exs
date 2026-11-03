@@ -642,7 +642,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a dry run" do
-    test "reports every user, term, page, post and old address it found: pages, terms and posts to create, users with no CMS user, a redirect from each published post's address" do
+    test "reports every user, term, file, page, post and old address it found: pages, terms, files and posts to create, users with no CMS user, a file Media cannot keep, a redirect from each published post's address" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -665,7 +665,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                  failed: 0
                }
 
-      for %{kind: kind} = counts <- run.report.kinds, kind != "post_redirect" do
+      assert counts(run, "media") ==
+               %{created: length(recorded("media")) - 1, updated: 0, skipped: 1, failed: 0}
+
+      for %{kind: kind} = counts <- run.report.kinds, kind not in ["post_redirect", "media"] do
         planned = Map.get(@written, kind, :skipped)
 
         assert Map.take(counts, [:created, :updated, :skipped, :failed]) ==
@@ -683,7 +686,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:created, nil},
                    {:skipped, "no_user"},
                    {:skipped, "no_old_address"},
-                   {:skipped, "no_target"}
+                   {:skipped, "type_not_allowed"}
                  ])
              )
 

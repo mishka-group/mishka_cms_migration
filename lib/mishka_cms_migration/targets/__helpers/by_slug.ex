@@ -16,7 +16,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
 
   The records are read by `MishkaCmsMigration.Targets.Helpers.Read`. `slug/2` is that slug alone,
   for a target that points at a record by the address its slug makes, such as a post's link to
-  another post.
+  another post, or the slug another resource's action stores in a field of its own, such as the
+  name of a media folder.
   """
 
   require Ash.Query
@@ -30,7 +31,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   @doc "The item of `items` that is a record `target`'s resource already holds, by source id."
   @spec call(module(), [Item.t()], Target.context()) :: %{String.t() => Target.found()}
   def call(target, items, context) do
-    options = slugify_options(target)
+    options = slugify_options(target.resource(), target.actions().create, :slug)
     stored = for item <- items, slug = stored(item.attrs["slug"], options), do: {item, slug}
     held = stored |> Enum.map(&elem(&1, 1)) |> held(target.resource(), context)
 
@@ -41,17 +42,24 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
 
   @doc """
   The slug `target`'s resource stores for a source's `slug`, made as its create action makes it:
-  `"وردپرس"` is `"wrdprs"` for the Blog's tags; `nil` for no slug.
+  `"وردپرس"` is `"wrdprs"` for the Blog's tags; `nil` for no slug. Given
+  `{resource, action, field}` instead of a target, the slug that action of that resource stores in
+  that field, such as `{MishkaCmsCore.Runtime.MediaCategory, :create, :name}` for a media folder's
+  name.
   """
-  @spec slug(module(), String.t() | nil) :: String.t() | nil
-  def slug(target, slug), do: stored(slug, slugify_options(target))
+  @spec slug(module() | {Ash.Resource.t(), atom(), atom()}, String.t() | nil) ::
+          String.t() | nil
+  def slug({resource, action, field}, slug),
+    do: stored(slug, slugify_options(resource, action, field))
 
-  defp slugify_options(target) do
-    target.resource()
-    |> Info.action(target.actions().create)
+  def slug(target, slug), do: slug({target.resource(), target.actions().create, :slug}, slug)
+
+  defp slugify_options(resource, action, field) do
+    resource
+    |> Info.action(action)
     |> Helpers.slugifiers()
     |> Enum.find_value([], fn
-      {:slug, :slug, options} -> options
+      {^field, ^field, options} -> options
       _other -> nil
     end)
   end

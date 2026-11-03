@@ -1232,6 +1232,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("user"), do: "hero-user"
   def kind_icon("category"), do: "hero-folder"
   def kind_icon("tag"), do: "hero-tag"
+  def kind_icon("media"), do: "hero-photo"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
   def kind_icon("post_redirect"), do: "hero-arrows-right-left"
@@ -1485,6 +1486,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("user"), do: dgettext("mishka_gervaz", "users")
   defp kind_noun("category"), do: dgettext("mishka_gervaz", "categories")
   defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
+  defp kind_noun("media"), do: dgettext("mishka_gervaz", "files")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
   defp kind_noun("post_redirect"), do: dgettext("mishka_gervaz", "redirects")
@@ -1498,6 +1500,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("user"), do: dgettext("mishka_gervaz", "Users")
   def kind_label("category"), do: dgettext("mishka_gervaz", "Categories")
   def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
+  def kind_label("media"), do: dgettext("mishka_gervaz", "Media")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
   def kind_label("post_redirect"), do: dgettext("mishka_gervaz", "Redirects")
@@ -1551,6 +1554,22 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("path_made_ascii"),
     do: dgettext("mishka_gervaz", "Its address was made ASCII, so the old address is not served")
+
+  defp said("not_on_source"),
+    do: dgettext("mishka_gervaz", "Its file is not on the source's own site, so it is left there")
+
+  defp said("type_not_allowed"),
+    do: dgettext("mishka_gervaz", "Media cannot keep this type of file")
+
+  defp said("wrong_type"),
+    do: dgettext("mishka_gervaz", "The source says this file is another type than its name")
+
+  defp said("too_big"), do: dgettext("mishka_gervaz", "Larger than Media takes")
+
+  defp said("wrong_bytes"),
+    do: dgettext("mishka_gervaz", "The file is not the type its name says, so it is left out")
+
+  defp said("not_downloaded"), do: dgettext("mishka_gervaz", "The source did not send the file")
 
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)

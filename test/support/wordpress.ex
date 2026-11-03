@@ -13,13 +13,16 @@ defmodule MishkaCmsMigration.Test.WordPress do
   posts' content names (`site/0`), from their recordings, with the status and headers WordPress sent
   (`X-WP-TotalPages` among them). A path answers a request with no `page` or with page 1;
   `{path, page}` answers that page. A test overrides either with another recording's name, with
-  `:no_site` (an HTML 404, what a site with no REST API answers) or with `:unreachable` (the
-  connection is refused). Any other request is a `:no_site` answer. The other query parameters,
-  `per_page` and `include` among them, do not choose the answer: the blocks and the media are
-  answered whole, whichever ids a request names.
+  `:no_site` (an HTML 404, what a site with no REST API answers), with `:unreachable` (the
+  connection is refused) or with `{content_type, body}`, a `200` of its own. A file of the site's
+  uploads (`/wp-content/uploads/…`) is answered from the seed's own files (`dev/wordpress/media`),
+  by its name, with the content type of its extension. Any other request is a `:no_site` answer.
+  The other query parameters, `per_page`, `include` and `slug` among them, do not choose the
+  answer: the blocks and the media are answered whole, whichever ids or slugs a request names.
 
       stub!(%{"/wp-json/wp/v2/users/me" => "unauthorized-users-me-wrong-password"})
       stub!(%{{"/wp-json/wp/v2/posts", 2} => "posts-page-2"})
+      stub!(%{"/wp-content/uploads/2026/11/hero.jpg" => {"image/jpeg", "<html></html>"}})
 
   Every request it answers is sent to the test process as `{:wordpress_request, conn}`, with its
   `query_params` fetched. `recorded/1` reads a recording's body, for a test that compares what the
@@ -30,6 +33,7 @@ defmodule MishkaCmsMigration.Test.WordPress do
 
   @source MishkaCmsMigration.Sources.WordPress
   @fixtures Path.expand("../fixtures/wordpress/rest", __DIR__)
+  @uploads Path.expand("../../dev/wordpress/media", __DIR__)
   @site %{
     "/wp-json/" => "index",
     "/wp-json/wp/v2/users/me" => "users-me",
@@ -81,8 +85,18 @@ defmodule MishkaCmsMigration.Test.WordPress do
   defp found(answers, path, page),
     do: Map.get_lazy(answers, {path, page}, fn -> first_page(answers, path, page) end)
 
-  defp first_page(answers, path, 1), do: Map.get(answers, path, :no_site)
+  defp first_page(answers, path, 1), do: Map.get_lazy(answers, path, fn -> uploaded(path) end)
   defp first_page(_answers, _path, _page), do: :no_site
+
+  defp uploaded("/wp-content/uploads/" <> _ = path) do
+    file = Path.join(@uploads, Path.basename(path))
+    served(File.regular?(file), file)
+  end
+
+  defp uploaded(_path), do: :no_site
+
+  defp served(true, file), do: {MIME.from_path(file), File.read!(file)}
+  defp served(false, _file), do: :no_site
 
   defp page(%{"page" => page}), do: String.to_integer(page)
   defp page(_params), do: 1
@@ -100,6 +114,12 @@ defmodule MishkaCmsMigration.Test.WordPress do
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(404, "<!doctype html><title>Not Found</title>")
+  end
+
+  defp answer(conn, {type, body}) when is_binary(type) and is_binary(body) do
+    conn
+    |> put_resp_content_type(type, nil)
+    |> send_resp(200, body)
   end
 
   defp answer(conn, recording) when is_binary(recording) do

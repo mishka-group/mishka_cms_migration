@@ -8,8 +8,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   its entry in the report (`call/3`, answering `MishkaCmsMigration.Report.entry/5`).
 
   In an import an item to create or update has its content converted (`migration:content:convert`),
-  is offered to the plugins (`migration:item:before_import`), is written through its target's create
-  or update action (`MishkaCmsMigration.Target`) as the admin who pressed Import, and is recorded
+  is offered to the plugins (`migration:item:before_import`), is handed to its target's `prepare/3`
+  (`MishkaCmsMigration.Target`), which may fetch what the write needs from the source or skip it,
+  is written through its target's create or update action as the admin who pressed Import (a create
+  that is a generic action, such as the core Media's `:upload`, is run as one), and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
   so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
@@ -37,6 +39,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   written fails that item alone, with the exception's message as its reason.
   """
 
+  alias Ash.Resource.Info
   alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
 
@@ -109,9 +112,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
          {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
          note = note(target, item, context, kept),
          {:ok, written} <-
-           Ash.transact([target.resource(), MigrationItem], fn ->
-             store(state, {source_item, item}, {outcome, target, record}, context, note)
-           end) do
+           target.prepare(
+             item,
+             context,
+             &transacted(state, {source_item, item}, {outcome, target, record}, &1, note)
+           ) do
       {:ok, written, note}
     end
   rescue
@@ -119,6 +124,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
+
+  defp transacted(state, items, {_outcome, target, _record} = plan, context, note),
+    do:
+      Ash.transact([target.resource(), MigrationItem], fn ->
+        store(state, items, plan, context, note)
+      end)
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
@@ -147,8 +158,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp write(target, item, nil, context) do
     target.resource()
-    |> Ash.Changeset.for_create(target.actions().create, target.attrs(item, context), as(context))
-    |> Ash.create()
+    |> Info.action(target.actions().create)
+    |> create(target.resource(), target.attrs(item, context), context)
   end
 
   defp write(target, item, record, context) do
@@ -156,6 +167,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> Ash.Changeset.for_update(target.actions().update, target.attrs(item, context), as(context))
     |> Ash.update()
   end
+
+  defp create(%{type: :action, name: name}, resource, attrs, context),
+    do: resource |> Ash.ActionInput.for_action(name, attrs, as(context)) |> Ash.run_action()
+
+  defp create(%{name: name}, resource, attrs, context),
+    do: resource |> Ash.Changeset.for_create(name, attrs, as(context)) |> Ash.create()
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
