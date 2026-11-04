@@ -28,7 +28,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     * a section or a container at the top — a Section, holding a Container (centred and width
       capped) unless it is full width;
     * the columns of a section, and the children of a container laid out in a row — a grid with a
-      column for each, side by side from the `md` width, as the builder's 2, 3 and 4 columns are;
+      column for each, 12 at most (the widest grid Tailwind has), side by side from the `md`
+      width, as the builder's 2, 3 and 4 columns are;
       one column alone, and the children of a container laid out in a column — a Stack, one under
       the next;
     * a heading — the H1 to H6 its size names (H2 by default; a paragraph for a `div`, `span` or
@@ -44,8 +45,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
       whose address was never set is Elementor's demo video, as Elementor draws it, and one whose
       address was cleared is none;
     * an icon list — a Bulleted list, each item linked when it links, without its icons;
-    * an image gallery, and Elementor Pro's gallery — a grid of as many columns as it has, of
-      Figures each linked to its file or to its attachment page;
+    * an image gallery, and Elementor Pro's gallery — a grid of as many columns as it says (1 to
+      12, and 4 when it says none), of Figures each linked to its file or to its attachment page;
     * a spacer — a Spacer, and a divider a Divider;
     * HTML — the author's markup as it is;
     * a shortcode — its shortcodes, converted as classic content's are.
@@ -89,6 +90,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   @rows ["row", "row-reverse"]
   @aligned %{"center" => "text-center", "right" => "text-right", "justify" => "text-justify"}
   @element_id ~r/\A[\w-]+\z/
+  @grid_columns 12
   @dropped_attrs ~w(class style srcset sizes loading decoding fetchpriority)
   @not_kept ["script", "style", "noscript"]
 
@@ -275,7 +277,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp side_by_side(cells, ctx),
     do: [
-      {"div", [{"class", "grid gap-6 md:grid-cols-#{length(cells)}"}],
+      {"div", [{"class", "grid gap-6 md:grid-cols-#{cells |> length() |> grid()}"}],
        Enum.map(cells, &cell(&1, ctx))}
     ]
 
@@ -492,7 +494,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
       |> Map.get("gallery_columns", settings["columns"])
       |> to_string()
       |> Integer.parse()
-      |> whole() || 4
+      |> counted()
+
+  defp counted({count, ""}), do: grid(count)
+  defp counted(_not_a_count), do: 4
+
+  defp grid(count), do: count |> max(1) |> min(@grid_columns)
 
   defp whole({number, ""}) when number > 0, do: number
   defp whole(_not_whole), do: nil

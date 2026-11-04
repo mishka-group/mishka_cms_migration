@@ -305,6 +305,35 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     end
   end
 
+  describe "a grid" do
+    test "has 1 to 12 columns, so its class is always one Tailwind has" do
+      image = %{"id" => "6", "url" => @uploads <> "gallery-1.jpg"}
+
+      galleries =
+        for columns <- ["20", "0", "-3", "abc", "3"],
+            do: widget("image-gallery", %{"wp_gallery" => [image], "gallery_columns" => columns})
+
+      row = %{
+        "id" => "r000001",
+        "elType" => "container",
+        "settings" => %{"flex_direction" => "row"},
+        "elements" => for(n <- 1..14, do: widget("heading", %{"title" => "H#{n}"}))
+      }
+
+      classes =
+        (galleries ++ [row]) |> laid_out!() |> html() |> attribute("[class*=grid-cols]", "class")
+
+      assert Enum.map(classes, &(&1 |> String.split() |> List.last())) == [
+               "md:grid-cols-12",
+               "md:grid-cols-1",
+               "md:grid-cols-1",
+               "md:grid-cols-4",
+               "md:grid-cols-3",
+               "md:grid-cols-12"
+             ]
+    end
+  end
+
   describe "an unsafe address" do
     test "javascript:, vbscript: and data: but an image's are dropped from every link and source" do
       html =
