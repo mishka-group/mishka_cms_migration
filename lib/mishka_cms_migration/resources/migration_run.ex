@@ -593,7 +593,10 @@ defmodule MishkaCmsMigration.MigrationRun do
           width "minmax(164px,max-content)"
         end
 
-        action :expand, type: :accordion
+        action :expand do
+          type :accordion
+          visible fn _run, state -> state.static.id != "migration-settings-runs" end
+        end
 
         action :items do
           type :link

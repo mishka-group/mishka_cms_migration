@@ -15,6 +15,7 @@ defmodule MishkaCmsMigrationWeb.Live.AdminEntriesTest do
   alias MishkaBlog.Dashboard.Actions
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsCoreWeb.Live.Admin.Components.SettingsPanels
+  alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab
 
@@ -55,7 +56,18 @@ defmodule MishkaCmsMigrationWeb.Live.AdminEntriesTest do
       for source <- ["wordpress", "wordpress_file"],
           do: assert(html =~ ~s|href="/admin/dashboard/migration?new_import=#{source}"|)
 
-      assert html =~ ~s|data-gervaz-loading="migration-tab-runs"|
+      assert html =~ ~s|data-gervaz-loading="migration-settings-runs"|
+    end
+  end
+
+  describe "the runs table in the Settings tab" do
+    test "has no expand control, which only the migration page can answer" do
+      %{visible: visible} = MishkaGervaz.Resource.Info.Table.row_action(MigrationRun, :expand)
+      settings = %{static: %{id: "migration-settings-runs"}}
+      page = %{static: %{id: "migration-runs-table"}}
+
+      refute visible.(%MigrationRun{}, settings)
+      assert visible.(%MigrationRun{}, page)
     end
   end
 
