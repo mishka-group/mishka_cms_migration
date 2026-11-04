@@ -267,12 +267,23 @@ defmodule MishkaCmsMigration.Target do
 
   @doc """
   Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
-  `{:skipped, reason}`, `{:undecided, conflict}` or `{:error, reason}` without writing (see "What a
-  write needs first"). `use` answers `write.(context)`.
+  `{:skipped, reason}`, `{:undecided, conflict}`, `{:connected, record, reason}` or
+  `{:error, reason}` without writing (see "What a write needs first"). `use` answers `write.(context)`.
   """
   @callback prepare(Item.t(), context(), (context() -> result)) ::
-              result | {:skipped, String.t()} | {:undecided, String.t()} | {:error, term()}
+              result
+              | {:skipped, String.t()}
+              | {:undecided, String.t()}
+              | {:connected, struct(), String.t()}
+              | {:error, term()}
             when result: term()
+
+  @doc """
+  What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import
+  writes it, from what `prepare/3` fetched, such as `%{file_hash: hash}` for a downloaded file (see
+  "What a write needs first"). `use` answers `%{}`.
+  """
+  @callback recorded(Item.t(), context()) :: map()
 
   @doc """
   What a dry run plans for `item`, one it would create or update, that the import's `prepare/3`
@@ -322,9 +333,12 @@ defmodule MishkaCmsMigration.Target do
       def prepare(_item, context, write), do: write.(context)
 
       @impl MishkaCmsMigration.Target
+      def recorded(_item, _context), do: %{}
+
+      @impl MishkaCmsMigration.Target
       def waiting(_item, _context), do: nil
 
-      defoverridable note: 2, existing: 2, prepare: 3, waiting: 2
+      defoverridable note: 2, existing: 2, prepare: 3, recorded: 2, waiting: 2
     end
   end
 

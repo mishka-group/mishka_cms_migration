@@ -83,7 +83,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   def call(%{mode: :import} = state, %Item{} = item, {:connected, target, record}) do
     state
-    |> recorded(item, target, %{id: record.id, updated_at: nil}, {:skipped, "connected"})
+    |> recorded(item, target, %{id: record.id, updated_at: nil}, {:skipped, "connected"}, %{})
     |> stored()
     |> entered(item, :skipped, "connected")
   end
@@ -96,7 +96,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record, decisions}) do
     state
     |> written(item, {outcome, target, record}, item_context(state, item, record, decisions))
-    |> settled(state, item, outcome)
+    |> settled(state, item, {outcome, target})
   end
 
   defp planned(nil, state, item, {outcome, target, context}),
@@ -105,16 +105,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp planned({waiting, reason}, state, item, _write) when waiting in [:skipped, :undecided],
     do: entry(state, item, waiting, reason)
 
-  defp settled({:ok, _record, note}, _state, item, outcome),
+  defp settled({:ok, _record, note}, _state, item, {outcome, _target}),
     do: Report.entry(item.kind, item.source_id, item.title, outcome, note)
 
-  defp settled({:skipped, reason}, state, item, _outcome),
+  defp settled({:connected, record, reason}, state, item, {_outcome, target}),
+    do:
+      state
+      |> recorded(item, target, %{id: record.id, updated_at: nil}, {:skipped, reason}, %{})
+      |> stored()
+      |> entered(item, :skipped, reason)
+
+  defp settled({:skipped, reason}, state, item, _write),
     do: entry(state, item, :skipped, reason)
 
-  defp settled({:undecided, conflict}, state, item, _outcome),
+  defp settled({:undecided, conflict}, state, item, _write),
     do: entry(state, item, :undecided, conflict)
 
-  defp settled({:error, error}, state, item, _outcome),
+  defp settled({:error, error}, state, item, _write),
     do: entry(state, item, :failed, Report.reason(error))
 
   defp entry(state, item, outcome, reason),
@@ -149,7 +156,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, target, written, {outcome, note}) do
+         {:ok, _item} <-
+           recorded(
+             state,
+             source_item,
+             target,
+             written,
+             {outcome, note},
+             target.recorded(item, context)
+           ) do
       {:ok, written}
     end
   end
@@ -197,25 +212,28 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp recorded(state, item, target, %{id: id, updated_at: updated_at}, {outcome, note}) do
+  defp recorded(state, item, target, %{id: id, updated_at: updated_at}, {outcome, note}, added) do
     MishkaCmsMigration.record_item(
-      %{
-        source_host: state.run.source_host,
-        source_kind: item.kind,
-        source_id: item.source_id,
-        run_id: state.run.id,
-        title: item.title,
-        source_slug: source_slug(item),
-        source_parent: item.parent,
-        source_modified_at: item.modified_at,
-        content_hash: Item.hash(item),
-        target_resource: inspect(target.resource()),
-        target_id: id,
-        target_updated_at: updated_at,
-        outcome: outcome,
-        reason: note,
-        extra: item.extra
-      },
+      Map.merge(
+        %{
+          source_host: state.run.source_host,
+          source_kind: item.kind,
+          source_id: item.source_id,
+          run_id: state.run.id,
+          title: item.title,
+          source_slug: source_slug(item),
+          source_parent: item.parent,
+          source_modified_at: item.modified_at,
+          content_hash: Item.hash(item),
+          target_resource: inspect(target.resource()),
+          target_id: id,
+          target_updated_at: updated_at,
+          outcome: outcome,
+          reason: note,
+          extra: item.extra
+        },
+        added
+      ),
       scope: state.scope
     )
   end

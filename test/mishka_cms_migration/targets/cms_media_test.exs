@@ -59,6 +59,15 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
 
   defp seeded(name), do: @seeded |> Path.join(name) |> File.read!()
 
+  defp sha256(bytes), do: :sha256 |> :crypto.hash(bytes) |> Base.encode16(case: :lower)
+
+  defp hashes(site) do
+    MishkaCmsMigration.MigrationItem
+    |> Ash.read!(tenant: site.id, authorize?: false)
+    |> Enum.filter(&(&1.source_kind == "media"))
+    |> Map.new(&{&1.source_id, &1.file_hash})
+  end
+
   defp downloads do
     receive do
       {:wordpress_request, %{request_path: "/wp-json" <> _}} -> downloads()
@@ -113,6 +122,22 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert stored(media["photo"]) == seeded("photo.webp")
       assert media["avatar-parisa"].description == "Portrait placeholder of Parisa"
       refute is_map_key(media, "logo-svg")
+    end
+
+    test "records the SHA-256 of the bytes it downloaded on each file's item, and keeps it when the description is written over",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      assert %{"4" => hero, "5" => cover, "21" => nil} = hashes(site)
+      assert hero == sha256(seeded("hero.jpg"))
+      assert cover == sha256(seeded("cover.jpg"))
+      assert hero != cover
+
+      Repo.query!(
+        "UPDATE mishka_cms_migration_items SET content_hash = 'changed' WHERE source_kind = 'media'"
+      )
+
+      imported!(site, admin)
+      assert %{"4" => ^hero, "5" => ^cover} = hashes(site)
     end
 
     test "leaves out a file WordPress says is too big, or keeps on another host, without asking for it",

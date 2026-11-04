@@ -8,7 +8,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   do with it (`plan`, `plan_reason`), the CMS record the last import wrote (`target_resource`,
   `target_id`), when that record last changed as the import left it (`target_updated_at`), what the
   source said about the item then (`title`, `source_slug`, `source_modified_at`, `content_hash`, and
-  the fields the CMS has no home for, `extra`), and what the last import that met it did
+  the fields the CMS has no home for, `extra`), the SHA-256 of the file an import downloaded for a
+  media item (`file_hash`, which finds a second attachment of the same bytes), and what the last import that met it did
   (`outcome`, `reason`, `run_id`). `outcome` is `nil` for an item no import has met yet, so a run's
   counts (`MishkaCmsMigration.MigrationRun`'s `created_count` and the rest) count what its import
   did alone. The item's content and its other fields, such as a post's status and author, are not
@@ -164,6 +165,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     :source_parent,
     :source_modified_at,
     :content_hash,
+    :file_hash,
     :target_resource,
     :target_id,
     :target_updated_at,
@@ -183,6 +185,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
     custom_indexes do
       index [:run_id]
+      index [:site_id, :file_hash], where: "file_hash IS NOT NULL"
     end
   end
 
@@ -683,6 +686,15 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The items of a source host and kind with any of the given source ids"
     end
 
+    read :by_file_hash do
+      argument :file_hash, :string, allow_nil?: false
+
+      filter expr(file_hash == ^arg(:file_hash) and not is_nil(target_id) and left_out == false)
+      prepare build(sort: [inserted_at: :asc], limit: 1)
+
+      description "The earliest item of the site whose file has these bytes (a SHA-256), if any"
+    end
+
     read :left_out_by_slugs do
       argument :source_host, :string, allow_nil?: false
       argument :source_kind, :string, allow_nil?: false
@@ -972,6 +984,13 @@ defmodule MishkaCmsMigration.MigrationItem do
       allow_nil? true
       public? true
       description "MishkaCmsMigration.Source.Item.hash/1 of the item, as of the last write"
+    end
+
+    attribute :file_hash, :string do
+      allow_nil? true
+      public? true
+
+      description "The SHA-256 of the file the import downloaded for a media item, as hex; nil for any other item"
     end
 
     attribute :target_resource, :string do

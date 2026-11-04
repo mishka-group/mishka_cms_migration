@@ -109,7 +109,8 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
     path = Plug.Upload.random_file!("migration")
 
     try do
-      with :ok <- downloaded(item, path, context), do: write.(%{context | prepared: path})
+      with {:ok, hash} <- downloaded(item, path, context),
+           do: write.(%{context | prepared: %{path: path, hash: hash}})
     after
       File.rm(path)
     end
@@ -120,7 +121,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   @impl MishkaCmsMigration.Target
   def attrs(item, %{record: nil} = context) do
     %{
-      file: Ash.Type.File.from_path(context.prepared),
+      file: Ash.Type.File.from_path(context.prepared.path),
       original_filename: name(item) <> extension(item.attrs["source_url"]),
       description: description(item),
       media_category_id: folder_id(context)
@@ -128,6 +129,10 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   end
 
   def attrs(item, _update), do: %{description: description(item)}
+
+  @impl MishkaCmsMigration.Target
+  def recorded(_item, %{prepared: %{hash: hash}}), do: %{file_hash: hash}
+  def recorded(_item, _context), do: %{}
 
   @doc """
   Where the CMS serves the files the same run, or an earlier one, wrote for the source's media
@@ -297,7 +302,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   defp streamed({:data, data}, {request, response}, file, limit) do
     size = Req.Response.get_private(response, :size, 0) + byte_size(data)
-    response = Req.Response.put_private(response, :size, size)
+    hash = response |> Req.Response.get_private(:hash, :crypto.hash_init(:sha256)) |> :crypto.hash_update(data)
+
+    response = response |> Req.Response.put_private(:size, size) |> Req.Response.put_private(:hash, hash)
     kept(size <= limit, data, file, {request, response})
   end
 
@@ -311,7 +318,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp checked(%Req.Response{status: 200} = response, path, extension) do
     with :ok <- response |> Req.Response.get_private(:size, 0) |> fits(),
          :ok <- response |> Req.Response.get_header("content-type") |> answered(extension) do
-      signed(FileSignature.matches?(path, extension))
+      path |> FileSignature.matches?(extension) |> signed(response)
     end
   end
 
@@ -333,8 +340,15 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp same_answer(type, type), do: :ok
   defp same_answer(_type, _answered), do: {:skipped, "wrong_type"}
 
-  defp signed(true), do: :ok
-  defp signed(false), do: {:skipped, "wrong_bytes"}
+  defp signed(true, response),
+    do:
+      {:ok,
+       response
+       |> Req.Response.get_private(:hash, :crypto.hash_init(:sha256))
+       |> :crypto.hash_final()
+       |> Base.encode16(case: :lower)}
+
+  defp signed(false, _response), do: {:skipped, "wrong_bytes"}
 
   defp name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
     do: slug |> Slug.slugify() |> named(item)
