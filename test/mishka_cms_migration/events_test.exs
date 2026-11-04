@@ -31,6 +31,9 @@ defmodule MishkaCmsMigration.EventsTest do
       |> Ash.read!(tenant: site.id, authorize?: false)
       |> Enum.find(&(&1.from_path == from_path))
 
+  defp plugins_on(event),
+    do: :event |> MishkaInstaller.Event.Event.get(event) |> Enum.map(& &1.name)
+
   defp item(site, source_id),
     do:
       MigrationItem
@@ -55,9 +58,11 @@ defmodule MishkaCmsMigration.EventsTest do
                source_host: "old.example.com",
                outcome: :created,
                reason: nil,
-               asked: true,
                item: %Item{kind: "redirect", source_id: "1"}
              } = payload
+
+      assert payload |> Map.keys() |> Enum.sort() ==
+               [:item, :outcome, :reason, :run_id, :site_id, :source, :source_host]
 
       assert %{site_id: ^site_id, actor: %{id: actor_id}} = meta
       assert actor_id == admin.id
@@ -119,18 +124,43 @@ defmodule MishkaCmsMigration.EventsTest do
     end
 
     @tag capture_log: true
-    test "skips an item a plugin raises on, and writes the rest", %{site: site, admin: admin} do
+    test "skips an item a plugin raises on or answers with something that is not the payload, and writes the rest",
+         %{site: site, admin: admin} do
       rows = [
         redirect_row(1, "/raised-on", "/a", %{"gate" => "raise"}),
-        redirect_row(2, "/fine", "/b")
+        redirect_row(2, "/fine", "/b"),
+        redirect_row(3, "/not-the-payload", "/c", %{"gate" => "nope"})
       ]
 
       run = migrate!(site, admin, %{"redirect" => rows})
 
-      assert run.report.counts == %{created: 1, updated: 0, skipped: 1, failed: 0, undecided: 0}
-      assert is_nil(redirect(site, "/raised-on"))
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 2, failed: 0, undecided: 0}
+      assert is_nil(redirect(site, "/raised-on")) and is_nil(redirect(site, "/not-the-payload"))
       assert %{outcome: :skipped, reason: "plugins_failed", target_id: nil} = item(site, "1")
+      assert %{outcome: :skipped, reason: "plugins_failed", target_id: nil} = item(site, "3")
       assert redirect(site, "/fine")
+    end
+
+    test "runs only the plugins installed on it, none of the extension's own" do
+      assert plugins_on(Events.before_import_event()) == [ItemGate]
+    end
+
+    test "writes the item as the import made it once an operator stopped every plugin of it", %{
+      site: site,
+      admin: admin
+    } do
+      {:ok, _stopped} =
+        MishkaInstaller.Event.Event.stop(:event, Events.before_import_event(), false)
+
+      run =
+        migrate!(site, admin, %{
+          "redirect" => [redirect_row(1, "/old", "/new", %{"gate" => "skip"})]
+        })
+
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 0, undecided: 0}
+      assert redirect(site, "/old").to == "/new"
+      assert %{outcome: :created} = item(site, "1")
+      refute_received {:before_import, _payload, _meta}
     end
 
     test "is not fired by a dry run", %{site: site, admin: admin} do
@@ -178,6 +208,21 @@ defmodule MishkaCmsMigration.EventsTest do
                         payload, %{actor: %{}}}
 
       assert %{run_id: ^run_id, kind: "redirect", source_id: "1", source: "fake"} = payload
+
+      assert payload |> Map.keys() |> Enum.sort() ==
+               [
+                 :attrs,
+                 :html,
+                 :kind,
+                 :name,
+                 :raw,
+                 :run_id,
+                 :site_id,
+                 :source,
+                 :source_host,
+                 :source_id
+               ]
+
       assert_receive {:convert, %{name: "gallery"}, _meta}
       refute_received {:convert, %{name: nil}, _meta}
 
@@ -203,6 +248,30 @@ defmodule MishkaCmsMigration.EventsTest do
       assert run.report.counts == %{created: 0, updated: 0, skipped: 1, failed: 0, undecided: 0}
       assert is_nil(redirect(site, "/old"))
       assert %{outcome: :skipped, reason: "plugins_failed"} = item(site, "1")
+    end
+
+    test "runs only the plugins installed on it, none of the extension's own" do
+      assert plugins_on(Events.convert_event()) == [ContentConverter]
+    end
+
+    test "keeps a piece as escaped text once an operator stopped every plugin of it", %{
+      site: site,
+      admin: admin
+    } do
+      {:ok, _stopped} = MishkaInstaller.Event.Event.stop(:event, Events.convert_event(), false)
+      content = [%{"name" => "shout", "raw" => "<b>hi</b>"}]
+
+      run =
+        migrate!(site, admin, %{
+          "redirect" => [redirect_row(1, "/old", "/new", %{"content" => content})]
+        })
+
+      assert run.report.counts == %{created: 1, updated: 0, skipped: 0, failed: 0, undecided: 0}
+      assert %{outcome: :created, reason: "unconverted: shout"} = item(site, "1")
+      description = redirect(site, "/old").description
+      assert description =~ "hi"
+      refute description =~ "<b>" or description =~ "<strong>"
+      refute_received {:convert, _payload, _meta}
     end
 
     test "skips an item with a piece to convert while one of its plugins cannot run", %{

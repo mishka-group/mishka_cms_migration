@@ -10,15 +10,16 @@ defmodule MishkaCmsMigration.Events do
 
   ## When a plugin fails
 
-  The two events that decide what is written fail closed. mishka_installer answers a chain in which
-  a plugin raised with the payload as it was sent, so each payload goes out with `asked: false`,
-  and this extension's own first plugin on the event, at priority 1
-  (`MishkaCmsMigration.Events.BeforeImportGuard`, `MishkaCmsMigration.Events.ConvertGuard`),
-  sets it to `true`. An answer still saying `asked: false` — a plugin raised, or answered something
-  that is not the payload, or the guard is stopped — skips the item as `"plugins_failed"`. While
-  one of an event's plugins is not loaded, so the event cannot run, the item is skipped as
-  `"plugins_cannot_run"`. Either way nothing is written behind a plugin that would have changed or
-  kept out the item. A plugin keeps the keys of the payload it is handed, `asked` among them.
+  The two events that decide what is written fail closed. They are called with the `raised:` option
+  of `MishkaInstaller.Event.Hook.call/3`, so when one of their plugins raises, or replies with
+  something other than `{:reply, _}` or `{:reply, :halt, _}`, the plugins after it do not run and
+  the call answers `:failed` instead of the payload. That answer, or any other that is not the
+  payload, skips the item as `"plugins_failed"`. While one of an event's plugins is not loaded, so
+  the event cannot run, the item is skipped as `"plugins_cannot_run"`. Either way nothing is written
+  behind a plugin that would have changed or kept out the item. An event with no started plugin,
+  such as one whose plugins an operator stopped, hands the payload back as it was sent: a piece
+  stays unconverted and the item is written as the import made it. A plugin answers the payload it
+  is handed, with all its keys.
 
   ## `migration:content:convert`
 
@@ -29,7 +30,7 @@ defmodule MishkaCmsMigration.Events do
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
         kind: "post", source_id: "12",
         name: "gallery", attrs: %{"ids" => "4,5"}, raw: "[gallery ids=\\"4,5\\"]",
-        html: nil, asked: true
+        html: nil
       }
 
   A plugin that knows the piece answers with `html` set to the markup it becomes. A piece nobody
@@ -41,7 +42,7 @@ defmodule MishkaCmsMigration.Events do
 
       %{
         site_id: "…", run_id: "…", source: "wordpress", source_host: "example.com",
-        outcome: :created, item: %MishkaCmsMigration.Source.Item{}, reason: nil, asked: true
+        outcome: :created, item: %MishkaCmsMigration.Source.Item{}, reason: nil
       }
 
   `outcome` is what the import will record once the item is written: `:created` for a new CMS
@@ -110,12 +111,11 @@ defmodule MishkaCmsMigration.Events do
         name: piece.name,
         attrs: piece.attrs,
         raw: piece.raw,
-        html: nil,
-        asked: false
+        html: nil
       })
 
     @convert
-    |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run)
+    |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run, raised: :failed)
     |> converted()
   end
 
@@ -125,16 +125,10 @@ defmodule MishkaCmsMigration.Events do
   """
   @spec before_import(Item.t(), :created | :updated, map(), map() | nil) :: decision()
   def before_import(%Item{} = item, outcome, run, actor) do
-    payload =
-      Map.merge(base(run), %{
-        outcome: outcome,
-        item: item,
-        reason: nil,
-        asked: false
-      })
+    payload = Map.merge(base(run), %{outcome: outcome, item: item, reason: nil})
 
     @before_import
-    |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run)
+    |> Hook.call(payload, meta: meta(run, actor), cannot_run: :cannot_run, raised: :failed)
     |> decided(item)
   end
 
@@ -160,55 +154,20 @@ defmodule MishkaCmsMigration.Events do
   defp meta(run, actor), do: %{actor: actor, site_id: run.site_id}
 
   defp converted(:cannot_run), do: :cannot_run
-  defp converted(%{asked: true, html: html}) when is_binary(html), do: {:ok, html}
-  defp converted(%{asked: true}), do: :unconverted
+  defp converted(%{html: html}) when is_binary(html), do: {:ok, html}
+  defp converted(%{html: nil}), do: :unconverted
   defp converted(_failed), do: :failed
 
   defp decided(:cannot_run, _item), do: {:skipped, "plugins_cannot_run"}
-  defp decided(%{asked: true} = answer, item), do: answered(answer, item)
-  defp decided(_failed, _item), do: {:skipped, "plugins_failed"}
 
-  defp answered(%{outcome: :skipped} = answer, _item),
+  defp decided(%{outcome: :skipped} = answer, _item),
     do: {:skipped, reason(answer, "skipped by a plugin")}
 
-  defp answered(%{item: %Item{} = changed}, item),
+  defp decided(%{item: %Item{} = changed}, item),
     do: {:ok, %{changed | kind: item.kind, source_id: item.source_id}}
 
-  defp answered(_answer, _item), do: {:skipped, "plugins_failed"}
+  defp decided(_failed, _item), do: {:skipped, "plugins_failed"}
 
   defp reason(%{reason: reason}, _default) when is_binary(reason) and reason != "", do: reason
   defp reason(_answer, default), do: default
-end
-
-defmodule MishkaCmsMigration.Events.BeforeImportGuard do
-  @moduledoc """
-  The first plugin on `migration:item:before_import`, at priority 1: it marks the payload
-  `asked: true`, so an answer that comes back unmarked tells the import that a plugin of the event
-  raised and the item is skipped rather than written (`MishkaCmsMigration.Events`).
-  """
-
-  use MishkaInstaller.Event.Hook,
-    event: MishkaCmsMigration.Events.before_import_event(),
-    initial: %{priority: 1}
-
-  @impl true
-  def call(%{asked: false} = payload), do: {:reply, %{payload | asked: true}}
-  def call(payload), do: {:reply, payload}
-end
-
-defmodule MishkaCmsMigration.Events.ConvertGuard do
-  @moduledoc """
-  The first plugin on `migration:content:convert`, at priority 1: it marks the payload
-  `asked: true`, so an answer that comes back unmarked tells the import that a plugin of the event
-  raised and the item is skipped rather than written with that piece unconverted
-  (`MishkaCmsMigration.Events`).
-  """
-
-  use MishkaInstaller.Event.Hook,
-    event: MishkaCmsMigration.Events.convert_event(),
-    initial: %{priority: 1}
-
-  @impl true
-  def call(%{asked: false} = payload), do: {:reply, %{payload | asked: true}}
-  def call(payload), do: {:reply, payload}
 end

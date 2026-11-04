@@ -11,9 +11,7 @@ defmodule MishkaCmsMigration.Application do
   The plugins are the sources (`sources/0`, each a plugin on `"migration:sources"`, see
   `MishkaCmsMigration.Source`) and the targets (`targets/0`, each on `"migration:targets"`, see
   `MishkaCmsMigration.Target`) it ships; the one that makes it installable on a site,
-  `MishkaCmsMigration.Provision`; the two that open the chains of the events deciding what is
-  written, `MishkaCmsMigration.Events.BeforeImportGuard` and
-  `MishkaCmsMigration.Events.ConvertGuard`; the admin page's sidebar entry,
+  `MishkaCmsMigration.Provision`; the admin page's sidebar entry,
   `MishkaCmsMigrationWeb.SidebarMenu`; and the runs' log in the core's activity log
   (`MishkaCmsMigration.Activity`, on `"activity:sources"`).
 
@@ -56,11 +54,6 @@ defmodule MishkaCmsMigration.Application do
   @activity_sources [MishkaCmsMigration.Activity]
 
   @provision_plugins [MishkaCmsMigration.Provision]
-
-  @guard_plugins [
-    MishkaCmsMigration.Events.BeforeImportGuard,
-    MishkaCmsMigration.Events.ConvertGuard
-  ]
 
   @doc """
   The sources this extension ships, each a plugin on `"migration:sources"`: WordPress over its REST
@@ -105,9 +98,7 @@ defmodule MishkaCmsMigration.Application do
   """
   @spec plugins() :: [module()]
   def plugins,
-    do:
-      sources() ++
-        targets() ++ @provision_plugins ++ @guard_plugins ++ @sidebar_menus ++ @activity_sources
+    do: sources() ++ targets() ++ @provision_plugins ++ @sidebar_menus ++ @activity_sources
 
   @impl true
   def start(_type, _args) do
