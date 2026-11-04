@@ -1123,12 +1123,14 @@ defmodule MishkaCmsMigration.MigrationItem do
   when that left it `:undecided` after a plan to write it, or with no plan, else the conflict an
   admin decided (the first, for an item that met several) until the decision took effect
   (`settled?/1`), so a decision can be changed until an import wrote or connected the item by it.
+  A menu no import has written yet always has one, `"menu_goes_to"`, so the main menu, which goes
+  to the header unless an admin says otherwise, can be moved: Decide… marks its current place.
   A reason that names what the conflict is about after `": "`, as `"draft_pages: Team, Leadership"`
   does, is the conflict before it. `nil` for an item that never met one, and for one whose decision
   took effect: Decide… is shown only while it is not `nil`, and Map to… comes back.
   """
   @spec conflict(map()) :: String.t() | nil
-  def conflict(item), do: code(waits_on(item)) || open_decision(item)
+  def conflict(item), do: code(waits_on(item)) || open_decision(item) || movable(item)
 
   @doc """
   Whether the admin's decision on `item` took effect: an import wrote the item by it, or connected
@@ -1161,10 +1163,23 @@ defmodule MishkaCmsMigration.MigrationItem do
   @spec decision_options(map()) :: [{String.t(), String.t()}]
   def decision_options(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}) do
     conflict = conflict(item)
-    for choice <- choices(conflict), do: {choice_word(conflict, choice), choice}
+    current = current_choice(conflict, item)
+
+    for choice <- choices(conflict),
+        do: {marked(choice_word(conflict, choice), choice == current), choice}
   end
 
   def decision_options(_state), do: []
+
+  defp current_choice("menu_goes_to", %{decisions: %{"menu_goes_to" => choice}}), do: choice
+
+  defp current_choice("menu_goes_to", %{plan: plan}) when plan in [:created, :updated],
+    do: "header"
+
+  defp current_choice(_conflict, _item), do: nil
+
+  defp marked(word, true), do: dgettext("mishka_gervaz", "%{choice} (current)", choice: word)
+  defp marked(word, false), do: word
 
   @doc """
   The Map to… form's choices (`mapped_id`'s `options`): Import as its own, then the records of the
@@ -1451,6 +1466,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp undecided(conflict, _reason, decisions) when is_map_key(decisions, conflict), do: nil
   defp undecided(_conflict, reason, _decisions), do: reason
+
+  defp movable(%{source_kind: "menu", target_id: nil}), do: "menu_goes_to"
+  defp movable(_item), do: nil
 
   defp open_decision(item), do: item |> settled?() |> decided_conflict(item.decisions)
 

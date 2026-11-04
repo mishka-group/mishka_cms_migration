@@ -295,6 +295,31 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert options |> Enum.at(2) |> elem(0) =~ "any page or layout"
     end
 
+    test "lets the admin move the main menu, which then goes where the admin says and not to the header",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      main =
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "22"))
+
+      assert MigrationItem.conflict(main) == "menu_goes_to"
+      options = MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: main}})
+      assert [{marked, "header"}, {plain, "footer"} | _] = options
+      assert marked =~ "(current)"
+      refute plain =~ "(current)"
+
+      decide!(site, admin, "footer", "22")
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert length(footer_links(site)) == 14
+      assert links(site) == []
+      assert MigrationItem.conflict(main |> Ash.reload!(authorize?: false)) == nil
+    end
+
     test "leaves out a menu the admin decides to leave out, and never writes it",
          %{site: site, admin: admin} do
       layout!(site)
