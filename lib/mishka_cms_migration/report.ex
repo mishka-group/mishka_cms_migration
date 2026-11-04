@@ -77,6 +77,13 @@ defmodule MishkaCmsMigration.Report do
       site's language addresses, `<cause>` being `polylang`, `wpml` or `prefix_all`
       (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`).
 
+  `duplicates` counts the media files that are the same bytes as an earlier one
+  (`MishkaCmsMigration.Targets.CmsMedia`): `found` the ones the run met, `merged` those an admin
+  decided to use the original for (`"same_file_used"`, `"same_file_used_no_redirect"`) and `kept`
+  those decided to keep as their own (`"same_file_kept"`), the rest waiting for the decision
+  (`"same_file: <title of the original>"`, an `:undecided` item). A dry run downloads nothing and
+  counts none.
+
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
@@ -104,6 +111,11 @@ defmodule MishkaCmsMigration.Report do
           required(:counts) => %{outcome() => non_neg_integer()},
           required(:kinds) => [map()],
           required(:entries) => [entry()],
+          required(:duplicates) => %{
+            found: non_neg_integer(),
+            merged: non_neg_integer(),
+            kept: non_neg_integer()
+          },
           optional(:kept) => non_neg_integer()
         }
 
@@ -117,7 +129,14 @@ defmodule MishkaCmsMigration.Report do
 
   @doc "A report with nothing in it."
   @spec new() :: t()
-  def new, do: %{counts: zero(), kinds: [], entries: [], kept: 0}
+  def new,
+    do: %{
+      counts: zero(),
+      kinds: [],
+      entries: [],
+      duplicates: %{found: 0, merged: 0, kept: 0},
+      kept: 0
+    }
 
   @doc "`report` with `entry` added. Call `done/1` once every entry is in."
   @spec add(t(), entry()) :: t()
@@ -128,6 +147,7 @@ defmodule MishkaCmsMigration.Report do
       counts: Map.update!(report.counts, outcome, &(&1 + 1)),
       kinds: count_kind(report.kinds, kind, outcome),
       entries: entries,
+      duplicates: duplicate(report.duplicates, entry),
       kept: kept
     }
   end
@@ -138,6 +158,7 @@ defmodule MishkaCmsMigration.Report do
     %{
       counts: report.counts,
       kinds: report.kinds,
+      duplicates: report.duplicates,
       entries: report.entries |> Enum.take(@max_entries) |> Enum.reverse()
     }
   end
@@ -180,6 +201,18 @@ defmodule MishkaCmsMigration.Report do
   defp said(error), do: Exception.message(error)
 
   defp short(text), do: String.slice(text, 0, 1000)
+
+  defp duplicate(duplicates, %{kind: "media", outcome: :undecided, reason: "same_file: " <> _}),
+    do: %{duplicates | found: duplicates.found + 1}
+
+  defp duplicate(duplicates, %{kind: "media", outcome: :skipped, reason: reason})
+       when reason in ["same_file_used", "same_file_used_no_redirect"],
+       do: %{duplicates | found: duplicates.found + 1, merged: duplicates.merged + 1}
+
+  defp duplicate(duplicates, %{kind: "media", outcome: :created, reason: "same_file_kept"}),
+    do: %{duplicates | found: duplicates.found + 1, kept: duplicates.kept + 1}
+
+  defp duplicate(duplicates, _entry), do: duplicates
 
   defp count_kind(kinds, kind, outcome),
     do: kinds |> Enum.find_index(&(&1.kind == kind)) |> counted(kinds, kind, outcome)

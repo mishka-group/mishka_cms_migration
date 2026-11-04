@@ -1126,6 +1126,17 @@ defmodule MishkaCmsMigration.MigrationRun do
                         items: [fields: [{:kind, [type: :string, allow_nil?: false]} | @counts]]
                       ]
                     ],
+                    duplicates: [
+                      type: :map,
+                      allow_nil?: true,
+                      constraints: [
+                        fields: [
+                          found: [type: :integer, allow_nil?: false],
+                          merged: [type: :integer, allow_nil?: false],
+                          kept: [type: :integer, allow_nil?: false]
+                        ]
+                      ]
+                    ],
                     entries: [
                       type: {:array, :map},
                       allow_nil?: false,

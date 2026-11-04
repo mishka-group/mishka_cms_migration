@@ -313,6 +313,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       media = media(site)
 
       assert {:undecided, "same_file: Hero image"} = outcomes(run)["7"]
+      assert run.report.duplicates == %{found: 1, merged: 0, kept: 0}
       assert {:created, nil} = outcomes(run)["30"]
       assert {:created, nil} = outcomes(run)["4"]
       assert counts(run).undecided == 1
@@ -341,6 +342,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       hero = media["hero"]
 
       assert {:skipped, "same_file_used"} = outcomes(run)["7"]
+      assert run.report.duplicates == %{found: 1, merged: 1, kept: 0}
       refute Map.has_key?(media, "gallery-2")
       assert map_size(media) == files()
 
@@ -420,6 +422,7 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       media = media(site)
 
       assert {:created, "same_file_kept"} = outcomes(run)["7"]
+      assert run.report.duplicates == %{found: 1, merged: 0, kept: 1}
       assert stored(media["gallery-2"]) == seeded("hero.jpg")
       assert media["gallery-2"].id != media["hero"].id
       assert redirects(site) == %{}

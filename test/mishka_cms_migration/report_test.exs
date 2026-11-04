@@ -23,7 +23,7 @@ defmodule MishkaCmsMigration.ReportTest do
     assert length(report.entries) == Report.max_entries()
     assert hd(report.entries).source_id == "#{total - Report.max_entries() + 1}"
     assert List.last(report.entries).source_id == "#{total}"
-    assert Map.keys(report) |> Enum.sort() == [:counts, :entries, :kinds]
+    assert Map.keys(report) |> Enum.sort() == [:counts, :duplicates, :entries, :kinds]
   end
 
   test "lists each kind that had an item, in the order the kinds were met" do
