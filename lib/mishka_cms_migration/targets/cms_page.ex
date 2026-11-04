@@ -110,6 +110,16 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   settings the page waits for an admin's decision (`"player_not_allowed"`), once its path does not:
   Wait for an admin keeps it for a run by one who may, and Import without the player writes it
   with that player left out (`"player_left_out"`).
+
+  ## Its Elementor layout
+
+  A page laid out with Elementor arrives as the page builder's own elements
+  (`MishkaCmsMigration.Sources.WordPress.Elementor`), and is written as any other page. One with
+  widgets the CMS has no equivalent for, such as a form, a slider or a map, waits for an admin's
+  decision (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), once
+  its path does not, in the dry run too: Import with the fallback HTML for those parts writes it
+  with what Elementor drew for them (`"fallback_html: <names>"`), and Leave the page out leaves it
+  out.
   """
 
   use MishkaCmsMigration.Target,
@@ -124,7 +134,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Read, SeoTags, Status}
+  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Read, SeoTags, Status, Widgets}
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -153,7 +163,12 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write),
-    do: with(:ok <- Frames.call(item, context), do: write.(context))
+    do:
+      with(
+        :ok <- Widgets.call(item, context),
+        :ok <- Frames.call(item, context),
+        do: write.(context)
+      )
 
   @impl MishkaCmsMigration.Target
   def note(item, context),
@@ -162,6 +177,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         item |> Status.call() |> drafted(),
         moved(item),
         BySlug.note(item, context),
+        Widgets.note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)
@@ -207,7 +223,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       |> Read.call(context)
       |> Map.new(&{&1.path, &1})
 
-  defp found(nil, item, context), do: Frames.waiting(item, context)
+  defp found(nil, item, context), do: waiting(item, context)
 
   defp found(page, item, context),
     do: page |> held(Target.decision(context, item, "slug_taken")) |> or_frames(item, context)
@@ -216,8 +232,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp held(_page, "import"), do: nil
   defp held(_page, nil), do: {:undecided, "slug_taken"}
 
-  defp or_frames(nil, item, context), do: Frames.waiting(item, context)
+  defp or_frames(nil, item, context), do: waiting(item, context)
   defp or_frames(found, _item, _context), do: found
+
+  defp waiting(item, context), do: Widgets.waiting(item, context) || Frames.waiting(item, context)
 
   defp placed("/", item, "import"),
     do: ascii("/" <> (slug(item) || "page") <> "-" <> item.source_id)

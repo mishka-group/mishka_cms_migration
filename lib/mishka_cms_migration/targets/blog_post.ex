@@ -97,6 +97,15 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     left out (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
     leaves out its other attributes, such as `allowfullscreen`.
 
+    ## Its Elementor layout
+
+    A post laid out with Elementor arrives as the Blog's HTML
+    (`MishkaCmsMigration.Sources.WordPress.Elementor`). One with widgets the CMS has no equivalent
+    for, such as a form, a slider or a map, waits for an admin's decision
+    (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), in the dry
+    run too: Import with the fallback HTML for those parts writes it with what Elementor drew for
+    them (`"fallback_html: <names>"`), and Leave the page out leaves it out.
+
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).
     """
@@ -111,7 +120,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, SeoTags, Status}
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, SeoTags, Status, Widgets}
 
     @drafted ["pending", "private", "password"]
 
@@ -162,14 +171,19 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       do:
         for(
           item <- items,
-          found = Frames.waiting(item, context),
+          found = Widgets.waiting(item, context) || Frames.waiting(item, context),
           into: %{},
           do: {item.source_id, found}
         )
 
     @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
-      do: with(:ok <- Frames.call(item, context), do: write.(context))
+      do:
+        with(
+          :ok <- Widgets.call(item, context),
+          :ok <- Frames.call(item, context),
+          do: write.(context)
+        )
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
@@ -177,6 +191,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         item |> Status.call() |> drafted(),
         authored(item, context),
         pictured(item, context),
+        Widgets.note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)

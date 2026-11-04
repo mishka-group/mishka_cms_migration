@@ -147,6 +147,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"]
   }
+  @widgets "unsupported_widgets: "
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
@@ -1119,10 +1120,12 @@ defmodule MishkaCmsMigration.MigrationItem do
     do: waits_on(item) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
 
   @doc """
-  What an admin may answer `conflict` with: `"keep"` and `"import"`, or `"keep"` and
+  What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
+  or, for widgets the CMS has no equivalent for (`"unsupported_widgets: <names>"`), `"import"` and
   `"leave_out"`; none for `nil` or a conflict this extension does not know.
   """
   @spec choices(String.t() | nil) :: [String.t()]
+  def choices(@widgets <> _names), do: ["import", "leave_out"]
   def choices(conflict), do: Map.get(@choices, conflict, [])
 
   @doc """
@@ -1280,6 +1283,12 @@ defmodule MishkaCmsMigration.MigrationItem do
           "%{count} left as they were: nothing on them takes this choice.",
           left
         )
+
+  defp choice_word(@widgets <> _names, "import"),
+    do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")
+
+  defp choice_word(@widgets <> _names, "leave_out"),
+    do: dgettext("mishka_gervaz", "Leave the page out")
 
   defp choice_word("site_has_own", "keep"), do: dgettext("mishka_gervaz", "Keep the site's own")
 

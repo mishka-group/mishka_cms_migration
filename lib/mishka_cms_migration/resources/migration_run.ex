@@ -1994,6 +1994,15 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 
+  defp said("unsupported_widgets: " <> names),
+    do: dgettext("mishka_gervaz", "Widgets the CMS has no equivalent for: %{names}", names: names)
+
+  defp said("fallback_html: " <> names),
+    do:
+      dgettext("mishka_gervaz", "Imported with the fallback HTML for %{names}, as you decided",
+        names: names
+      )
+
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
 
