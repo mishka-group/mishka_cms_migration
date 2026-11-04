@@ -506,6 +506,31 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert component(site, "nav-footer").template == own.template
     end
 
+    test "makes a second menu of the run that would take the same component name wait, never fail on the name",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      stub!(%{
+        "/wp-json/wp/v2/navigation" =>
+          {"application/json",
+           Jason.encode!(for post <- recorded("navigation"), do: %{post | "slug" => "footer"})}
+      })
+
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+      decide!(site, admin, "component", "navigation-105")
+
+      run = imported!(site, admin)
+      assert outcomes(run)["23"] == {:created, "old_address: RSS feed"}
+      assert outcomes(run)["navigation-105"] == {:undecided, "component_name_taken"}
+
+      decide!(site, admin, "keep", "navigation-105")
+      run = imported!(site, admin)
+
+      assert outcomes(run)["navigation-105"] == {:skipped, "connected"}
+      assert component(site, "nav-footer")
+    end
+
     test "keeps the rest of the layout, and groups an item's links under it as the core draws a group",
          %{site: site, admin: admin} do
       layout!(site)

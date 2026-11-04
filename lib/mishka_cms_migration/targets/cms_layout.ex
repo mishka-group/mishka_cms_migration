@@ -41,9 +41,11 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   `writes_to/2`), named `nav-` and the menu's slug, as `nav-footer`, with the header's markup
   (`StarterContent.nav_links/1`, groups included) as its template. The admin places it with
   `<.component component_name="nav-footer" />` on any page or layout. The layout is not touched. A
-  site that already has a component of that name waits for the admin's decision as
-  `"component_name_taken"`: Use the existing component connects the menu to it and writes nothing,
-  or the menu is left out.
+  site that already has a component of that name, or a menu of the same run that is about to
+  create it, makes the menu wait for the admin's decision as `"component_name_taken"`: Use the
+  existing component connects the menu to it and writes nothing (when the other menu has not
+  written it yet, the menu is skipped as `"component_written_first"` and connects on the next
+  run), or the menu is left out.
 
   The layout is read before anything is written, in the dry run too (`existing/2`), with one query
   for every menu of the page, and read again by the one write of each menu (`prepare/3`), so a
@@ -235,12 +237,15 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp place(item, context), do: item |> goes_to(context) |> elem(1)
 
   defp settle({item, {:place, :component}}, taken, _layout, components, context) do
+    name = component_name(item)
+    claimed? = MapSet.member?(taken, {:component, name})
+
     found =
       components
-      |> Map.get(component_name(item))
-      |> named(Target.decision(context, item, "component_name_taken"))
+      |> Map.get(name)
+      |> named(claimed?, Target.decision(context, item, "component_name_taken"))
 
-    {for(found <- found, do: {item.source_id, found}), taken}
+    {for(found <- found, do: {item.source_id, found}), claim_name(found, taken, name)}
   end
 
   defp settle({item, {:place, place}}, taken, layout, _components, context) do
@@ -272,9 +277,13 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
       |> Read.call(context)
       |> Map.new(&{&1.name, &1})
 
-  defp named(nil, _decision), do: []
-  defp named(_component, nil), do: [{:undecided, "component_name_taken"}]
-  defp named(component, "keep"), do: [{:connected, component}]
+  defp named(nil, false, _decision), do: []
+  defp named(_component, _claimed, nil), do: [{:undecided, "component_name_taken"}]
+  defp named(nil, true, "keep"), do: [{:skipped, "component_written_first"}]
+  defp named(component, _claimed, "keep"), do: [{:connected, component}]
+
+  defp claim_name([], taken, name), do: MapSet.put(taken, {:component, name})
+  defp claim_name(_found, taken, _name), do: taken
 
   defp component_name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
     do: "nav-" <> (Slug.slugify(slug) || item.source_id)

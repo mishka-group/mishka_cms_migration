@@ -68,8 +68,9 @@ defmodule MishkaCmsMigration.Report do
       goes (`MishkaCmsMigration.Targets.CmsLayout`);
     * `"footer_has_links"` — the same for the footer's free slot, where a menu goes that the admin
       sent to the footer;
-    * `"component_name_taken"` — the site already has a component with the name a menu sent to a
-      component of its own would take (`MishkaCmsMigration.Targets.CmsLayout`);
+    * `"component_name_taken"` — the site, or a menu of the same run, already has a component with
+      the name a menu sent to a component of its own would take (`"component_written_first"` while
+      the other menu has not written it yet) (`MishkaCmsMigration.Targets.CmsLayout`);
     * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
       its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
     * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed

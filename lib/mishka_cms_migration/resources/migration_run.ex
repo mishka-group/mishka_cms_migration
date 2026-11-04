@@ -2031,6 +2031,13 @@ defmodule MishkaCmsMigration.MigrationRun do
     do:
       dgettext("mishka_gervaz", "Choose where this menu goes. Same links as %{menu}", menu: menu)
 
+  defp said("component_written_first"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Waits for the component of the menu with the same name, written first, then connects to it"
+      )
+
   defp said("component_name_taken"),
     do: dgettext("mishka_gervaz", "The site already has a component with this name")
 
