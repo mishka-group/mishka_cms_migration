@@ -390,6 +390,71 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
     end
   end
 
+  describe "links and the site's language addresses" do
+    defp prefix_all!(site),
+      do:
+        MishkaCmsCore.Settings.put("site.language_urls", "prefix_all",
+          site_id: site.id,
+          category: "general"
+        )
+
+    defp polylang! do
+      index = recorded("index")
+      body = index |> Map.update!("namespaces", &["pll/v1" | &1]) |> Jason.encode!()
+      stub!(%{"/wp-json/" => {"application/json", body}})
+    end
+
+    test "a site that prefixes every language leaves the main menu for a decision, in the dry run and the import",
+         %{site: site, admin: admin} do
+      layout = layout!(site)
+      prefix_all!(site)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run)["22"] == {:undecided, "language_urls: prefix_all"}
+      assert outcomes(import!(run, admin))["22"] == {:undecided, "language_urls: prefix_all"}
+      assert template(site) == layout.template
+    end
+
+    test "a source that runs a language plugin does too, whatever the site's mode",
+         %{site: site, admin: admin} do
+      layout!(site)
+      polylang!()
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert run.extra["languages"] == "polylang"
+      assert outcomes(run)["22"] == {:undecided, "language_urls: polylang"}
+
+      assert MishkaCmsMigration.MigrationRun.reason_label("language_urls: polylang") =~
+               "Polylang"
+    end
+
+    test "Write links for the site's current mode writes the menu with the site's addresses",
+         %{site: site, admin: admin} do
+      layout!(site)
+      prefix_all!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "import")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert {"News", {:navigate, "/en/blog/category/news"}} in links(site)
+    end
+
+    test "Wait leaves the menu unwritten until the admin decides otherwise",
+         %{site: site, admin: admin} do
+      layout = layout!(site)
+      prefix_all!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "keep")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:skipped, "waits_for_language_urls"}
+      assert template(site) == layout.template
+    end
+  end
+
   describe "a second run" do
     test "leaves alone a menu WordPress did not change", %{site: site, admin: admin} do
       layout!(site)

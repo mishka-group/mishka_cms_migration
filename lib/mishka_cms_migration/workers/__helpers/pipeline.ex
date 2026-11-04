@@ -372,6 +372,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       parent_id: nil,
       record: nil,
       prepared: nil,
+      languages: run.extra["languages"],
       decisions: %{}
     }
 

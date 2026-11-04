@@ -1869,6 +1869,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   @spec reason_label(String.t()) :: String.t()
   def reason_label(reason), do: reason |> String.split("; ") |> Enum.map_join("; ", &said/1)
 
+  @doc """
+  What makes the links an import writes differ from the source's addresses
+  (`MishkaCmsMigration.Targets.Helpers.LanguageUrls.cause/2`), in words: a language plugin of the
+  source, or the site giving every language a prefix.
+  """
+  @spec language_cause(String.t()) :: String.t()
+  def language_cause("polylang"), do: dgettext("mishka_gervaz", "the source runs Polylang")
+  def language_cause("wpml"), do: dgettext("mishka_gervaz", "the source runs WPML")
+
+  def language_cause("prefix_all"),
+    do: dgettext("mishka_gervaz", "the site gives every language a prefix")
+
   defp said("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
   defp said("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
   defp said("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
@@ -1977,6 +1989,15 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("draft_pages: " <> labels),
     do: dgettext("mishka_gervaz", "Links to pages that are not live: %{labels}", labels: labels)
+
+  defp said("language_urls: " <> cause),
+    do:
+      dgettext("mishka_gervaz", "Its links depend on how addresses name the language: %{cause}",
+        cause: language_cause(cause)
+      )
+
+  defp said("waits_for_language_urls"),
+    do: dgettext("mishka_gervaz", "Waits for the site's language addresses, as you decided")
 
   defp said("waits_for_blog"),
     do: dgettext("mishka_gervaz", "Waits for Mishka Blog, as you decided")

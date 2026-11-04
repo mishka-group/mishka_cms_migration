@@ -42,6 +42,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   (`MishkaCmsMigration.MigrationItem.decision_options/1`). Save keeps the decision (`:choose`),
   closes the modal and says that the next dry run and import follow it.
 
+  When the links an import writes may not match the site's language addresses, the head shows the
+  warning that says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), above the
+  table that holds the main menu's Needs your decision.
+
   The table's template switcher moves between the List and the Map view
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), which draws the items as the source
   nests them, each with its plan and its row actions; the table keeps the view in the address
@@ -60,6 +64,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   use MishkaCmsCore.ExtensionLiveView
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice
   alias MishkaGervaz.Table.Web.UrlSync
 
   @table_id "migration-items-table"
