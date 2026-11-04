@@ -151,7 +151,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "player_not_allowed" => ["keep", "import"],
     "draft_pages" => ["keep", "import"],
     "language_urls" => ["keep", "import"],
-    "unsupported_widgets" => ["import", "leave_out"]
+    "unsupported_widgets" => ["import", "leave_out"],
+    "scripts" => ["import", "trust"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1142,7 +1143,8 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
-  or `"import"` and `"leave_out"`; none for `nil` or a conflict this extension does not know.
+  `"import"` and `"leave_out"`, or, for scripts, `"import"` (remove them) and `"trust"` (keep
+  them), which no bulk choice makes; none for `nil` or a conflict this extension does not know.
   """
   @spec choices(String.t() | nil) :: [String.t()]
   def choices(conflict), do: Map.get(@choices, conflict, [])
@@ -1302,6 +1304,11 @@ defmodule MishkaCmsMigration.MigrationItem do
           "%{count} left as they were: nothing on them takes this choice.",
           left
         )
+
+  defp choice_word("scripts", "import"), do: dgettext("mishka_gervaz", "Remove them")
+
+  defp choice_word("scripts", "trust"),
+    do: dgettext("mishka_gervaz", "Keep them (I trust this content)")
 
   defp choice_word("unsupported_widgets", "import"),
     do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")

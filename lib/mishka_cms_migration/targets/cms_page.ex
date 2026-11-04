@@ -116,6 +116,14 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   for a run by one who may, and Import without the player writes it with that player left out
   (`"player_left_out"`).
 
+  ## Its scripts
+
+  A page whose content holds a `<script>` or an inline event handler (`onclick`, `onerror`, ...)
+  waits for an admin's decision (`"scripts: <found>"`,
+  `MishkaCmsMigration.Targets.Helpers.Scripts`), in the dry run too: Remove them writes it without
+  them (`"scripts_removed: <found>"`), and Keep them (I trust this content) writes it as it is
+  (`"scripts_kept: <found>"`).
+
   ## Its Elementor layout
 
   A page laid out with Elementor arrives as the page builder's own elements
@@ -139,7 +147,16 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Read, SeoTags, Status, Widgets}
+
+  alias MishkaCmsMigration.Targets.Helpers.{
+    BySlug,
+    Frames,
+    Read,
+    Scripts,
+    SeoTags,
+    Status,
+    Widgets
+  }
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -175,12 +192,16 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
     do:
       with(
         :ok <- Widgets.call(item, context),
+        :ok <- Scripts.call(item, context),
         :ok <- Frames.call(item, context),
         do: write.(context)
       )
 
   @impl MishkaCmsMigration.Target
-  def waiting(item, context), do: Widgets.waiting(item, context) || Frames.waiting(item, context)
+  def waiting(item, context),
+    do:
+      Widgets.waiting(item, context) || Scripts.waiting(item, context) ||
+        Frames.waiting(item, context)
 
   @impl MishkaCmsMigration.Target
   def note(item, context),
@@ -190,6 +211,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         moved(item),
         BySlug.note(item, context),
         Widgets.note(item, context),
+        Scripts.note(item, context),
         CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
@@ -328,6 +350,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       ~s(<div phx-no-curly-interpolation>) <>
         (item
          |> Item.html()
+         |> Scripts.removed(item, context)
          |> Frames.playable(context)
          |> relinked(item.attrs["pages"], context)
          |> CmsMedia.relinked(item.attrs["media"], context)

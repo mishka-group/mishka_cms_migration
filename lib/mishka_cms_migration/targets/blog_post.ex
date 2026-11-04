@@ -102,6 +102,15 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
     leaves out its other attributes, such as `allowfullscreen`.
 
+    ## Its scripts
+
+    A post whose content holds a `<script>` or an inline event handler (`onclick`, `onerror`, ...)
+    waits for an admin's decision (`"scripts: <found>"`,
+    `MishkaCmsMigration.Targets.Helpers.Scripts`), in the dry run too: Remove them writes it
+    without them (`"scripts_removed: <found>"`), and Keep them (I trust this content) hands it to
+    the Blog as it is (`"scripts_kept: <found>"`), whose own sanitizer still decides what a post
+    keeps.
+
     ## Its Elementor layout
 
     A post laid out with Elementor arrives as the Blog's HTML
@@ -126,7 +135,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, SeoTags, Status, Widgets}
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Scripts, SeoTags, Status, Widgets}
 
     @drafted ["pending", "private", "password"]
 
@@ -141,6 +150,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         content:
           item
           |> Item.html()
+          |> Scripts.removed(item, context)
           |> Frames.playable(context)
           |> relinked(item.attrs["links"], context)
           |> CmsPage.relinked(item.attrs["pages"], context)
@@ -177,13 +187,16 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       do:
         with(
           :ok <- Widgets.call(item, context),
+          :ok <- Scripts.call(item, context),
           :ok <- Frames.call(item, context),
           do: write.(context)
         )
 
     @impl MishkaCmsMigration.Target
     def waiting(item, context),
-      do: Widgets.waiting(item, context) || Frames.waiting(item, context)
+      do:
+        Widgets.waiting(item, context) || Scripts.waiting(item, context) ||
+          Frames.waiting(item, context)
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
@@ -192,6 +205,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         authored(item, context),
         pictured(item, context),
         Widgets.note(item, context),
+        Scripts.note(item, context),
         CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
