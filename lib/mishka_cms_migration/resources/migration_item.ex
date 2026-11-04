@@ -145,7 +145,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "header_has_links" => ["keep", "import"],
     "slug_taken" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
-    "player_not_allowed" => ["keep", "import"]
+    "player_not_allowed" => ["keep", "import"],
+    "draft_pages" => ["keep", "import"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1111,12 +1112,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   The conflict `item` waits on for an admin's decision, such as `"site_has_own"`: the reason of
   its last dry run's plan when that plan is `:undecided`, else of its last import when that left it
   `:undecided` after a plan to write it, or with no plan, else the conflict an admin decided (the
-  first, for an item that met several), so a decision can be changed after a run followed it. `nil`
-  for an item that never met one.
+  first, for an item that met several), so a decision can be changed after a run followed it. A
+  reason that names what the conflict is about after `": "`, as `"draft_pages: Team, Leadership"`
+  does, is the conflict before it. `nil` for an item that never met one.
   """
   @spec conflict(map()) :: String.t() | nil
   def conflict(item),
-    do: waits_on(item) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
+    do: code(waits_on(item)) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
 
   @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, or `"keep"` and
@@ -1307,6 +1309,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp choice_word("player_not_allowed", "import"),
     do: dgettext("mishka_gervaz", "Import without the player")
 
+  defp choice_word("draft_pages", "keep"),
+    do: dgettext("mishka_gervaz", "Leave those links out of the menu")
+
+  defp choice_word("draft_pages", "import"),
+    do: dgettext("mishka_gervaz", "Publish the linked pages")
+
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 
   defp records_of({:ok, target}, site_id, user) do
@@ -1345,8 +1353,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp planned(item), do: item |> waits_on() |> waiting(item)
 
   defp waiting(nil, item), do: as_planned(item)
+  defp waiting(reason, item), do: reason |> code() |> waiting(reason, item.decisions)
 
-  defp waiting(conflict, %{decisions: decisions}) when is_map_key(decisions, conflict),
+  defp waiting(conflict, _reason, decisions) when is_map_key(decisions, conflict),
     do: %{
       key: "decided",
       word: dgettext("mishka_gervaz", "Decided"),
@@ -1355,19 +1364,24 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: choice_word(conflict, Map.fetch!(decisions, conflict))
     }
 
-  defp waiting(conflict, _item), do: said(:undecided, plan_word(:undecided), conflict)
+  defp waiting(_conflict, reason, _decisions), do: said(:undecided, plan_word(:undecided), reason)
 
-  defp waits_on(%{plan: :undecided, plan_reason: conflict}) when is_binary(conflict), do: conflict
+  defp waits_on(%{plan: :undecided, plan_reason: reason}) when is_binary(reason), do: reason
 
-  defp waits_on(%{plan: nil, outcome: :undecided, reason: conflict}) when is_binary(conflict),
-    do: conflict
+  defp waits_on(%{plan: nil, outcome: :undecided, reason: reason}) when is_binary(reason),
+    do: reason
 
-  defp waits_on(%{plan: plan, outcome: :undecided, reason: conflict, decisions: decisions})
-       when plan in [:created, :updated] and is_binary(conflict) and
-              not is_map_key(decisions, conflict),
-       do: conflict
+  defp waits_on(%{plan: plan, outcome: :undecided, reason: reason, decisions: decisions})
+       when plan in [:created, :updated] and is_binary(reason),
+       do: reason |> code() |> undecided(reason, decisions)
 
   defp waits_on(_item), do: nil
+
+  defp undecided(conflict, _reason, decisions) when is_map_key(decisions, conflict), do: nil
+  defp undecided(_conflict, reason, _decisions), do: reason
+
+  defp code(nil), do: nil
+  defp code(reason), do: reason |> String.split(": ", parts: 2) |> hd()
 
   defp as_planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
     do: %{

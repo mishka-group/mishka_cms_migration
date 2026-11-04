@@ -67,7 +67,10 @@ defmodule MishkaCmsMigration.Report do
       (`MishkaCmsMigration.Application.blog_kinds/0`);
     * `"player_not_allowed"` — the item's content frames a YouTube or Vimeo player the site does
       not allow, and the admin who ran it may not allow it
-      (`MishkaCmsMigration.Targets.Helpers.Frames`).
+      (`MishkaCmsMigration.Targets.Helpers.Frames`);
+    * `"draft_pages: <labels>"` — the main menu links pages the site does not serve, as the drafts
+      pages come in as, named by the links' labels (`MishkaCmsMigration.Targets.CmsLayout`): the
+      conflict is the part before `": "`.
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.

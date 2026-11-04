@@ -188,17 +188,35 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   """
   @spec relinked(String.t(), map() | nil, Target.context()) :: String.t()
   def relinked(html, pages, context) when is_map(pages) and map_size(pages) > 0 do
-    as_new = as_new(pages, context)
+    items = items(pages, context)
 
     CmsMedia.moved(
       html,
-      for({old, page} <- pages, new = pointed(page, as_new, old), into: %{}, do: {old, new})
+      for(
+        {old, %{"link" => link, "id" => id}} <- pages,
+        new = link |> written_path(items[id]) |> pointed_at(old),
+        into: %{},
+        do: {old, new}
+      )
     )
   end
 
   def relinked(html, _pages, _context), do: html
 
-  defp as_new(pages, context),
+  @doc """
+  The path the page whose address at the source is `link` is written at, as `attrs/2` writes it:
+  the path of its address, in ASCII, followed by `-<source id>` once an admin decided to import it
+  as new beside the site's page at that path (`"slug_taken"` in the `decisions` of `item`, the
+  page's `MishkaCmsMigration.MigrationItem`, or `nil` for a page no run has met). `nil` for an
+  address with no path of its own, such as a draft's `/?page_id=30`.
+  """
+  @spec written_path(String.t() | nil, map() | nil) :: String.t() | nil
+  def written_path(link, %{source_id: id, source_slug: slug, decisions: decisions}),
+    do: link |> served() |> ascii() |> placed(id, slug, decisions["slug_taken"])
+
+  def written_path(link, nil), do: link |> served() |> ascii()
+
+  defp items(pages, context),
     do:
       context.source_host
       |> MishkaCmsMigration.items_by_sources!(
@@ -207,19 +225,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         actor: context.actor,
         tenant: context.site_id
       )
-      |> Enum.filter(&(&1.decisions["slug_taken"] == "import"))
-      |> Map.new(&{&1.source_id, &1.source_slug})
-
-  defp pointed(%{"link" => link, "id" => id}, as_new, old),
-    do:
-      link
-      |> served()
-      |> ascii()
-      |> placed(id, as_new[id], slug_decision(as_new, id))
-      |> pointed_at(old)
-
-  defp slug_decision(as_new, id) when is_map_key(as_new, id), do: "import"
-  defp slug_decision(_as_new, _id), do: nil
+      |> Map.new(&{&1.source_id, &1})
 
   defp pointed_at(nil, _old), do: nil
 
