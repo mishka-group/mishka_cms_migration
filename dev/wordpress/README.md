@@ -17,6 +17,8 @@ docker compose up -d --wait   # http://localhost:8089
 ./record.sh                   # records the REST responses and the WXR export as test fixtures
 ./seed_elementor.sh           # adds Elementor and the entries laid out with it (below)
 ./record_elementor.sh         # records those entries beside the other fixtures
+./seed_polylang.sh            # adds Polylang, English and Persian, and entries and terms in both (below)
+./record_polylang.sh          # records those entries and terms beside the other fixtures
 docker compose down -v        # stops it and deletes the site (named volumes included)
 ```
 
@@ -88,6 +90,27 @@ and the Elementor version in `VERSIONS.txt`. On a clean site record the curated 
 ```sh
 docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh
 ./seed_elementor.sh && ./record_elementor.sh
+```
+
+## Polylang
+
+`seed_polylang.sh` runs after `seed.sh` and adds Polylang (the free plugin) with two languages, English (the default)
+and Persian, and a few entries and terms in them: the category Travel and the tag Coffee in both languages, the post
+A Weekend in Isfahan in both, Packing Light in English alone and یادداشت سفر in Persian alone, and the page Our Story
+with Our Crew under it, in both. Each translation is linked to its original through Polylang's own API. It gives no
+language to anything `seed.sh` made, adds no default category for a language, and touches nothing else, the
+passwords and `.env.local` included; a second run changes nothing.
+
+`record_polylang.sh` records only these, beside what `record.sh` made: `rest/polylang-index.*` (the REST index,
+which lists Polylang's `pll/v1`), `rest/polylang-posts.*`, `rest/polylang-pages.*`, `rest/polylang-categories.*`,
+`rest/polylang-tags.*` and `wxr/polylang.xml` (an export of those entries alone), with its rows in `rest/INDEX.txt`
+and the Polylang version in `VERSIONS.txt`. The free plugin adds no field to an entry or a term over REST: its `lang`
+and `translations` are Polylang Pro's. The export carries both, as Polylang's own taxonomies: an entry's `language`
+and `post_translations` terms, and the `term_translations` terms, each describing its group as a serialized map of
+language to id.
+
+```sh
+./seed_polylang.sh && ./record_polylang.sh
 ```
 
 ## Bulk content
