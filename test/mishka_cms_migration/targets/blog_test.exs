@@ -439,6 +439,37 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert blog(Tag, site)["Elixir"].slug == "elixir-10"
     end
 
+    test "Import as new stays once an import wrote it: switching to Connect is refused, and the record is kept and written again",
+         %{site: site, admin: admin} do
+      {tag, _collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}], "import")
+      imported!(site, admin)
+      written = blog(Tag, site)["Elixir"]
+
+      item =
+        Enum.find(
+          Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+          &(&1.source_kind == "tag" and &1.source_id == "10")
+        )
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :decision}]}} =
+               MishkaCmsMigration.decide_item(item, "keep", actor: admin, tenant: site.id)
+
+      assert Ash.get!(MigrationItem, item.id, tenant: site.id, authorize?: false).decisions ==
+               %{"slug_taken" => "import"}
+
+      change_in_wordpress!("tag")
+      again = imported!(site, admin)
+
+      assert %{"10" => {:updated, "another_slug"}} = outcomes(again, "tag")
+
+      assert {blog(Tag, site)["Elixir"].id, blog(Tag, site)["Elixir"].slug} ==
+               {written.id, "elixir-10"}
+
+      assert blog(Tag, site)["Elixir, as the site has it"].id == tag.id
+    end
+
     test "a slug WordPress keeps percent-encoded is matched, and made anew, as the Blog stores it",
          %{site: site, admin: admin} do
       tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})

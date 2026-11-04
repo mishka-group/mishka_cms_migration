@@ -59,9 +59,11 @@ defmodule MishkaCmsMigration.MigrationItem do
   connected to the record the site has, or it waits); `"import"`, the item is written the import's
   way; or `"leave_out"`, where the conflict offers it. The answer is kept in `decisions`, by
   conflict, brings the item back, and holds for every later dry run and import, whose target reads
-  it (`MishkaCmsMigration.Target.decision/3`); a decision made after the item was written changes
-  nothing about it. `:decide_keep` and `:decide_import` give the same answer for the rows an admin
-  picks, and leave the rows whose conflict does not offer it as they are.
+  it (`MishkaCmsMigration.Target.decision/3`). Once an import has written the item by it, or
+  connected it to the site's record, the decision took effect (`settled?/1`) and stays: `:choose`
+  refuses another, in words, and the item keeps the record it has. `:decide_keep` and
+  `:decide_import` give the same answer for the rows an admin picks, and leave the rows whose
+  conflict does not offer it, or whose decision took effect, as they are.
 
   The master actions (`:master_leave_out`, `:master_bring_back`, `:master_choose`,
   `:master_decide_keep`, `:master_decide_import`) do the same on any site.
@@ -1119,6 +1121,19 @@ defmodule MishkaCmsMigration.MigrationItem do
   @spec conflict(map()) :: String.t() | nil
   def conflict(item),
     do: code(waits_on(item)) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
+
+  @doc """
+  Whether the admin's decision on `item` took effect: an import wrote the item by it, or connected
+  it to the site's record, so it has a CMS record (`target_id`), and nothing on it waits for a
+  decision now. Changing it then could only move a record written as new onto the site's own
+  address, or leave one connected unwritten, so it stays (`MishkaCmsMigration.Resources.Changes.Decided`).
+  """
+  @spec settled?(map()) :: boolean()
+  def settled?(%{decisions: decisions, target_id: id, outcome: outcome} = item)
+      when decisions != %{} and is_binary(id) and outcome != :undecided,
+      do: is_nil(waits_on(item))
+
+  def settled?(_item), do: false
 
   @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, or `"keep"` and
