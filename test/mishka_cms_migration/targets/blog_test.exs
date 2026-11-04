@@ -1009,6 +1009,25 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                outcomes(run, "post")
     end
 
+    test "an import points a post's links to a page imported as new beside the site's own at the path it was written at",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:page"])
+      create_page!(site_id: site.id, path: "/about/team", title: "Our own team")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"page", "25"}], "import")
+
+      imported!(site, admin)
+
+      hrefs =
+        posts(site)["Linking between posts and media"]
+        |> content()
+        |> LazyHTML.query("a")
+        |> LazyHTML.attribute("href")
+
+      assert Enum.frequencies(hrefs)["/about/team-25"] == 2
+      refute "/about/team" in hrefs
+    end
+
     test "an import points a post's links to the run's posts at their Blog addresses and to its pages at their CMS paths, and keeps every other link",
          %{site: site, admin: admin} do
       imported!(site, admin)

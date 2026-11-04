@@ -58,8 +58,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     It is the address the run writes the post at, so a post that links to one listed after it
     points at it too. Its `"pages"` name the links of its content that point at a page of the
     source, and each points at the path that page is written at instead, keeping its `?query` and
-    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/2`): `http://old.example/contact/` is
-    `/contact`. Any other link is kept as it is: a category, a file, an outside site, a post or
+    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/3`): `http://old.example/contact/` is
+    `/contact`, or `/contact-29` once an admin decided to import that page as new beside the
+    site's own. Any other link is kept as it is: a category, a file, an outside site, a post or
     page the source no longer has, or a post an admin left out, found by the slug its item recorded
     (`MishkaCmsMigration.MigrationItem`'s `source_slug`), which keeps its old address.
 
@@ -129,7 +130,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> Item.html()
           |> Frames.playable(context)
           |> relinked(item.attrs["links"], context)
-          |> CmsPage.relinked(item.attrs["pages"])
+          |> CmsPage.relinked(item.attrs["pages"], context)
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),

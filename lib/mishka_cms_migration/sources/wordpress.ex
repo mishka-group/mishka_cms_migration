@@ -79,7 +79,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
       category, a file, an attachment page or a post the site no longer has is left out, and so is
       every link when the connection is not at hand. Its `pages` are the links of its content that
-      are left, to a page of the site, each `href` as written to the page's `link`: `/?page_id=<id>`
+      are left, to a page of the site, each `href` as written to the page's `"link"` and `"id"`
+      (`%{"link" => "http://old.example/contact/", "id" => "29"}`): `/?page_id=<id>`
       is asked for by its id and any other by the last segment of its path, the same way, from
       `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
       `media` are the addresses of
@@ -588,7 +589,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       "links" =>
         for({href, %{"slug" => slug}} <- posts, slug != "", into: %{}, do: {href, decoded(slug)}),
       "pages" =>
-        for({href, %{"link" => link}} <- pages, is_binary(link), into: %{}, do: {href, link})
+        for(
+          {href, %{"link" => link, "id" => id}} <- pages,
+          is_binary(link),
+          into: %{},
+          do: {href, %{"link" => link, "id" => to_string(id)}}
+        )
     }
   end
 

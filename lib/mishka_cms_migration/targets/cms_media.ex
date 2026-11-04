@@ -160,7 +160,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   @doc """
   `html` with each `src`, `href` and `poster` (a video's picture) whose value is a key of `moved`
   written as that key's value; the other attributes are kept as they are. `relinked/3` and
-  `MishkaCmsMigration.Targets.CmsPage.relinked/2` point the addresses of files and of pages at
+  `MishkaCmsMigration.Targets.CmsPage.relinked/3` point the addresses of files and of pages at
   where they went.
   """
   @spec moved(String.t(), %{String.t() => String.t()}) :: String.t()

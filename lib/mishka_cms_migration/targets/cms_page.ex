@@ -88,9 +88,11 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   Its `"pages"` name the links of its content that point at a page of the source, each by its
   `href` as written and the address WordPress gives that page (the WordPress source finds them,
   `MishkaCmsMigration.Sources.WordPress`). Each such link points at the path that page is written
-  at instead (`relinked/2`), however the link was written, and keeps its `?query` and `#fragment`:
-  `http://old.example/about/team/#staff` becomes `/about/team#staff`. It is the path the run
-  writes the page at, so a page that links to one listed after it points at it too. A page with no
+  at instead (`relinked/3`), however the link was written, and keeps its `?query` and `#fragment`:
+  `http://old.example/about/team/#staff` becomes `/about/team#staff`, and a link to a page an
+  admin decided to import as new beside the site's own (`"slug_taken"`) its other path,
+  `/contact-29`. It is the path the run writes the page at, so a page that links to one listed
+  after it points at it too. A page with no
   address of its own yet, such as a draft, and any other link, such as a category's or a feed's,
   is kept as it is. The same links in a post point at the same paths
   (`MishkaCmsMigration.Targets.BlogPost`).
@@ -133,7 +135,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   def attrs(item, context) do
     %{
       title: item.title,
-      path: item |> path() |> placed(item, Target.decision(context, item, "slug_taken")),
+      path:
+        item
+        |> path()
+        |> placed(item.source_id, slug(item), Target.decision(context, item, "slug_taken")),
       template: template(item, context),
       active: active?(item, context),
       seo_tags: SeoTags.call(item, context, nil),
@@ -173,23 +178,48 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       |> noted()
 
   @doc """
-  `html` with each link that `pages` names, an `href` as the source wrote it to the address the
-  source gives the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the
-  path the CMS serves that page at (`path/1`'s rules: the path of its address, in ASCII), with the
-  link's own `?query` and `#fragment`. A link whose page has no address of its own, and every other
-  link, is kept as it is.
+  `html` with each link that `pages` names, an `href` as the source wrote it to the `"link"` and
+  `"id"` of the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the path
+  the CMS serves that page at, with the link's own `?query` and `#fragment`: the path of its
+  address, in ASCII, followed by `-<id>` once an admin decided to import that page as new beside
+  the site's page at that path (`"slug_taken"`), as `attrs/2` writes it. A link whose page has no
+  address of its own, and every other link, is kept as it is. The admins' decisions are read from
+  the pages' items (`MishkaCmsMigration.MigrationItem`) with one query, as `context`'s admin.
   """
-  @spec relinked(String.t(), map() | nil) :: String.t()
-  def relinked(html, pages) when is_map(pages) and map_size(pages) > 0,
+  @spec relinked(String.t(), map() | nil, Target.context()) :: String.t()
+  def relinked(html, pages, context) when is_map(pages) and map_size(pages) > 0 do
+    as_new = as_new(pages, context)
+
+    CmsMedia.moved(
+      html,
+      for({old, page} <- pages, new = pointed(page, as_new, old), into: %{}, do: {old, new})
+    )
+  end
+
+  def relinked(html, _pages, _context), do: html
+
+  defp as_new(pages, context),
     do:
-      CmsMedia.moved(
-        html,
-        for({old, link} <- pages, new = pointed(link, old), into: %{}, do: {old, new})
+      context.source_host
+      |> MishkaCmsMigration.items_by_sources!(
+        "page",
+        pages |> Map.values() |> Enum.map(& &1["id"]) |> Enum.uniq(),
+        actor: context.actor,
+        tenant: context.site_id
       )
+      |> Enum.filter(&(&1.decisions["slug_taken"] == "import"))
+      |> Map.new(&{&1.source_id, &1.source_slug})
 
-  def relinked(html, _pages), do: html
+  defp pointed(%{"link" => link, "id" => id}, as_new, old),
+    do:
+      link
+      |> served()
+      |> ascii()
+      |> placed(id, as_new[id], slug_decision(as_new, id))
+      |> pointed_at(old)
 
-  defp pointed(link, old), do: link |> served() |> ascii() |> pointed_at(old)
+  defp slug_decision(as_new, id) when is_map_key(as_new, id), do: "import"
+  defp slug_decision(_as_new, _id), do: nil
 
   defp pointed_at(nil, _old), do: nil
 
@@ -216,11 +246,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp held(_page, "import"), do: nil
   defp held(_page, nil), do: {:undecided, "slug_taken"}
 
-  defp placed("/", item, "import"),
-    do: ascii("/" <> (slug(item) || "page") <> "-" <> item.source_id)
-
-  defp placed(path, item, "import") when is_binary(path), do: path <> "-" <> item.source_id
-  defp placed(path, _item, _decision), do: path
+  defp placed("/", id, slug, "import"), do: ascii("/" <> (slug || "page") <> "-" <> id)
+  defp placed(path, id, _slug, "import") when is_binary(path), do: path <> "-" <> id
+  defp placed(path, _id, _slug, _decision), do: path
 
   defp active?(item, %{options: %{pages: "publish"}}), do: Status.call(item) == "publish"
   defp active?(_item, _context), do: false
@@ -276,7 +304,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         (item
          |> Item.html()
          |> Frames.playable(context)
-         |> relinked(item.attrs["pages"])
+         |> relinked(item.attrs["pages"], context)
          |> CmsMedia.relinked(item.attrs["media"], context)
          |> LazyHTML.from_fragment()
          |> LazyHTML.to_html()

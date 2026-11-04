@@ -679,8 +679,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert posts["52"].attrs["links"] == %{}
     end
 
-    test "a post's and a page's links to the site's pages name the page's address, and its other links are left out" do
-      team = "http://localhost:8089/about/team/"
+    test "a post's and a page's links to the site's pages name the page's address and id, and its other links are left out" do
+      team = %{"link" => "http://localhost:8089/about/team/", "id" => "25"}
 
       assert items!("post")["35"].attrs["pages"] == %{
                "http://localhost:8089/?page_id=25" => team,
@@ -690,8 +690,11 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       pages = items!("page")
 
       assert pages["24"].attrs["pages"] == %{
-               team => team,
-               "http://localhost:8089/contact/" => "http://localhost:8089/contact/"
+               team["link"] => team,
+               "http://localhost:8089/contact/" => %{
+                 "link" => "http://localhost:8089/contact/",
+                 "id" => "29"
+               }
              }
 
       assert pages["25"].attrs["pages"] == %{}
@@ -725,7 +728,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                ])
 
       assert pages["http://localhost:8089/contact/?ref=nav#form"] ==
-               "http://localhost:8089/contact/"
+               %{"link" => "http://localhost:8089/contact/", "id" => "29"}
     end
 
     test "a link a post answers is not asked of the pages again, and the pages are asked for by slug and by id with only the fields they need" do
