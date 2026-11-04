@@ -14,7 +14,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   import Phoenix.LiveViewTest
   import MishkaCmsMigration.DataCase, only: [register_plugin!: 2, without_blog!: 0]
-  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0]
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.States.SiteState
@@ -290,6 +290,40 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   defp json(view),
     do: view |> parts(~s|#{@table} [data-role="item-json"]|) |> LazyHTML.text() |> Jason.decode!()
+
+  describe "the language addresses warning" do
+    @warning ~s|[data-role="language-urls-warning"]|
+
+    test "is on the head of a site that gives every language a prefix, and not on any other",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      refute has_element?(open!(conn, admin, run), @warning)
+
+      MishkaCmsCore.Settings.put("site.language_urls", "prefix_all",
+        site_id: site.id,
+        category: "general"
+      )
+
+      view = open!(conn, admin, run)
+
+      assert has_element?(view, ~s|#{@warning}[data-cause="prefix_all"]|)
+      assert has_element?(view, ~s|#{@warning} [role="alert"]|, "Tip:")
+      assert has_element?(view, ~s|#{@warning} [role="alert"]|, "Suggestion:")
+    end
+
+    test "is on the head of a run whose source runs a language plugin",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      body =
+        "index"
+        |> MishkaCmsMigration.Test.WordPress.recorded()
+        |> Map.update!("namespaces", &["wpml/v1" | &1])
+        |> Jason.encode!()
+
+      stub!(%{"/wp-json/" => {"application/json", body}})
+      later = later_run!(site, admin, run)
+
+      assert has_element?(open!(conn, admin, later), ~s|#{@warning}[data-cause="wpml"]|)
+    end
+  end
 
   describe "the page" do
     test "lists every item the import kept, with its kind, outcome and title", %{
