@@ -1167,6 +1167,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
              |> Enum.all?(
                &({&1.outcome, &1.reason} in [
                    {:created, nil},
+                   {:created, "same_file_checked_at_download"},
                    {:skipped, "no_user"},
                    {:skipped, "no_setting"},
                    {:skipped, "no_layout"},
