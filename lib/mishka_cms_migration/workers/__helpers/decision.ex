@@ -97,7 +97,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp plans(state, target, kind, items) do
     known = known(state, kind, items)
-    records = known |> Map.values() |> Enum.flat_map(&record_ids/1) |> current(target, state)
+    records = known |> Map.values() |> Enum.flat_map(&record_refs(&1, target)) |> current(state)
 
     items
     |> Map.new(&{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records)})
@@ -139,12 +139,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp connected(_target, {:undecided, conflict}, _plan) when is_binary(conflict),
     do: {:undecided, conflict}
 
-  defp current([], _target, _state), do: %{}
+  defp current([], _state), do: %{}
 
-  defp current(ids, target, state) do
-    target.resource()
-    |> Ash.Query.filter(id in ^ids)
-    |> Ash.read!(actor: state.actor, tenant: state.run.site_id)
+  defp current(refs, state) do
+    refs
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.flat_map(fn {resource, ids} ->
+      resource
+      |> Ash.Query.filter(id in ^ids)
+      |> Ash.read!(actor: state.actor, tenant: state.run.site_id)
+    end)
     |> Map.new(&{&1.id, &1})
   end
 
@@ -191,7 +195,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
   defp mapped(record, target), do: {:mapped, target, record}
 
-  defp record_ids(item), do: Enum.reject([item.target_id, item.mapped_id], &is_nil/1)
+  defp record_refs(item, target) do
+    for {id, resource} <- [
+          {item.target_id, written(item, target)},
+          {item.mapped_id, target.resource()}
+        ],
+        not is_nil(id),
+        do: {resource, id}
+  end
+
+  defp written(item, target),
+    do: Enum.find(target.resources(), target.resource(), &(inspect(&1) == item.target_resource))
 
   defp known(_state, _kind, []), do: %{}
 

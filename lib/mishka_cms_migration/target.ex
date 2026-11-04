@@ -100,7 +100,9 @@ defmodule MishkaCmsMigration.Target do
   its record in one transaction, and answers what `write.(context)` answers, after putting what it
   fetched in the context's `prepared` for `attrs/2` to read, or `{:skipped, reason}` or
   `{:error, reason}` without writing: the item is then skipped or failed with `reason`. It may
-  answer `{:undecided, conflict}` too, for a conflict only the write can tell, such as a player an
+  answer `{:connected, record, reason}` too, for an item it found to be a record the CMS already
+  holds: nothing is written, and the item is recorded against `record`, as skipped with `reason`,
+  the way `existing/2`'s `{:connected, record}` is. It may answer `{:undecided, conflict}` too, for a conflict only the write can tell, such as a player an
   admin who may not allow it would write: the item waits for an admin's decision, as one
   `existing/2` answers so does. It runs in
   an import only, after the item is converted and offered to the plugins, outside the write's
@@ -127,6 +129,14 @@ defmodule MishkaCmsMigration.Target do
       end
 
       def prepare(_item, context, write), do: write.(context)
+
+  ## Where an item is written
+
+  Every item of a kind goes to the target's `resource/0` through its `actions/0`. A target whose
+  items go to different resources, such as a menu that an admin sends to the site layout or to a
+  component of its own (`MishkaCmsMigration.Targets.CmsLayout`), names them all in `resources/0`
+  and answers each item's in `writes_to/2`, handed the context with the item's decisions. The item
+  records the resource of the record it was written to, and a re-run reads it from there.
 
   ## What the CMS already holds
 
@@ -197,6 +207,11 @@ defmodule MishkaCmsMigration.Target do
   (`MishkaCmsMigration.Workers.Helpers.Decision`), and compares each one's `updated_at` with the
   one the run recorded when it wrote it. A record changed in the CMS since is never written again,
   and one that is gone is not brought back.
+
+  Items that share one record, such as the menus written into the site layout, each record the
+  `updated_at` of their own write. A target that writes such a record again records the new
+  `updated_at` for the other items of that record too (`MishkaCmsMigration.record_item/2`, with the
+  context's `scope`), so a write of one is not mistaken for an edit in the CMS.
   """
 
   alias Ash.Resource.Info
@@ -210,7 +225,8 @@ defmodule MishkaCmsMigration.Target do
   @typedoc """
   What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
   from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
-  CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
+  the job's `scope`, for a target that records other items it changed (see "Keeping an admin's
+  edits"), the CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
   "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), the language plugin the source runs
   (`languages`, `"polylang"` or `"wpml"`, else `nil`), and an
   admin's decisions on the items, by source id (see "An admin's decision", read with
@@ -219,6 +235,7 @@ defmodule MishkaCmsMigration.Target do
   @type context :: %{
           mode: :dry_run | :import,
           actor: map(),
+          scope: map(),
           site_id: String.t(),
           run_id: String.t(),
           source: String.t(),
@@ -250,6 +267,19 @@ defmodule MishkaCmsMigration.Target do
   @doc "The resource's actions this target writes through."
   @callback actions() :: %{create: atom(), update: atom()}
 
+  @doc """
+  Every resource this target writes, for a target whose items go to more than one (see "Where an
+  item is written"). `use` answers `[resource()]`.
+  """
+  @callback resources() :: [Ash.Resource.t()]
+
+  @doc """
+  The resource and the actions that write `item` (see "Where an item is written"). `use` answers
+  `{resource(), actions()}`.
+  """
+  @callback writes_to(Item.t(), context()) ::
+              {Ash.Resource.t(), %{create: atom(), update: atom()}}
+
   @doc "The input of the create or update action for `item`."
   @callback attrs(Item.t(), context()) :: map()
 
@@ -268,7 +298,8 @@ defmodule MishkaCmsMigration.Target do
   @doc """
   Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
   `{:skipped, reason}`, `{:undecided, conflict}`, `{:connected, record, reason}` or
-  `{:error, reason}` without writing (see "What a write needs first"). `use` answers `write.(context)`.
+  `{:error, reason}` without writing (see "What a write needs first"). `use` answers
+  `write.(context)`.
   """
   @callback prepare(Item.t(), context(), (context() -> result)) ::
               result
@@ -324,6 +355,12 @@ defmodule MishkaCmsMigration.Target do
       def actions, do: %{create: unquote(create), update: unquote(update)}
 
       @impl MishkaCmsMigration.Target
+      def resources, do: [unquote(resource)]
+
+      @impl MishkaCmsMigration.Target
+      def writes_to(_item, _context), do: {unquote(resource), actions()}
+
+      @impl MishkaCmsMigration.Target
       def note(_item, _context), do: nil
 
       @impl MishkaCmsMigration.Target
@@ -338,7 +375,13 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def waiting(_item, _context), do: nil
 
-      defoverridable note: 2, existing: 2, prepare: 3, recorded: 2, waiting: 2
+      defoverridable resources: 0,
+                     writes_to: 2,
+                     note: 2,
+                     existing: 2,
+                     prepare: 3,
+                     recorded: 2,
+                     waiting: 2
     end
   end
 

@@ -116,7 +116,9 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
       assert outcomes(run)["title"] == {:undecided, "site_has_own"}
-      assert run.report.counts.undecided == 1
+
+      assert Enum.count(run.report.entries, &(&1.kind == "setting" and &1.outcome == :undecided)) ==
+               1
 
       run = import!(run, admin)
 

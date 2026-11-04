@@ -1817,6 +1817,12 @@ defmodule MishkaCmsMigration.MigrationRun do
       public: nil
     }
 
+  def record_paths("menu", %MishkaCmsCore.Runtime.Component{} = component),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/components", component, %{search: component.name}),
+      public: nil
+    }
+
   def record_paths("menu", layout),
     do: %{
       admin: listed("/admin/dashboard/runtime/layouts", layout, %{search: layout.name}),
@@ -2029,6 +2035,26 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("header_has_links"),
     do: dgettext("mishka_gervaz", "The site's header already has its own links")
 
+  defp said("menu_goes_to"),
+    do: dgettext("mishka_gervaz", "Choose where this menu goes")
+
+  defp said("menu_goes_to: " <> menu),
+    do:
+      dgettext("mishka_gervaz", "Choose where this menu goes. Same links as %{menu}", menu: menu)
+
+  defp said("component_written_first"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Waits for the component of the menu with the same name, written first, then connects to it"
+      )
+
+  defp said("component_name_taken"),
+    do: dgettext("mishka_gervaz", "The site already has a component with this name")
+
+  defp said("footer_has_links"),
+    do: dgettext("mishka_gervaz", "The site's footer already has its own links")
+
   defp said("slug_taken"),
     do: dgettext("mishka_gervaz", "The site already has one at this address")
 
@@ -2080,11 +2106,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
 
-  defp said("not_main_menu"),
-    do: dgettext("mishka_gervaz", "Not the site's main menu, so it is left out")
-
   defp said("no_layout"),
-    do: dgettext("mishka_gervaz", "The site's layout has no header to put it in")
+    do: dgettext("mishka_gervaz", "The site's layout has no header or footer to put it in")
 
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 

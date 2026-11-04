@@ -53,7 +53,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   `"post_redirect"` reads the posts again, only their `id`, `title`, `status`, `link` and
   `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there
   is one, and `nil` after the last. `"menu"` is one page: every menu (`/wp/v2/menus`, WordPress
-  5.9+) with its items (`/wp/v2/menu-items`), each route read to its last page (`menus/2`). A list
+  5.9+) with its items (`/wp/v2/menu-items`) and every block menu (`/wp/v2/navigation`, asked for
+  with `status=any`), each route read to its last page (`menus/4`). A list
   WordPress refuses fails the walk:
     * `:unauthorized` — WordPress answered 401 or 403: the user may not read this kind in the edit
       context, or the password was revoked since the run was made;
@@ -149,8 +150,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
       `/?p=39`, an address no redirect can answer.
-    * menu — one menu: its `source_id` is the menu's id, `title` its name, and `attrs` keeps its
-      `slug`, its theme `locations`, whether it is the site's `main` menu (`menus/2`), and its
+    * menu — one menu: its `source_id` is the menu's id (`navigation-` and the post's id for a
+      block menu, whose `attrs` say `"block"` and, when a classic menu has the same links,
+      `"same_as"`, that menu's name), `title` its name, and `attrs` keeps its
+      `slug`, its theme `locations`, whether it is the site's `main` menu (`menus/4`), and its
       `items`, nested as WordPress nests them, each in menu order. An item is its label as text
       (`"title"`), the address WordPress gives it (`"url"`), what it points at as the kind and
       source id of an item of this source (`"kind"` and `"id"`: a page, a post, a category or a
@@ -201,7 +204,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Source
-  alias MishkaCmsMigration.Sources.WordPress.{Content, Elementor, Export}
+  alias MishkaCmsMigration.Sources.WordPress.{Content, Elementor, Export, Navigation}
 
   @kinds [
     "user",
@@ -373,10 +376,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          do: %{"id" => id, "label" => label, "value" => value}
        ), nil}
 
-  def list(%{req: req}, "menu", _cursor) do
-    with {:ok, menus} <- every(req, "/wp/v2/menus", 1, []),
-         {:ok, items} <- every(req, "/wp/v2/menu-items", 1, []) do
-      {:ok, menus(menus, items), nil}
+  def list(%{req: req, index: index}, "menu", _cursor) do
+    with {:ok, menus} <- every(req, "/wp/v2/menus", [], 1, []),
+         {:ok, items} <- every(req, "/wp/v2/menu-items", [], 1, []),
+         {:ok, blocks} <- every(req, "/wp/v2/navigation", [status: "any"], 1, []) do
+      {:ok, menus(menus, items, blocks, index["home"]), nil}
     end
   end
 
@@ -386,20 +390,43 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   The rows `list/3` answers for `"menu"`, of the REST API's `menus` and `menu-items` (or rows of the
   same shape): each menu with its `"items"`, the items whose `menus` is its id but those WordPress
   counts as `invalid`, and `"main"`, whether it is the site's main menu: the one at the theme's
-  `primary` location, else the first at any location, else the first made (the lowest id).
+  `primary` location, else the first at any location, else the first made (the lowest id), which
+  comes first, so an import writes it before any other menu. Then the block menus, the `wp_navigation` posts of `navigation`
+  (`MishkaCmsMigration.Sources.WordPress.Navigation`), with `"same_as"`, the name of the classic
+  menu that has the same links, when one has.
   """
-  @spec menus([map()], [map()]) :: [map()]
-  def menus(menus, items) do
+  @spec menus([map()], [map()], [map()], String.t() | nil) :: [map()]
+  def menus(menus, items, navigation, home) do
     by_menu = items |> Enum.reject(&(&1["invalid"] == true)) |> Enum.group_by(& &1["menus"])
     main = menus |> Enum.min_by(&{located(&1["locations"]), &1["id"]}, fn -> %{} end)
 
-    for menu <- menus,
-        do:
-          Map.merge(menu, %{
-            "items" => Map.get(by_menu, menu["id"], []),
-            "main" => menu["id"] == main["id"]
-          })
+    classic =
+      for menu <- Enum.sort_by(menus, &(&1["id"] != main["id"])),
+          do:
+            Map.merge(menu, %{
+              "items" => Map.get(by_menu, menu["id"], []),
+              "main" => menu["id"] == main["id"]
+            })
+
+    classic ++ blocks(navigation, home, classic)
   end
+
+  defp blocks(navigation, home, classic) do
+    twins =
+      classic
+      |> Enum.sort_by(& &1["id"])
+      |> Enum.reduce(%{}, &Map.put_new(&2, classic_targets(&1["items"]), &1["name"]))
+
+    for menu <- Navigation.call(navigation, home),
+        do: Map.put(menu, "same_as", twins[Navigation.targets(menu["items"])])
+  end
+
+  defp classic_targets(items), do: items |> Enum.map(&classic_target/1) |> Enum.sort()
+
+  defp classic_target(item), do: item |> menu_object(%{}) |> target(item)
+
+  defp target({nil, nil}, item), do: {:url, String.trim_trailing(item["url"] || "", "/")}
+  defp target({kind, id}, _item), do: {:object, kind, id}
 
   @impl MishkaCmsMigration.Source
   def normalize(
@@ -495,6 +522,25 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   def normalize(%{"id" => id, "label" => label, "value" => value}, "setting", _context),
     do: {:ok, %{source_id: id, title: label, attrs: %{"value" => value}}}
 
+  def normalize(
+        %{"id" => id, "name" => name, "block" => true, "items" => items} = row,
+        "menu",
+        _c
+      )
+      when is_list(items) do
+    {:ok,
+     %{
+       source_id: id,
+       title: name,
+       attrs:
+         row
+         |> Map.take(["slug", "same_as"])
+         |> decoded_slug()
+         |> Map.merge(%{"locations" => [], "main" => false, "block" => true, "items" => items}),
+       extra: Map.drop(row, @menu_attrs ++ ["block", "same_as"] ++ @rendered)
+     }}
+  end
+
   def normalize(%{"id" => id, "name" => name, "items" => items} = row, "menu", context)
       when is_list(items) do
     main? = row["main"] == true
@@ -532,16 +578,22 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp plain(_none), do: ""
 
-  defp every(req, route, page, rows) do
+  defp every(req, route, extra, page, rows) do
     req
-    |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page])
+    |> Req.get(
+      url: route,
+      params: [context: "edit", per_page: @per_page, page: page] ++ extra
+    )
     |> listed(page)
-    |> every_page(req, route, rows)
+    |> every_page(req, {route, extra}, rows)
   end
 
-  defp every_page({:ok, rows, nil}, _req, _route, read), do: {:ok, read ++ rows}
-  defp every_page({:ok, rows, next}, req, route, read), do: every(req, route, next, read ++ rows)
-  defp every_page(refused, _req, _route, _read), do: refused
+  defp every_page({:ok, rows, nil}, _req, _asked, read), do: {:ok, read ++ rows}
+
+  defp every_page({:ok, rows, next}, req, {route, extra}, read),
+    do: every(req, route, extra, next, read ++ rows)
+
+  defp every_page(refused, _req, _asked, _read), do: refused
 
   defp located(locations) when is_list(locations),
     do: located(@main_location in locations, locations)

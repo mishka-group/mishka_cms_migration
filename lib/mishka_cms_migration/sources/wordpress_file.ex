@@ -63,10 +63,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       `nav_menu_item` items, whose own fields are their meta (`_menu_item_type`,
       `_menu_item_object`, `_menu_item_object_id`, `_menu_item_menu_item_parent`,
       `_menu_item_url`, `_menu_item_target`), read in one pass
-      (`MishkaCmsMigration.Sources.WordPress.menus/2`). An item with no label of its own takes the
+      (`MishkaCmsMigration.Sources.WordPress.menus/4`). An item with no label of its own takes the
       title of the page or post, or the name of the category or tag, it points at, and its address
       too; one whose page, post or term the export does not carry is invalid, as WordPress counts
-      it.
+      it. Each `wp_navigation` post is a block menu too, as the REST API answers it.
 
   ## Where it differs from the REST API
 
@@ -125,7 +125,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   @indexed_media ~w(id slug link source_url alt_text media_details)
 
-  @menu_found %{home: nil, menus: [], items: [], objects: %{}}
+  @menu_found %{home: nil, menus: [], items: [], objects: %{}, navigation: []}
   @term_links %{"category" => "/?cat=", "post_tag" => "/?tag="}
   @menu_meta ~w(_menu_item_type _menu_item_object _menu_item_object_id
                 _menu_item_menu_item_parent _menu_item_url _menu_item_target)
@@ -400,6 +400,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp menu_entry("nav_menu_item", _status, element, found),
     do: %{found | items: [menu_item(element) | found.items]}
 
+  defp menu_entry("wp_navigation", _status, element, found),
+    do: %{found | navigation: [navigation(element) | found.navigation]}
+
   defp menu_entry(type, _status, element, found) when type in @entries,
     do:
       put_in(
@@ -427,6 +430,14 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     }
   end
 
+  defp navigation(element),
+    do: %{
+      "id" => integer(text(element, "wp:post_id")),
+      "slug" => text(element, "wp:post_name") || "",
+      "title" => %{"raw" => text(element, "title") || ""},
+      "content" => %{"raw" => text(element, "content:encoded") || ""}
+    }
+
   defp menu_slug(element),
     do:
       Enum.find_value(Export.all(element, "category"), fn reference ->
@@ -449,7 +460,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
             |> Map.put("menus", ids[item["menu"]])
             |> pointed(found.objects)
 
-    {:ok, WordPress.menus(menus, items), nil}
+    {:ok, WordPress.menus(menus, items, Enum.reverse(found.navigation), found.home), nil}
   end
 
   defp menus_found(refused), do: refused
