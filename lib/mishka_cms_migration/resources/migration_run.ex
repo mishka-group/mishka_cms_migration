@@ -2023,6 +2023,29 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
 
+  defp said("same_file: " <> title),
+    do: dgettext("mishka_gervaz", "Same file as %{title}", title: title)
+
+  defp said("same_file_checked_at_download"),
+    do: dgettext("mishka_gervaz", "Checked for an identical file when it is downloaded")
+
+  defp said("same_file_used"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Same file as another: the original is used, and the old address redirects to it, as you decided"
+      )
+
+  defp said("same_file_used_no_redirect"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Same file as another: the original is used, with no redirect from the old address, as you decided"
+      )
+
+  defp said("same_file_kept"),
+    do: dgettext("mishka_gervaz", "Same file as another, kept as its own, as you decided")
+
   defp said("draft_pages: " <> labels),
     do: dgettext("mishka_gervaz", "Links to pages that are not live: %{labels}", labels: labels)
 

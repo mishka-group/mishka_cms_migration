@@ -32,7 +32,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
   or mapped to one by an admin, is not written: in an import it is recorded against that record,
-  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item whose
+  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item the
+  target's `prepare/3` finds to be a record the CMS holds (`{:connected, record, reason}`) is
+  recorded the same way, as skipped with `reason`. What the target's `recorded/2` answers is
+  recorded on the item of a record written. An item whose
   conflict waits for an admin's decision is not written either: it is recorded as `:undecided`,
   with the conflict as its reason, and the next run asks again.
 

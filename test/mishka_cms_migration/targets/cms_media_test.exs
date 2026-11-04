@@ -14,12 +14,16 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
 
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
-  alias MishkaCmsCore.Runtime.{Media, MediaCategory}
+  alias MishkaCmsCore.Runtime.{Media, MediaCategory, Redirect}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsMedia
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
-  @admin ["admin:dashboard:migration", "admin:dashboard:runtime:media"]
+  @admin [
+    "admin:dashboard:migration",
+    "admin:dashboard:runtime:media",
+    "admin:dashboard:runtime:redirect"
+  ]
   @uploads "/wp-content/uploads/2026/11/"
   @seeded Path.expand("../../../dev/wordpress/media", __DIR__)
 
@@ -29,13 +33,13 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
     %{site: site, admin: migration_admin!(site, @admin)}
   end
 
-  defp wordpress_run!(site, admin) do
-    %{source: "wordpress", connection: @connection, secret: "app password"}
+  defp wordpress_run!(site, admin, options \\ %{}) do
+    %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
   end
 
-  defp imported!(site, admin),
-    do: site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+  defp imported!(site, admin, options \\ %{}),
+    do: site |> wordpress_run!(admin, options) |> dry_run!(admin) |> import!(admin)
 
   defp counts(run) do
     run.report.kinds
@@ -244,6 +248,237 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert downloads() == []
       assert media(site)["hero"].relative_path == hero.relative_path
       assert stored(media(site)["hero"]) == seeded("hero.jpg")
+    end
+  end
+
+  describe "the same file twice" do
+    @again "/wp-content/uploads/2026/12/hero.jpg"
+
+    defp other_bytes, do: seeded("hero.jpg") <> <<0>>
+
+    # Attachment 7 (gallery-2) is attachment 4's file under another name, and 30 has attachment 4's
+    # name and bytes that differ from it by one. WordPress lists them oldest first.
+    defp twins! do
+      hero = Enum.find(recorded("media"), &(&1["id"] == 4))
+
+      again = %{
+        hero
+        | "id" => 30,
+          "slug" => "hero-2",
+          "title" => %{"raw" => "Hero again", "rendered" => "Hero again"},
+          "source_url" => "http://localhost:8089" <> @again
+      }
+
+      rows = Enum.sort_by([again | recorded("media")], & &1["id"])
+
+      stub!(%{
+        "/wp-json/wp/v2/media" => {"application/json", Jason.encode!(rows)},
+        (@uploads <> "gallery-2.jpg") => {"image/jpeg", seeded("hero.jpg")},
+        @again => {"image/jpeg", other_bytes()}
+      })
+    end
+
+    defp decide!(site, admin, source_id, choice),
+      do:
+        MishkaCmsMigration.MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "media" and &1.source_id == source_id))
+        |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
+
+    defp redirects(site),
+      do:
+        Redirect |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.from_path, &1})
+
+    defp item(site, source_id),
+      do:
+        MishkaCmsMigration.MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "media" and &1.source_id == source_id))
+
+    test "a dry run cannot tell, and says the check is made when the file is downloaded", %{
+      site: site,
+      admin: admin
+    } do
+      twins!()
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run)["7"] == {:created, "same_file_checked_at_download"}
+      assert downloads() == []
+    end
+
+    test "waits for the admin on the later of two attachments of the same bytes, never on one that only has the same name",
+         %{site: site, admin: admin} do
+      twins!()
+      run = imported!(site, admin)
+      media = media(site)
+
+      assert {:undecided, "same_file: Hero image"} = outcomes(run)["7"]
+      assert {:created, nil} = outcomes(run)["30"]
+      assert {:created, nil} = outcomes(run)["4"]
+      assert counts(run).undecided == 1
+
+      assert Map.has_key?(media, "hero")
+      assert Map.has_key?(media, "hero-2")
+      refute Map.has_key?(media, "gallery-2")
+      assert stored(media["hero-2"]) == other_bytes()
+      assert redirects(site) == %{}
+
+      assert MishkaCmsMigration.MigrationItem.conflict(item(site, "7")) == "same_file"
+      assert MishkaCmsMigration.MigrationItem.choices("same_file") == ["keep", "import"]
+
+      assert %{"4" => hero, "30" => again} = hashes(site)
+      assert hero == sha256(seeded("hero.jpg"))
+      assert again == sha256(other_bytes())
+    end
+
+    test "Use the original stores no second file, redirects the old address to the original and points content at it",
+         %{site: site, admin: admin} do
+      twins!()
+      imported!(site, admin)
+      decide!(site, admin, "7", "import")
+      run = imported!(site, admin)
+      media = media(site)
+      hero = media["hero"]
+
+      assert {:skipped, "same_file_used"} = outcomes(run)["7"]
+      refute Map.has_key?(media, "gallery-2")
+      assert map_size(media) == files()
+
+      assert %{target_id: target_id, outcome: :skipped} = item(site, "7")
+      assert target_id == hero.id
+
+      assert %{"/wp-content/uploads/2026/11/gallery-2.jpg" => redirect} = redirects(site)
+      assert {redirect.to, redirect.status} == {hero.relative_path, 301}
+
+      context = %{source_host: "localhost:8089", actor: admin, site_id: site.id, mode: :import}
+      old = "http://localhost:8089" <> @uploads <> "gallery-2.jpg"
+
+      html =
+        ~s(<img src="#{old}" srcset="#{old} 2x"><video poster="#{old}"></video>) <>
+          ~s(<a href="https://elsewhere.test/x.jpg">x</a>)
+
+      relinked = CmsMedia.relinked(html, %{old => 7}, context)
+
+      refute relinked =~ "gallery-2"
+      assert relinked =~ ~s(src="#{hero.relative_path}")
+      assert relinked =~ ~s(srcset="#{hero.relative_path} 2x")
+      assert relinked =~ ~s(poster="#{hero.relative_path}")
+      assert relinked =~ "https://elsewhere.test/x.jpg"
+    end
+
+    test "running again asks nothing, downloads nothing and writes no second redirect", %{
+      site: site,
+      admin: admin
+    } do
+      twins!()
+      imported!(site, admin)
+      decide!(site, admin, "7", "import")
+      imported!(site, admin)
+      before = {media(site), redirects(site)}
+      [_ | _] = downloads()
+
+      again = imported!(site, admin)
+
+      assert outcomes(again)["7"] == {:skipped, "unchanged"}
+      assert counts(again).undecided == 0
+      assert downloads() == []
+      assert {media(site), redirects(site)} == before
+    end
+
+    test "Use the original writes no redirect when the run's choices have none", %{
+      site: site,
+      admin: admin
+    } do
+      twins!()
+      imported!(site, admin, %{post_address: "blog_without_redirects"})
+      decide!(site, admin, "7", "import")
+      run = imported!(site, admin, %{post_address: "blog_without_redirects"})
+
+      assert {:skipped, "same_file_used_no_redirect"} = outcomes(run)["7"]
+      assert redirects(site) == %{}
+      assert item(site, "7").target_id == media(site)["hero"].id
+    end
+
+    test "Use the original fails the item, and connects nothing, when the admin may not make redirects",
+         %{site: site, admin: admin} do
+      twins!()
+      imported!(site, admin)
+      decide!(site, admin, "7", "import")
+      without = migration_admin!(site, List.delete(@admin, "admin:dashboard:runtime:redirect"))
+      run = imported!(site, without)
+
+      assert {:failed, _reason} = outcomes(run)["7"]
+      assert redirects(site) == %{}
+      assert item(site, "7").target_id == nil
+    end
+
+    test "Keep both imports it as its own file", %{site: site, admin: admin} do
+      twins!()
+      imported!(site, admin)
+      decide!(site, admin, "7", "keep")
+      run = imported!(site, admin)
+      media = media(site)
+
+      assert {:created, "same_file_kept"} = outcomes(run)["7"]
+      assert stored(media["gallery-2"]) == seeded("hero.jpg")
+      assert media["gallery-2"].id != media["hero"].id
+      assert redirects(site) == %{}
+    end
+
+    test "an original the CMS no longer has is not used: the file is imported as its own", %{
+      site: site,
+      admin: admin
+    } do
+      twins!()
+      first = site |> wordpress_run!(admin) |> dry_run!(admin)
+      hero = Media |> Ash.read!(tenant: site.id, authorize?: false)
+      assert hero == []
+
+      import!(first, admin)
+      Ash.destroy!(media(site)["hero"], tenant: site.id, authorize?: false)
+      run = imported!(site, admin)
+
+      assert {:created, nil} = outcomes(run)["7"]
+    end
+
+    test "asks one question of the database for a file it downloads, and none once Keep both was decided",
+         %{site: site, admin: admin} do
+      stub!()
+
+      {:ok, item} =
+        Item.build(%{
+          kind: "media",
+          source_id: "4",
+          title: "Hero image",
+          attrs: %{
+            "source_url" => "http://localhost:8089" <> @uploads <> "hero.jpg",
+            "mime_type" => "image/jpeg"
+          }
+        })
+
+      context = %{
+        mode: :import,
+        actor: admin,
+        site_id: site.id,
+        source_host: "localhost:8089",
+        options: %{},
+        record: nil,
+        prepared: nil,
+        decisions: %{}
+      }
+
+      write = fn context -> {:ok, context.prepared.hash} end
+
+      queries =
+        queries_while(fn -> assert {:ok, _hash} = CmsMedia.prepare(item, context, write) end)
+
+      assert [query] = queries
+      assert query =~ "file_hash"
+
+      kept = %{context | decisions: %{"4" => %{"same_file" => "keep"}}}
+
+      assert queries_while(fn -> assert {:ok, _hash} = CmsMedia.prepare(item, kept, write) end) ==
+               []
     end
   end
 

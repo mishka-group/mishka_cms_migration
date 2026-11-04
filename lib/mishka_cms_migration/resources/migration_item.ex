@@ -107,7 +107,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`conflict/1`), which opens the same form with
   one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
   Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
-  picked rows together. The Plan cell shows the choice before the plan, and the record a mapped
+  picked rows together (for two attachments of the same file, `"same_file"`, Keep both and Use the
+  original). The Plan cell shows the choice before the plan, and the record a mapped
   item is connected to (`mapped_paths`). The table's other view, Map, draws the items as the source
   nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), from the rows it keeps
   loaded.
@@ -148,6 +149,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     "site_has_own" => ["keep", "import"],
     "header_has_links" => ["keep", "import"],
     "slug_taken" => ["keep", "import"],
+    "same_file" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
     "draft_pages" => ["keep", "import"],
@@ -1351,6 +1353,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("slug_taken", "import"),
     do: dgettext("mishka_gervaz", "Import as new with another slug")
+
+  defp choice_word("same_file", "keep"), do: dgettext("mishka_gervaz", "Keep both")
+  defp choice_word("same_file", "import"), do: dgettext("mishka_gervaz", "Use the original")
 
   defp choice_word("blog_missing", "keep"), do: dgettext("mishka_gervaz", "Wait for the Blog")
   defp choice_word("blog_missing", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
