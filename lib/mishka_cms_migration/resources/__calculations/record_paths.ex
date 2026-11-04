@@ -12,8 +12,8 @@ defmodule MishkaCmsMigration.Resources.Calculations.RecordPaths do
   `field` names the attribute that holds the record's id: `:target_id` (the default), the record an
   import wrote, or `:mapped_id`, the record an admin mapped the item to (`:mapped_paths`).
 
-  The records are read as the reader, under the site of each item, through the resource of the
-  kind's target (`MishkaCmsMigration.Target`): one read for each kind and site of the items asked
+  The records are read as the reader, under the site of each item, through the resources of the
+  kind's target (`MishkaCmsMigration.Target`): one read for each kind, resource and site of the items asked
   for, so a page of a table costs a few reads whatever its size.
   """
 
@@ -54,14 +54,21 @@ defmodule MishkaCmsMigration.Resources.Calculations.RecordPaths do
     do: Map.put(paths, :name, Map.get(record, :name) || Map.get(record, :title))
 
   defp records(kind, site_id, ids, actor) do
-    with {:ok, target} <- Target.fetch(kind),
-         {:ok, records} <-
-           target.resource()
-           |> Ash.Query.filter(id in ^ids)
-           |> Ash.read(actor: actor, tenant: site_id) do
-      Map.new(records, &{{kind, &1.id}, &1})
-    else
-      _unreadable -> %{}
+    case Target.fetch(kind) do
+      {:ok, target} ->
+        target.resources()
+        |> Enum.flat_map(&read(&1, ids, site_id, actor))
+        |> Map.new(&{{kind, &1.id}, &1})
+
+      _no_target ->
+        %{}
+    end
+  end
+
+  defp read(resource, ids, site_id, actor) do
+    case resource |> Ash.Query.filter(id in ^ids) |> Ash.read(actor: actor, tenant: site_id) do
+      {:ok, records} -> records
+      _unreadable -> []
     end
   end
 end

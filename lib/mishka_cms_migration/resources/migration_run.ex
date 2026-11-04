@@ -1806,6 +1806,12 @@ defmodule MishkaCmsMigration.MigrationRun do
       public: nil
     }
 
+  def record_paths("menu", %MishkaCmsCore.Runtime.Component{} = component),
+    do: %{
+      admin: listed("/admin/dashboard/runtime/components", component, %{search: component.name}),
+      public: nil
+    }
+
   def record_paths("menu", layout),
     do: %{
       admin: listed("/admin/dashboard/runtime/layouts", layout, %{search: layout.name}),

@@ -429,6 +429,11 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
         |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "23"))
 
       assert {item.target_id, item.target_resource} == {footer.id, inspect(Component)}
+
+      assert %{record_paths: %{admin: admin_path, name: "nav-footer"}} =
+               Ash.load!(item, :record_paths, actor: admin, tenant: site.id)
+
+      assert admin_path =~ "/admin/dashboard/runtime/components"
     end
 
     test "keeps a nested block menu's groups in its component, as the header draws them",
