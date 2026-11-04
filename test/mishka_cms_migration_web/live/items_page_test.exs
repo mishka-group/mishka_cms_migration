@@ -590,6 +590,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       end
     end
 
+    test "is shown while the decision has not taken effect, and gone once an import wrote the item by it",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+      tag = second_item(site, "tag", "10")
+      MishkaCmsMigration.decide_item!(tag, "import", actor: admin, tenant: site.id)
+
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+      assert has_element?(view, row_button("decide", tag))
+
+      site |> later_run!(admin, second) |> migrate_run!(admin)
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+
+      assert %{outcome: :created} = item!(tag)
+      refute has_element?(view, row_button("decide", tag))
+      assert has_element?(view, row_button("map_to", tag))
+    end
+
     test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
          %{conn: conn, site: site, admin: admin} do
       without_blog!()
@@ -604,6 +621,39 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert %{left_out: true, decisions: %{}} = item!(tag)
       assert plan_of(view, tag) == "left_out"
+    end
+
+    test "a main menu that links pages that are not live names them, and offers to publish them or leave their links out",
+         %{conn: conn, site: site, run: run} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:layout"])
+
+      create_layout!(
+        site_id: site.id,
+        name: "site-main",
+        path: "/layouts/site-main",
+        template:
+          ~s(<.component component_name="site-header" site="localhost"></.component><main>{@inner_content}</main>)
+      )
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+      menu = Enum.find(stored(site), &(&1.source_kind == "menu" and &1.source_id == "22"))
+      view = open!(conn, admin, later, "?items_filter_source_kind=menu")
+
+      assert plan_of(view, menu) == "undecided"
+
+      assert view
+             |> parts(~s|#{@table} [id$="#{menu.id}"] [data-role="item-plan-reason"]|)
+             |> LazyHTML.text() =~ "Links to pages that are not live: About, Team, Leadership"
+
+      row_action!(view, "decide", menu)
+
+      assert decision_choices(view) ==
+               ["Leave those links out of the menu", "Publish the linked pages"]
+
+      decide!(view, "import")
+
+      assert item!(menu).decisions == %{"draft_pages" => "import"}
+      assert plan_of(view, menu) == "decided"
     end
 
     test "the picked rows are decided together, and one with nothing to decide is left as it is",

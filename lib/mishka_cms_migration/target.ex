@@ -30,10 +30,11 @@ defmodule MishkaCmsMigration.Target do
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
-  `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing and a `prepare/3`
-  that writes at once; a target writes only `attrs/2`, `note/2` when it writes an item otherwise
-  than the source has it, `existing/2` when the CMS may already hold some of its items, and
-  `prepare/3` when a write needs something from the source first.
+  `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing, a `prepare/3`
+  that writes at once and a `waiting/2` that plans every write; a target writes only `attrs/2`,
+  `note/2` when it writes an item otherwise than the source has it, `existing/2` when the CMS may
+  already hold some of its items, and `prepare/3` and `waiting/2` when a write needs something
+  from the source first or may wait for an admin.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -105,6 +106,15 @@ defmodule MishkaCmsMigration.Target do
   an import only, after the item is converted and offered to the plugins, outside the write's
   transaction, so a slow source holds no database transaction open, and it cleans up what it
   fetched once `write` answers. `use` answers `write.(context)`.
+
+  A dry run runs no `prepare/3`, so it asks `waiting/2` instead, of each item it would create or
+  update, with the context `prepare/3` would get: what the import's `prepare/3` would answer
+  without writing, `{:undecided, conflict}` or `{:skipped, reason}`, or `nil` for a write. The dry
+  run then plans the item as the import would leave it: a post an earlier import wrote, whose
+  player the admin may not allow, is planned as waiting for a decision, not as an update. `use`
+  answers `nil`.
+
+      def waiting(item, context), do: MishkaCmsMigration.Targets.Helpers.Frames.waiting(item, context)
 
       def prepare(item, %{record: nil} = context, write) do
         path = Plug.Upload.random_file!("migration")
@@ -262,6 +272,14 @@ defmodule MishkaCmsMigration.Target do
               result | {:skipped, String.t()} | {:undecided, String.t()} | {:error, term()}
             when result: term()
 
+  @doc """
+  What a dry run plans for `item`, one it would create or update, that the import's `prepare/3`
+  would not write: `{:undecided, conflict}`, `{:skipped, reason}`, or `nil` for a write (see "What
+  a write needs first"). `use` answers `nil`.
+  """
+  @callback waiting(Item.t(), context()) ::
+              {:undecided, String.t()} | {:skipped, String.t()} | nil
+
   @doc false
   defmacro __using__(opts) do
     kind = Keyword.fetch!(opts, :kind)
@@ -301,7 +319,10 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def prepare(_item, context, write), do: write.(context)
 
-      defoverridable note: 2, existing: 2, prepare: 3
+      @impl MishkaCmsMigration.Target
+      def waiting(_item, _context), do: nil
+
+      defoverridable note: 2, existing: 2, prepare: 3, waiting: 2
     end
   end
 

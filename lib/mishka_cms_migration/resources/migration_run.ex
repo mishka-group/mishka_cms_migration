@@ -1975,6 +1975,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
 
+  defp said("draft_pages: " <> labels),
+    do: dgettext("mishka_gervaz", "Links to pages that are not live: %{labels}", labels: labels)
+
   defp said("waits_for_blog"),
     do: dgettext("mishka_gervaz", "Waits for Mishka Blog, as you decided")
 

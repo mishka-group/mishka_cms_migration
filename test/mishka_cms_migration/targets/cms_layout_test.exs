@@ -8,7 +8,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
   the seeded WordPress answered: what a dry run plans, where an import points each link (the pages,
   posts and categories it wrote, the site's home, an outside site), that a link to what was not
   imported keeps its old address and the report says so, that the site's own links wait for an
-  admin's decision and are kept or replaced as decided, and what a second run does.
+  admin's decision and are kept or replaced as decided, that links to pages that are not live wait
+  for one too, and what a second run does. Pages are imported live, at their old addresses, unless
+  a test is about the drafts pages come in as by default.
 
   The layout is the core's `site-main` frame, its header the `site-header` component the core's
   starter draws, with no links of its own. Its links are read through the core's own tree of the
@@ -19,7 +21,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.Layout
+  alias MishkaCmsCore.Runtime.{Layout, Page}
   alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsLayout
@@ -57,13 +59,26 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
         template: template
       )
 
-  defp wordpress_run!(site, admin) do
-    %{source: "wordpress", connection: @connection, secret: "app password"}
+  defp wordpress_run!(site, admin, options \\ %{pages: "publish"}) do
+    %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
   end
 
-  defp imported!(site, admin),
-    do: site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+  defp imported!(site, admin, options \\ %{pages: "publish"}),
+    do: site |> wordpress_run!(admin, options) |> dry_run!(admin) |> import!(admin)
+
+  defp drafts!(site, admin, choice) do
+    site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+    decide!(site, admin, choice)
+    imported!(site, admin, %{})
+  end
+
+  defp live_paths(site),
+    do:
+      Page
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.filter(& &1.active)
+      |> MapSet.new(& &1.path)
 
   defp outcomes(run) do
     for %{kind: "menu"} = entry <- run.report.entries,
@@ -301,6 +316,77 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       assert outcomes(run)["22"] == {:failed, "forbidden"}
       assert template(site) == layout.template
+    end
+  end
+
+  describe "links to pages that are not live" do
+    @drafts "draft_pages: About, Team, Leadership, Contact, Blog, Docs, Getting started"
+
+    test "leave the main menu for an admin's decision, naming them, in the dry run and the import",
+         %{site: site, admin: admin} do
+      layout = layout!(site)
+      run = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+
+      assert outcomes(run)["22"] == {:undecided, @drafts}
+
+      assert MishkaCmsMigration.MigrationRun.reason_label(@drafts) ==
+               "Links to pages that are not live: About, Team, Leadership, Contact, Blog, Docs, Getting started"
+
+      assert outcomes(import!(run, admin))["22"] == {:undecided, @drafts}
+      assert template(site) == layout.template
+      assert live_paths(site) == MapSet.new()
+    end
+
+    test "leave out a page whose address another live page answers, as the Blog's /:lang/blog answers /blog",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      create_page!(
+        site_id: site.id,
+        path: "/:lang/blog",
+        extra: %{"serves_all_languages" => true}
+      )
+
+      run = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+      without_blog = String.replace(@drafts, " Blog,", "")
+
+      assert outcomes(run)["22"] == {:undecided, without_blog}
+      assert outcomes(import!(run, admin))["22"] == {:undecided, without_blog}
+    end
+
+    test "Publish the linked pages puts them live and writes the menu with its links to them",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      run = drafts!(site, admin, "import")
+
+      assert outcomes(run)["22"] == {:updated, nil}
+
+      assert MapSet.new(
+               ~w(/about /about/team /about/team/leadership /contact /blog /docs /docs/getting-started)
+             ) == live_paths(site)
+
+      assert {"Team", {:navigate, "/about/team"}} in links(site)
+    end
+
+    test "Leave those links out of the menu writes the menu without them and keeps the pages drafts",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      run = drafts!(site, admin, "keep")
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert live_paths(site) == MapSet.new()
+
+      assert links(site) == [
+               {"Home", {:navigate, "/"}},
+               {"News", {:navigate, "/blog/category/news"}},
+               {"Releases", {:navigate, "/blog/category/releases"}},
+               {"Announcements", {:navigate, "/blog/category/announcements"}},
+               {"Tutorials", {:navigate, "/blog/category/tutorials"}},
+               {"Start here", {:navigate, "/blog/welcome-to-the-mishka-test-blog"}},
+               {"Elixir", {:href, "https://elixir-lang.org/", "_blank"}}
+             ]
     end
   end
 

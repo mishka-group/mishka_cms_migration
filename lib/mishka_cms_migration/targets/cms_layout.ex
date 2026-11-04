@@ -55,6 +55,29 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   The items' records are found with one query for the items (`note/2`) and one more, then one for
   each kind of record they point at, when the menu is written (`prepare/3`).
 
+  ## Links to pages that are not live
+
+  A link to a page the site does not serve would lead nowhere: pages come in as drafts by default
+  (`MishkaCmsMigration.Targets.CmsPage`). So the main menu waits for an admin's decision as
+  `"draft_pages"` (`MishkaCmsMigration.MigrationItem`'s Decide…) while it links a page that is not
+  live, its labels after `": "`, as in `"draft_pages: Team, Leadership"`, unless another live page
+  of the site answers that page's address, as the Blog's `/:lang/blog` answers `/blog`
+  (`MishkaCmsCore.Runtime.PageEditions.urls/2`, read with one query of the live pages):
+
+    * Publish the linked pages (`"import"`) makes those pages live through the core's own page
+      `:update`, as the admin, in the menu's write: a page the core refuses to put live fails the
+      menu, and nothing of it is written. A page published so is the admin's from then on, as one
+      published in the CMS is: a later run keeps it as it is (`"edited_in_cms"`);
+    * Leave those links out of the menu (`"keep"`) writes the menu without them, and the pages stay
+      as they are.
+
+  An import tells from the pages' records, once its pages are written (`prepare/3`). A dry run,
+  which writes none, tells from what it plans for them (`waiting/2`): a page it would create or
+  update is not live under the run's `pages` choice `"draft"`, nor with a note that keeps it a
+  draft (`"draft_from_*"`), and any other from its record. It asks two queries more, for the
+  pages' items and their records. A menu a run does not write, one WordPress did not change, is
+  not asked about.
+
   ## A second run
 
   A re-run is held to the rules every target is: a menu the source did not change is
@@ -73,9 +96,10 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Authoring.Tree.{Node, Serializer}
-  alias MishkaCmsCore.Runtime.Layout
+  alias MishkaCmsCore.Runtime.{Languages, Layout, Page, PageEditions}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source, Target}
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Targets.CmsPage
   alias MishkaCmsMigration.Targets.Helpers.Read
 
   @layout "site-main"
@@ -92,11 +116,32 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   def existing(items, context), do: Map.new(items, &{&1.source_id, placed(&1, context)})
 
   @impl MishkaCmsMigration.Target
-  def prepare(item, context, write), do: write.(%{context | prepared: addresses(item, context)})
+  def prepare(item, context, write) do
+    linked = linked(item, context)
+
+    drafts =
+      linked
+      |> Enum.filter(&match?({{"page", _id}, %Page{active: false}}, &1))
+      |> unanswered(context)
+
+    with :ok <- drafted(drafts, item, context),
+         do: write.(%{context | prepared: %{linked: linked, drafts: drafts}})
+  end
 
   @impl MishkaCmsMigration.Target
-  def attrs(item, %{record: layout, prepared: addresses, source_host: host}),
-    do: %{template: navigated(layout.template, navigation(item.attrs["items"], addresses, host))}
+  def waiting(item, context),
+    do:
+      item |> planned_drafts(context) |> unanswered(context) |> drafted(item, context) |> waited()
+
+  @impl MishkaCmsMigration.Target
+  def attrs(item, %{record: layout, prepared: prepared, source_host: host} = context) do
+    addresses =
+      context
+      |> Target.decision(item, "draft_pages")
+      |> settled(prepared, context)
+
+    %{template: navigated(layout.template, navigation(item.attrs["items"], addresses, host))}
+  end
 
   @impl MishkaCmsMigration.Target
   def note(_item, %{mode: :dry_run}), do: nil
@@ -158,30 +203,145 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   defp without(id, tree), do: tree |> Tree.delete(id) |> elem(1)
 
-  defp addresses(item, context),
+  defp settled("import", %{linked: linked, drafts: drafts}, context) do
+    Enum.each(drafts, fn {_key, page} -> published!(page, context) end)
+    addresses(linked)
+  end
+
+  defp settled("keep", %{linked: linked, drafts: drafts}, _context),
+    do: linked |> addresses() |> Map.merge(Map.new(drafts, fn {key, _page} -> {key, nil} end))
+
+  defp settled(_decision, %{linked: linked}, _context), do: addresses(linked)
+
+  defp published!(page, context),
+    do:
+      page
+      |> Ash.Changeset.for_update(:update, %{active: true},
+        actor: context.actor,
+        tenant: context.site_id
+      )
+      |> Ash.update!()
+
+  defp drafted([], _item, _context), do: :ok
+
+  defp drafted(drafts, item, context),
+    do: context |> Target.decision(item, "draft_pages") |> undecided(drafts, item)
+
+  defp undecided(nil, drafts, item), do: {:undecided, "draft_pages: " <> labels(drafts, item)}
+  defp undecided(_decided, _drafts, _item), do: :ok
+
+  defp waited(:ok), do: nil
+  defp waited(undecided), do: undecided
+
+  defp labels(drafts, item) do
+    keys = Map.new(drafts, fn {key, _page} -> {key, true} end)
+
+    item.attrs["items"]
+    |> entries()
+    |> Enum.filter(&is_map_key(keys, {&1["kind"], &1["id"]}))
+    |> Enum.map(& &1["title"])
+    |> Enum.uniq()
+    |> Enum.join(", ")
+  end
+
+  defp unanswered([], _context), do: []
+
+  defp unanswered(drafts, context) do
+    answered =
+      Page
+      |> Ash.Query.filter(active == true)
+      |> Ash.Query.select([:path, :language, :extra, :site_id])
+      |> Read.call(context)
+      |> Enum.flat_map(&PageEditions.urls(&1, context.site_id))
+      |> MapSet.new()
+
+    Enum.reject(drafts, fn {_key, page} ->
+      page |> PageEditions.urls(context.site_id) |> Enum.any?(&MapSet.member?(answered, &1))
+    end)
+  end
+
+  defp planned_drafts(item, context) do
+    links =
+      for %{"kind" => "page", "id" => id} = entry <- entries(item.attrs["items"]),
+          into: %{},
+          do: {id, entry["url"]}
+
+    pages = pages(Map.keys(links), context)
+    records = pages |> Enum.map(& &1.target_id) |> Enum.reject(&is_nil/1) |> page_records(context)
+
+    for page <- pages,
+        draft = planned_draft(page, records[page.target_id], links[page.source_id], context),
+        do: {{"page", page.source_id}, draft}
+  end
+
+  defp planned_draft(%{plan: plan} = page, record, link, context)
+       when plan in [:created, :updated],
+       do: page |> drafted_by_run?(context) |> would_be(record || unwritten(page, link, context))
+
+  defp planned_draft(_page, %Page{active: false} = record, _link, _context), do: record
+  defp planned_draft(_page, _record, _link, _context), do: nil
+
+  defp drafted_by_run?(_page, %{options: %{pages: "draft"}}), do: true
+
+  defp drafted_by_run?(%{plan_reason: reason}, _context) when is_binary(reason),
+    do: String.contains?(reason, "draft_from_")
+
+  defp drafted_by_run?(_page, _context), do: false
+
+  defp would_be(true, page), do: page
+  defp would_be(false, _page), do: nil
+
+  defp unwritten(page, link, context),
+    do: %{
+      path: CmsPage.written_path(link, page),
+      language: Languages.primary(context.site_id),
+      extra: %{}
+    }
+
+  defp pages([], _context), do: []
+
+  defp pages(ids, context),
+    do:
+      MigrationItem
+      |> Ash.Query.filter(
+        source_host == ^context.source_host and source_kind == "page" and source_id in ^ids and
+          not left_out
+      )
+      |> Read.call(context)
+
+  defp page_records([], _context), do: %{}
+
+  defp page_records(ids, context),
+    do: Page |> Ash.Query.filter(id in ^ids) |> Read.call(context) |> Map.new(&{&1.id, &1})
+
+  defp addresses(linked),
+    do:
+      for(
+        {{kind, _id} = key, record} <- linked,
+        address = MigrationRun.record_address(kind, record),
+        into: %{},
+        do: {key, address}
+      )
+
+  defp linked(item, context),
     do:
       item
       |> written(context)
       |> Enum.group_by(& &1.source_kind)
-      |> Enum.flat_map(fn {kind, items} ->
-        kind |> Target.fetch() |> addressed(items, context)
-      end)
+      |> Enum.flat_map(fn {kind, items} -> kind |> Target.fetch() |> records(items, context) end)
       |> Map.new()
 
-  defp addressed({:ok, target}, [%{source_kind: kind} | _] = items, context) do
+  defp records({:ok, target}, [%{source_kind: kind} | _] = items, context) do
     records =
       target.resource()
       |> Ash.Query.filter(id in ^Enum.map(items, & &1.target_id))
       |> Read.call(context)
       |> Map.new(&{&1.id, &1})
 
-    for item <- items,
-        record = records[item.target_id],
-        address = MigrationRun.record_address(kind, record),
-        do: {{kind, item.source_id}, address}
+    for item <- items, record = records[item.target_id], do: {{kind, item.source_id}, record}
   end
 
-  defp addressed({:error, :not_installed}, _items, _context), do: []
+  defp records({:error, :not_installed}, _items, _context), do: []
 
   defp written(item, context),
     do: item.attrs["items"] |> entries() |> Enum.flat_map(&reference/1) |> written_items(context)
@@ -209,7 +369,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   defp destination(%{"kind" => kind, "id" => id}, found, _host)
        when is_map_key(found, {kind, id}),
-       do: {:navigate, Map.fetch!(found, {kind, id})}
+       do: found |> Map.fetch!({kind, id}) |> navigate()
 
   defp destination(%{"url" => url}, _found, host) when is_binary(url) do
     url = String.trim(url)
@@ -217,6 +377,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   end
 
   defp destination(_entry, _found, _host), do: nil
+
+  defp navigate(nil), do: nil
+  defp navigate(address), do: {:navigate, address}
 
   defp kept(%URI{path: path, query: nil}, _url, true) when path in [nil, "", "/"],
     do: {:navigate, "/"}

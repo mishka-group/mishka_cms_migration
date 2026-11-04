@@ -58,8 +58,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     It is the address the run writes the post at, so a post that links to one listed after it
     points at it too. Its `"pages"` name the links of its content that point at a page of the
     source, and each points at the path that page is written at instead, keeping its `?query` and
-    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/2`): `http://old.example/contact/` is
-    `/contact`. Any other link is kept as it is: a category, a file, an outside site, a post or
+    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/3`): `http://old.example/contact/` is
+    `/contact`, or `/contact-29` once an admin decided to import that page as new beside the
+    site's own. Any other link is kept as it is: a category, a file, an outside site, a post or
     page the source no longer has, or a post an admin left out, found by the slug its item recorded
     (`MishkaCmsMigration.MigrationItem`'s `source_slug`), which keeps its old address.
 
@@ -92,9 +93,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     allowed on the site before the post is written, in an import only, as the admin
     (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them
     (`"frames_allowed: <origins>"`), in the dry run too. For an admin who may not change the site's
-    settings the post waits for an admin's decision (`"player_not_allowed"`): Wait for an admin
-    keeps it for a run by one who may, and Import without the player writes it with that player
-    left out (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
+    settings the post waits for an admin's decision (`"player_not_allowed"`), in the dry run too
+    (`waiting/2`), also a post an earlier import wrote: Wait for an admin keeps it for a run by one
+    who may, and Import without the player writes it with that player left out
+    (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
     leaves out its other attributes, such as `allowfullscreen`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
@@ -128,7 +130,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> Item.html()
           |> Frames.playable(context)
           |> relinked(item.attrs["links"], context)
-          |> CmsPage.relinked(item.attrs["pages"])
+          |> CmsPage.relinked(item.attrs["pages"], context)
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),
@@ -158,18 +160,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
-    def existing(items, context),
-      do:
-        for(
-          item <- items,
-          found = Frames.waiting(item, context),
-          into: %{},
-          do: {item.source_id, found}
-        )
-
-    @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
       do: with(:ok <- Frames.call(item, context), do: write.(context))
+
+    @impl MishkaCmsMigration.Target
+    def waiting(item, context), do: Frames.waiting(item, context)
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
