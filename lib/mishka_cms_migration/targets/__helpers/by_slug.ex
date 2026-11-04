@@ -6,10 +6,11 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   @moduledoc """
   The `existing/2` (`MishkaCmsMigration.Target`) of a target whose resource keeps one record per
   slug on a site, such as the Blog's tags and categories: an item whose slug the run's site already
-  holds a record with, in the language the site leads with, waits for an admin's decision as
-  `"slug_taken"` (`MishkaCmsMigration.MigrationItem`'s Decide…). Connect to the existing record
-  connects the item to it (`"keep"`), and Import as new with another slug (`"import"`) writes it as
-  its own, with the slug `wanted/2` makes and the report saying so (`note/2`, `"another_slug"`).
+  holds a record with, in any language, as the Blog keeps one slug per site, waits for an admin's
+  decision as `"slug_taken"` (`MishkaCmsMigration.MigrationItem`'s Decide…). Connect to the existing
+  record connects the item to it (`"keep"`), and Import as new with another slug (`"import"`) writes
+  it as its own, with the slug `wanted/2` makes and the report saying so (`note/2`,
+  `"another_slug"`).
 
   The slug is made the way the resource stores it. A WordPress slug arrives decoded, and the
   resource's `:create` runs its `slugify` over what it is given, so an item with the slug
@@ -19,7 +20,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
 
   A target whose records are found so, such as the Blog's categories and tags, says
   `use MishkaCmsMigration.Targets.Helpers.BySlug` after `use MishkaCmsMigration.Target`: its
-  `existing/2` is `call/3` and its `note/2` is `note/2`, and its `attrs/2` writes the slug
+  `existing/2` is `call/3`, its `note/2` says what `note/2` says, and its `attrs/2` writes the slug
   `wanted/2` makes.
 
   The records are read by `MishkaCmsMigration.Targets.Helpers.Read`. `slug/2` is that slug alone,
@@ -31,7 +32,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   require Ash.Query
 
   alias Ash.Resource.Info
-  alias MishkaCmsCore.Runtime.{Helpers, Languages}
+  alias MishkaCmsCore.Runtime.Helpers
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.Helpers.Read
@@ -42,9 +43,6 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
       @impl MishkaCmsMigration.Target
       def existing(items, context),
         do: MishkaCmsMigration.Targets.Helpers.BySlug.call(__MODULE__, items, context)
-
-      @impl MishkaCmsMigration.Target
-      def note(item, context), do: MishkaCmsMigration.Targets.Helpers.BySlug.note(item, context)
     end
   end
 
@@ -127,12 +125,10 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
 
   defp held([], _resource, _context), do: %{}
 
-  defp held(slugs, resource, context) do
-    language = Languages.primary(context.site_id)
-
-    resource
-    |> Ash.Query.filter(slug in ^slugs and language == ^language)
-    |> Read.call(context)
-    |> Map.new(&{&1.slug, &1})
-  end
+  defp held(slugs, resource, context),
+    do:
+      resource
+      |> Ash.Query.filter(slug in ^slugs)
+      |> Read.call(context)
+      |> Map.new(&{&1.slug, &1})
 end

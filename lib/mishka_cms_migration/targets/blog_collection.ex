@@ -15,10 +15,12 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     (an empty description is none), and its parent the category's parent category: the walk writes
     the parent first, whichever the source lists first, so a nested category lands under the one
     it sat under (`MishkaCmsMigration.Target`, "An item's parent"). A category is active, as a
-    WordPress category is live once it exists, and in the language the site leads with
-    (`MishkaCmsCore.Runtime.Languages.primary/1`): a WordPress term has no language of its own.
+    WordPress category is live once it exists, and in the language the item names
+    (a site that runs Polylang or WPML names one), joined as one group with the categories that are
+    its other editions, or, for an item that names none, in the language the site leads with
+    (`MishkaCmsMigration.Targets.Helpers.Editions`).
 
-    A category the run's site already has, with the slug as the Blog writes it and in that language,
+    A category the run's site already has, with the slug as the Blog writes it, in any language,
     waits for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.Targets.Helpers.BySlug`).
     Connect to the existing record makes the item that category: it is not written, the posts that
     name it are linked to it, the categories that sat under it in the source go under it, the
@@ -38,8 +40,7 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
 
     use MishkaCmsMigration.Targets.Helpers.BySlug
 
-    alias MishkaCmsCore.Runtime.Languages
-    alias MishkaCmsMigration.Targets.Helpers.BySlug
+    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Editions}
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
@@ -48,10 +49,13 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
         slug: BySlug.wanted(item, context),
         description: description(item.attrs["description"]),
         status: :active,
-        language: Languages.primary(context.site_id),
         parent_collection_id: context.parent_id
       }
+      |> Map.merge(Editions.attrs(item, context, MishkaBlog.Collection))
     end
+
+    @impl MishkaCmsMigration.Target
+    def note(item, context), do: Editions.note(item, context, BySlug.note(item, context))
 
     defp description(""), do: nil
     defp description(description), do: description

@@ -2061,6 +2061,16 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("waits_for_language_urls"),
     do: dgettext("mishka_gervaz", "Waits for the site's language addresses, as you decided")
 
+  defp said("translations: " <> languages),
+    do:
+      dgettext("mishka_gervaz", "The original of its translations: %{languages}",
+        languages:
+          languages |> String.split(", ") |> Enum.map(&language_name/1) |> Languages.join()
+      )
+
+  defp said("translation_of: " <> original),
+    do: dgettext("mishka_gervaz", "Translation of %{original}", original: original)
+
   defp said("waits_for_blog"),
     do: dgettext("mishka_gervaz", "Waits for Mishka Blog, as you decided")
 
@@ -2121,6 +2131,8 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "Still at its old address: %{titles}", titles: titles)
 
   defp said(reason), do: reason
+
+  defp language_name(code), do: Languages.name(code) || code
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

@@ -13,8 +13,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     An item's `"from"` is the address the post had at the source, such as `/2025/12/hello/`, and the
     rule sends it, with a 301, to where the Blog serves the post the same run or an earlier one
-    wrote for that source id (`MishkaCmsMigration.Targets.BlogPost.address/3`): `/blog/hello` in
-    the language the site leads with.
+    wrote for that source id (`MishkaCmsMigration.Targets.BlogPost.address/3`): `/blog/hello` for a
+    post in the language the site leads with, `/fa/blog/salam` for one in Persian.
 
     ## Which items
 
