@@ -2025,6 +2025,43 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 
+  defp said("scripts: " <> found),
+    do:
+      dgettext("mishka_gervaz", "Contains scripts or inline event handlers: %{found}",
+        found: found
+      )
+
+  defp said("scripts_removed: " <> found),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its scripts and inline event handlers removed, as you decided: %{found}",
+        found: found
+      )
+
+  defp said("scripts_kept: " <> found),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its scripts and inline event handlers kept, as you decided: %{found}",
+        found: found
+      )
+
+  defp said("unsupported_widgets: " <> names),
+    do: dgettext("mishka_gervaz", "Widgets the CMS has no equivalent for: %{names}", names: names)
+
+  defp said("no_fallback: " <> names),
+    do:
+      dgettext("mishka_gervaz", "No fallback available for %{names}, so they are left out",
+        names: names
+      )
+
+  defp said("fallback_html: " <> names),
+    do:
+      dgettext("mishka_gervaz", "Imported with the fallback HTML for %{names}, as you decided",
+        names: names
+      )
+
   defp said("unconverted: " <> names),
     do: dgettext("mishka_gervaz", "Kept as text: %{names}", names: names)
 

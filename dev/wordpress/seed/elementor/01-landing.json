@@ -1,0 +1,176 @@
+{
+  "type": "page",
+  "slug": "elementor-landing",
+  "status": "publish",
+  "date": "2026-05-02 09:00:00",
+  "author": "shahryar",
+  "title": "Elementor landing page",
+  "settings": { "template": "elementor_header_footer" },
+  "elements": [
+    {
+      "id": "5a1e001",
+      "elType": "section",
+      "isInner": false,
+      "settings": { "structure": "10" },
+      "elements": [
+        {
+          "id": "5a1e002",
+          "elType": "column",
+          "isInner": false,
+          "settings": { "_column_size": 100 },
+          "elements": [
+            {
+              "id": "5a1e003",
+              "elType": "widget",
+              "widgetType": "heading",
+              "settings": { "title": "Move your WordPress site to Mishka CMS", "header_size": "h1", "align": "center" },
+              "elements": []
+            },
+            {
+              "id": "5a1e004",
+              "elType": "widget",
+              "widgetType": "text-editor",
+              "settings": {
+                "editor": "<p>Every part of this page was laid out with Elementor. Read <a href=\"{{link:about}}\">about the team</a>, or start with the <a href=\"{{link:welcome-to-the-mishka-test-blog}}\">welcome post</a>.</p>\n<p>A second paragraph, with <strong>bold</strong> and <em>italic</em> words.</p>"
+              },
+              "elements": []
+            },
+            {
+              "id": "5a1e005",
+              "elType": "widget",
+              "widgetType": "button",
+              "settings": {
+                "text": "Contact us",
+                "link": { "url": "{{link:contact}}", "is_external": "", "nofollow": "", "custom_attributes": "" },
+                "align": "center",
+                "size": "md"
+              },
+              "elements": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5a1e010",
+      "elType": "section",
+      "isInner": false,
+      "settings": { "structure": "20" },
+      "elements": [
+        {
+          "id": "5a1e011",
+          "elType": "column",
+          "isInner": false,
+          "settings": { "_column_size": 50 },
+          "elements": [
+            {
+              "id": "5a1e012",
+              "elType": "widget",
+              "widgetType": "image",
+              "settings": {
+                "image": { "url": "{{url:hero}}", "id": "{{id:hero}}", "size": "", "alt": "A blue gradient hero image with a white circle", "source": "library" },
+                "image_size": "large",
+                "caption_source": "custom",
+                "caption": "The hero image, from the media library",
+                "link_to": "file"
+              },
+              "elements": []
+            }
+          ]
+        },
+        {
+          "id": "5a1e013",
+          "elType": "column",
+          "isInner": false,
+          "settings": { "_column_size": 50 },
+          "elements": [
+            {
+              "id": "5a1e014",
+              "elType": "widget",
+              "widgetType": "heading",
+              "settings": { "title": "What comes across", "header_size": "h2" },
+              "elements": []
+            },
+            {
+              "id": "5a1e015",
+              "elType": "widget",
+              "widgetType": "icon-list",
+              "settings": {
+                "icon_list": [
+                  { "_id": "f1a0001", "text": "Pages and their layout", "selected_icon": { "value": "fas fa-check", "library": "fa-solid" }, "link": { "url": "" } },
+                  { "_id": "f1a0002", "text": "Posts, categories and tags", "selected_icon": { "value": "fas fa-check", "library": "fa-solid" }, "link": { "url": "{{link:blog}}" } },
+                  { "_id": "f1a0003", "text": "Read the documentation", "selected_icon": { "value": "fas fa-book", "library": "fa-solid" }, "link": { "url": "{{link:docs}}" } }
+                ]
+              },
+              "elements": []
+            },
+            {
+              "id": "5a1e016",
+              "elType": "widget",
+              "widgetType": "image",
+              "settings": {
+                "image": { "url": "{{url:diagram}}", "id": "{{id:diagram}}", "size": "", "alt": "WordPress, Normalize and Mishka CMS boxes joined by arrows", "source": "library" },
+                "image_size": "medium",
+                "link_to": "none"
+              },
+              "elements": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5a1e020",
+      "elType": "section",
+      "isInner": false,
+      "settings": { "structure": "10" },
+      "elements": [
+        {
+          "id": "5a1e021",
+          "elType": "column",
+          "isInner": false,
+          "settings": { "_column_size": 100 },
+          "elements": [
+            { "id": "5a1e022", "elType": "widget", "widgetType": "divider", "settings": {}, "elements": [] },
+            { "id": "5a1e023", "elType": "widget", "widgetType": "spacer", "settings": { "space": { "unit": "px", "size": 40, "sizes": [] } }, "elements": [] },
+            {
+              "id": "5a1e024",
+              "elType": "widget",
+              "widgetType": "video",
+              "settings": { "youtube_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw" },
+              "elements": []
+            },
+            {
+              "id": "5a1e025",
+              "elType": "section",
+              "isInner": true,
+              "settings": { "structure": "20" },
+              "elements": [
+                {
+                  "id": "5a1e026",
+                  "elType": "column",
+                  "isInner": true,
+                  "settings": { "_column_size": 50 },
+                  "elements": [
+                    { "id": "5a1e027", "elType": "widget", "widgetType": "heading", "settings": { "title": "Before", "header_size": "h3" }, "elements": [] },
+                    { "id": "5a1e028", "elType": "widget", "widgetType": "text-editor", "settings": { "editor": "A WordPress site with Elementor pages.\n\nTwo paragraphs written the classic way." }, "elements": [] }
+                  ]
+                },
+                {
+                  "id": "5a1e029",
+                  "elType": "column",
+                  "isInner": true,
+                  "settings": { "_column_size": 50 },
+                  "elements": [
+                    { "id": "5a1e02a", "elType": "widget", "widgetType": "heading", "settings": { "title": "After", "header_size": "h3", "link": { "url": "{{link:getting-started}}", "is_external": "", "nofollow": "" } }, "elements": [] },
+                    { "id": "5a1e02b", "elType": "widget", "widgetType": "html", "settings": { "html": "<p class=\"note\">The same page in Mishka CMS, open in its page builder.</p>" }, "elements": [] }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

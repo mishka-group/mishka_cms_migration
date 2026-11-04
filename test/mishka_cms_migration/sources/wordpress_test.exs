@@ -893,6 +893,29 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   end
 
   describe "a post's content" do
+    test "drops javascript:, vbscript: and data: addresses but an image's, in blocks and classic text" do
+      raw = """
+      <!-- wp:paragraph --><p><a href=" javascript:alert(1)">a</a> <a href="/kept">b</a></p><!-- /wp:paragraph -->
+      <!-- wp:html --><form action="vbscript:x"><button formaction="javascript:y">c</button></form><!-- /wp:html -->
+      <p><img src="data:image/gif;base64,R0lGOD"><iframe src="data:text/html,x"></iframe>
+      <video poster="javascript:z" src="/v.mp4"></video></p>
+      """
+
+      html =
+        raw
+        |> Content.call(fn _route, _ids -> %{} end)
+        |> Enum.map_join(& &1.html)
+        |> LazyHTML.from_fragment()
+
+      addresses =
+        for name <- ~w(href src action formaction poster),
+            address <- html |> LazyHTML.query("[#{name}]") |> LazyHTML.attribute(name),
+            do: address
+
+      assert addresses == ["/kept", "data:image/gif;base64,R0lGOD", "/v.mp4"]
+      assert html |> LazyHTML.query("a, form, button, iframe, video") |> Enum.count() == 6
+    end
+
     test "keeps its core blocks as their HTML, without WordPress's classes and block comments" do
       post = items!("post")["33"]
       html = html(post)

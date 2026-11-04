@@ -15,6 +15,8 @@ cd dev/wordpress
 docker compose up -d --wait   # http://localhost:8089
 ./seed.sh                     # installs and fills the site; safe to run again; writes .env.local
 ./record.sh                   # records the REST responses and the WXR export as test fixtures
+./seed_elementor.sh           # adds Elementor and the entries laid out with it (below)
+./record_elementor.sh         # records those entries beside the other fixtures
 docker compose down -v        # stops it and deletes the site (named volumes included)
 ```
 
@@ -67,6 +69,26 @@ Record on a clean site (`down -v`, `./seed.sh` twice, `./record.sh`) and only fr
 adding bulk content, so the fixtures stay small and the same. The second seed run changes nothing but the links
 the first one wrote before every post existed: a file's attachment page then sits under the post it is attached
 to, and the export's `<link>` is the site's home.
+
+## Elementor
+
+`seed_elementor.sh` runs after `seed.sh` and adds Elementor (the free plugin) and the entries laid out with it,
+`seed/elementor/*.json` (each one's fields and its elements in the shape Elementor saves them): a page of
+sections, columns and an inner section with every common widget, a page of containers with widgets the CMS has
+no equivalent for (Elementor Pro's form and slides, an image carousel, a map), and a post of containers. Each is
+saved through Elementor's own document API, so `_elementor_data`, its edit mode and the HTML fallback in
+`post_content` are what Elementor writes; the Pro widgets, which Elementor drops on a site without Pro, are put
+back where they were. It touches nothing else, the passwords and `.env.local` included, so it runs on a site
+already in use, and a second run changes nothing but those entries.
+
+`record_elementor.sh` records only these entries, beside what `record.sh` made: `rest/elementor-pages.*`,
+`rest/elementor-posts.*` and `wxr/elementor.xml` (an export of them alone), with its rows in `rest/INDEX.txt`
+and the Elementor version in `VERSIONS.txt`. On a clean site record the curated seed first, then these:
+
+```sh
+docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh
+./seed_elementor.sh && ./record_elementor.sh
+```
 
 ## Bulk content
 

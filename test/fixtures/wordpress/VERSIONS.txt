@@ -9,3 +9,4 @@ Plugins:
   wordpress-seo active 28.8
 Site: timezone Asia/Tehran, permalinks /%year%/%monthnum%/%postname%/
 Application passwords need WP_ENVIRONMENT_TYPE=local on plain HTTP; in production they need HTTPS.
+Elementor fixtures (record_elementor.sh): 2026-11-04T18:00:20Z, Elementor 4.3.6

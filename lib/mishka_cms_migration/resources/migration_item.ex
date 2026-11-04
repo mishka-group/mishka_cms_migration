@@ -150,7 +150,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
     "draft_pages" => ["keep", "import"],
-    "language_urls" => ["keep", "import"]
+    "language_urls" => ["keep", "import"],
+    "unsupported_widgets" => ["import", "leave_out"],
+    "scripts" => ["import", "trust"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1140,8 +1142,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   def settled?(_item), do: false
 
   @doc """
-  What an admin may answer `conflict` with: `"keep"` and `"import"`, or `"keep"` and
-  `"leave_out"`; none for `nil` or a conflict this extension does not know.
+  What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
+  `"import"` and `"leave_out"`, or, for scripts, `"import"` (remove them) and `"trust"` (keep
+  them), which no bulk choice makes; none for `nil` or a conflict this extension does not know.
   """
   @spec choices(String.t() | nil) :: [String.t()]
   def choices(conflict), do: Map.get(@choices, conflict, [])
@@ -1301,6 +1304,17 @@ defmodule MishkaCmsMigration.MigrationItem do
           "%{count} left as they were: nothing on them takes this choice.",
           left
         )
+
+  defp choice_word("scripts", "import"), do: dgettext("mishka_gervaz", "Remove them")
+
+  defp choice_word("scripts", "trust"),
+    do: dgettext("mishka_gervaz", "Keep them (I trust this content)")
+
+  defp choice_word("unsupported_widgets", "import"),
+    do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")
+
+  defp choice_word("unsupported_widgets", "leave_out"),
+    do: dgettext("mishka_gervaz", "Leave the page out")
 
   defp choice_word("site_has_own", "keep"), do: dgettext("mishka_gervaz", "Keep the site's own")
 
