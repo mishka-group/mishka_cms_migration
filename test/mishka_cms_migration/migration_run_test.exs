@@ -139,6 +139,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                "authors" => "connect",
                "pages" => "publish",
                "post_address" => "blog",
+               "confirm_users" => true,
                "comments" => false
              }
 
@@ -147,6 +148,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                 authors: "connect",
                 pages: "publish",
                 post_address: "blog",
+                confirm_users: true,
                 comments: false
               }} =
                Options.builder(stored)

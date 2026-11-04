@@ -32,11 +32,18 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
       * no user, under `"create"` — a user of the site is created first, inside the blogger's
         transaction, through the core's `:tenant_create` (the action an admin's own New user form
         runs) as the admin, who needs the core's `admin:dashboard:user`: with no permission,
-        unconfirmed, and a password of 32 random bytes that is neither kept nor shown, so nobody
-        can sign in with it until the person sets their own through Forgot password. The core sends
-        its own "Confirm your email address" email, as for any account an admin makes. An address
-        the installation already has, such as a master's or another site's user's, is refused by
-        the core and the item fails with its reason.
+        and a password of 32 random bytes that is neither kept nor shown, so nobody can sign in
+        with it: WordPress's password hashes cannot be carried over, so the person uses Forgot
+        password or a social sign-in. The core's "Confirm your email address" mail is not sent (the
+        changeset carries `mishka_install: true`, which its sender skips). By the run's
+        `confirm_users` choice the user is then confirmed through the core's `:confirm_pending`
+        (the default), or left unconfirmed for an admin to confirm from the Users table's bulk
+        Confirm email. An address the installation already has, such as a master's or another
+        site's user's, is refused by the core and the item fails with its reason.
+
+    The import's report says `"user_created"` for a blogger whose user it made (`note/2`), which
+    `MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice` warns about on the run and on the
+    item.
 
     A re-run writes the profile over a blogger it created, as any target does, and never changes
     whose profile it is: the user is named on create only.
@@ -67,6 +74,15 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
           into: %{},
           do: {item.source_id, found}
     end
+
+    @impl MishkaCmsMigration.Target
+    def note(item, %{mode: :import, record: nil, options: %{authors: "create"}} = context),
+      do: item |> email() |> users(context) |> created()
+
+    def note(_item, _context), do: nil
+
+    defp created(users) when map_size(users) == 0, do: "user_created"
+    defp created(_users), do: nil
 
     @impl MishkaCmsMigration.Target
     def attrs(item, %{record: nil} = context),
@@ -110,9 +126,22 @@ if Code.ensure_loaded?(MishkaBlog.Blogger) do
         actor: context.actor,
         tenant: context.site_id
       )
+      |> Ash.Changeset.set_context(%{mishka_install: true})
       |> Ash.create!()
+      |> confirmed!(context)
       |> Map.fetch!(:id)
     end
+
+    defp confirmed!(user, %{options: %{confirm_users: true}} = context),
+      do:
+        user
+        |> Ash.Changeset.for_update(:confirm_pending, %{},
+          actor: context.actor,
+          tenant: context.site_id
+        )
+        |> Ash.update!()
+
+    defp confirmed!(user, _context), do: user
 
     @doc """
     The users of the run's site with these `emails`, by lowercase email, read as the admin running

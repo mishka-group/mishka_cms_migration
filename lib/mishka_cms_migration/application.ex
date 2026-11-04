@@ -51,6 +51,8 @@ defmodule MishkaCmsMigration.Application do
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
+  @admin_plugins [MishkaCmsMigrationWeb.SettingsPanel, MishkaCmsMigrationWeb.BlogAction]
+
   @activity_sources [MishkaCmsMigration.Activity]
 
   @provision_plugins [MishkaCmsMigration.Provision]
@@ -98,7 +100,12 @@ defmodule MishkaCmsMigration.Application do
   """
   @spec plugins() :: [module()]
   def plugins,
-    do: sources() ++ targets() ++ @provision_plugins ++ @sidebar_menus ++ @activity_sources
+    do:
+      sources() ++
+        targets() ++
+        @provision_plugins ++
+        @sidebar_menus ++
+        @admin_plugins ++ @activity_sources
 
   @impl true
   def start(_type, _args) do

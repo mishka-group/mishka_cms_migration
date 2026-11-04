@@ -18,6 +18,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   use MishkaCmsMigration.DataCase, async: false
 
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
+  import Phoenix.LiveViewTest, only: [render_component: 2]
+  import Swoosh.TestAssertions
 
   alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
   alias MishkaCmsCore.Accounts.User
@@ -29,6 +31,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.{BlogTag, PostRedirect}
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:blog:post", "admin:dashboard:setting"]
@@ -588,8 +591,42 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     end
   end
 
+  defp flush_emails do
+    receive do
+      {:email, _email} -> flush_emails()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp item!(site, kind, source_id) do
+    MigrationItem
+    |> Ash.read!(tenant: site.id, authorize?: false)
+    |> Enum.find(&(&1.source_kind == kind and (is_nil(source_id) or &1.source_id == source_id)))
+  end
+
   describe "authors" do
     setup %{site: site}, do: %{admin: migration_admin!(site, @people)}
+
+    test "the control: a user made with the core's action and no install tag is mailed to confirm",
+         %{site: site, admin: admin} do
+      flush_emails()
+
+      User
+      |> Ash.Changeset.for_create(
+        :tenant_create,
+        %{
+          email: "control@example.test",
+          password: "Password123!",
+          password_confirmation: "Password123!"
+        },
+        actor: admin,
+        tenant: site.id
+      )
+      |> Ash.create!()
+
+      assert_email_sent(to: "control@example.test")
+    end
 
     test "a dry run plans a blogger for the author whose email is a user of the site, skips the others as having no user, and writes nothing in the CMS",
          %{site: site, admin: admin} do
@@ -652,10 +689,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert site |> bloggers() |> Map.values() |> Enum.map(&kept/1) == [kept(own)]
     end
 
-    test "under create, an author with no user gets a new user of the site, unconfirmed, with no permission and no password anyone knows, and a blogger",
+    test "under create, an author with no user gets a new user of the site, unconfirmed when the run does not confirm, with no permission and no password anyone knows, and a blogger",
          %{site: site, admin: admin} do
       editor = create_user!(email: @editor, site_id: site.id)
-      run = imported!(site, admin, %{authors: "create"})
+      run = imported!(site, admin, %{authors: "create", confirm_users: false})
       wordpress = emails("users")
       accounts = accounts(site)
 
@@ -689,6 +726,90 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       end
 
       assert bloggers["omid"].display_name == "امید رحیمی"
+    end
+
+    test "the users an import creates get no confirmation mail, and are confirmed by default",
+         %{site: site, admin: admin} do
+      create_user!(email: @editor, site_id: site.id)
+      flush_emails()
+
+      run = imported!(site, admin, %{authors: "create"})
+
+      refute_email_sent()
+
+      made = Map.take(accounts(site), Map.keys(emails("users")) -- [@editor])
+      assert map_size(made) == map_size(emails("users")) - 1
+      assert Enum.all?(Map.values(made), & &1.confirmed_at)
+
+      assert [{:created, nil}, {:created, "user_created"}] ==
+               run |> outcomes("user") |> Map.values() |> Enum.uniq() |> Enum.sort()
+    end
+
+    test "under a run that does not confirm, the users are made with no mail and stay unconfirmed for an admin to confirm",
+         %{site: site, admin: admin} do
+      flush_emails()
+
+      imported!(site, admin, %{authors: "create", confirm_users: false})
+
+      refute_email_sent()
+      made = Map.take(accounts(site), Map.keys(emails("users")))
+      assert map_size(made) == map_size(emails("users"))
+      assert Enum.all?(Map.values(made), &is_nil(&1.confirmed_at))
+
+      [user | _others] = Map.values(made)
+
+      confirmed =
+        user
+        |> Ash.Changeset.for_update(:confirm_pending, %{}, actor: admin, tenant: site.id)
+        |> Ash.update!()
+
+      assert confirmed.confirmed_at
+    end
+
+    test "a user the author already was is not a created user, and the run's warning counts only the made ones",
+         %{site: site, admin: admin} do
+      create_user!(email: @editor, site_id: site.id)
+      run = imported!(site, admin, %{authors: "create"})
+
+      assert %{"2" => {:created, nil}} = outcomes(run, "user")
+      assert PasswordNotice.created(run, admin) == map_size(emails("users")) - 1
+    end
+
+    test "a run that only connects, or only planned, has no created users",
+         %{site: site, admin: admin} do
+      dry = site |> wordpress_run!(admin, %{authors: "create"}) |> dry_run!(admin)
+
+      assert PasswordNotice.created(dry, admin) == 0
+      assert PasswordNotice.created(imported!(site, admin), admin) == 0
+    end
+
+    test "the run's warning says how many users were created and why they cannot sign in with a password",
+         %{site: site, admin: admin} do
+      run = imported!(site, admin, %{authors: "create"})
+      count = PasswordNotice.created(run, admin)
+      html = render_component(&PasswordNotice.run/1, count: count)
+
+      assert count == map_size(emails("users"))
+
+      assert html =~
+               "#{count} users were created. Their WordPress passwords can&#39;t be carried over: they sign in with Forgot password or a social sign-in."
+
+      assert html =~ "created-users-warning"
+      refute render_component(&PasswordNotice.run/1, count: 0) =~ "created-users-warning"
+    end
+
+    test "the item of a created user warns in its expanded row, and another item does not",
+         %{site: site, admin: admin} do
+      imported!(site, admin, %{authors: "create"})
+
+      user = item!(site, "user", "2")
+      html = render_component(&PasswordNotice.item/1, item: user)
+
+      assert html =~
+               "This user was created. Their WordPress password can&#39;t be carried over: they sign in with Forgot password or a social sign-in."
+
+      refute render_component(&PasswordNotice.item/1, item: item!(site, "category", nil)) =~
+               "created-user-warning"
     end
 
     test "a second run keeps every author's user and blogger, each unchanged", %{
@@ -742,7 +863,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       created = imported!(site, admin, %{authors: "create"})
 
-      assert %{"2" => {:created, nil}, "3" => {:created, nil}} = outcomes(created, "user")
+      assert %{"2" => {:created, "user_created"}, "3" => {:created, "user_created"}} =
+               outcomes(created, "user")
+
       own = accounts(site)
       bloggers = bloggers(site)
 

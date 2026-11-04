@@ -103,6 +103,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   require Ash.Query
 
+  alias MishkaCmsCore.Install.StarterContent
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Authoring.Tree.{Node, Serializer}
   alias MishkaCmsCore.Runtime.{Languages, Layout, Page, PageEditions}
@@ -115,11 +116,6 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   @header {"component_name", {:string, "site-header"}}
   @kinds ["page", "post", "category", "tag"]
   @schemes ["http", "https", "mailto", "tel"]
-  @braces %{"{" => "&lbrace;", "}" => "&rbrace;"}
-
-  @bar_link ~s(class="text-dim dark:text-dim-dark")
-  @menu_link ~s(role="menuitem" class="flex items-center rounded-[9px] px-[11px] py-[9px] text-[13px] font-medium text-fg hover:bg-wash dark:text-fg-dark dark:hover:bg-wash-dark")
-  @panel_link ~s(class="rounded-[9px] px-[11px] py-[9px] text-dim hover:bg-wash dark:text-dim-dark dark:hover:bg-wash-dark")
 
   @impl MishkaCmsMigration.Target
   def existing(items, context), do: Map.new(items, &{&1.source_id, placed(&1, context)})
@@ -416,93 +412,31 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp navigation(items, found, host) do
     items
     |> Enum.with_index(1)
-    |> Enum.map_join("\n", fn {entry, index} -> top(entry, index, found, host) end)
+    |> Enum.flat_map(fn {entry, index} -> top(entry, index, found, host) end)
+    |> StarterContent.nav_links()
   end
 
   defp top(%{"items" => [_ | _] = items} = entry, index, found, host) do
     links =
       for item <- [entry | entries(items)],
           destination = destination(item, found, host),
-          do: {item, destination}
+          do: nav_entry(item, destination)
 
-    group(entry["title"], links, index)
+    [%{label: title(entry), id: "#{index}", children: links}]
   end
 
   defp top(entry, _index, found, host),
-    do: entry |> destination(found, host) |> link(entry, @bar_link)
+    do: entry |> destination(found, host) |> top_link(entry)
 
-  defp link(nil, _entry, _style), do: ""
+  defp top_link(nil, _entry), do: []
+  defp top_link(destination, entry), do: [nav_entry(entry, destination)]
 
-  defp link(destination, entry, style),
-    do: ~s(<.link #{to(destination, entry)} #{style}>#{text(entry["title"])}</.link>)
+  defp nav_entry(entry, {:navigate, path}), do: %{label: title(entry), to: path}
 
-  defp to({:navigate, path}, _entry), do: ~s(navigate="#{attribute(path)}")
+  defp nav_entry(%{"new_tab" => true} = entry, {:href, url}),
+    do: %{label: title(entry), href: url, target: "_blank"}
 
-  defp to({:href, url}, %{"new_tab" => true}),
-    do: ~s(href="#{attribute(url)}" target="_blank" rel="noopener noreferrer")
+  defp nav_entry(entry, {:href, url}), do: %{label: title(entry), href: url}
 
-  defp to({:href, url}, _entry), do: ~s(href="#{attribute(url)}")
-
-  defp text(title),
-    do:
-      (title || "")
-      |> Phoenix.HTML.html_escape()
-      |> Phoenix.HTML.safe_to_string()
-      |> String.replace(Map.keys(@braces), &Map.fetch!(@braces, &1))
-
-  defp attribute(address),
-    do: URI.encode(address, &(URI.char_reserved?(&1) or URI.char_unreserved?(&1) or &1 == ?%))
-
-  defp group(_title, [], _index), do: ""
-
-  defp group(title, links, index) do
-    base = "site-nav-#{index}"
-    menu_items = Enum.map_join(links, "\n", fn {item, to} -> link(to, item, @menu_link) end)
-    panel_items = Enum.map_join(links, "\n", fn {item, to} -> link(to, item, @panel_link) end)
-
-    ~s"""
-    <div
-      phx-click-away={
-        Phoenix.LiveView.JS.hide(to: "##{base}-menu")
-        |> Phoenix.LiveView.JS.set_attribute({"aria-expanded", "false"}, to: "##{base}-button")
-      }
-      phx-window-keydown={
-        Phoenix.LiveView.JS.hide(to: "##{base}-menu")
-        |> Phoenix.LiveView.JS.set_attribute({"aria-expanded", "false"}, to: "##{base}-button")
-      }
-      phx-key="Escape"
-      class="relative max-lg:hidden"
-    >
-      <button
-        type="button"
-        id="#{base}-button"
-        aria-haspopup="menu"
-        aria-expanded="false"
-        phx-click={
-          Phoenix.LiveView.JS.toggle(to: "##{base}-menu")
-          |> Phoenix.LiveView.JS.toggle_attribute({"aria-expanded", "true", "false"})
-        }
-        class="flex h-[38px] cursor-pointer items-center gap-1.5 rounded-[11px] border border-edge bg-surface px-2.5 text-[13px] font-medium text-fg dark:border-edge-dark dark:bg-surface-dark dark:text-fg-dark"
-      >
-        <span>#{text(title)}</span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-faint dark:text-faint-dark">
-          <path d="M6 9l6 6 6-6"></path>
-        </svg>
-      </button>
-      <div
-        id="#{base}-menu"
-        role="menu"
-        class="absolute start-0 top-[46px] z-50 hidden min-w-[190px] overflow-hidden rounded-[14px] border border-edge bg-surface p-1.5 shadow-[0_18px_44px_rgba(30,28,24,0.16)] dark:border-edge-dark dark:bg-surface-dark dark:shadow-[0_18px_44px_rgba(0,0,0,0.5)]"
-      >
-    #{menu_items}
-      </div>
-    </div>
-    <div role="group" aria-labelledby="#{base}-label" class="flex flex-col gap-0.5 lg:hidden">
-      <span id="#{base}-label" class="px-[11px] pt-2 pb-1 text-[11.5px] font-semibold tracking-wide text-subtle uppercase dark:text-subtle-dark">
-        #{text(title)}
-      </span>
-    #{panel_items}
-    </div>
-    """
-  end
+  defp title(entry), do: entry["title"] || ""
 end

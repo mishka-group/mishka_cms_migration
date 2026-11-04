@@ -28,10 +28,13 @@ defmodule MishkaCmsMigration.MigrationRun do
       from each old address; `"blog_without_redirects"` serves them there with no redirect.
       Keeping a source's own address, such as WordPress's `/2025/12/hello/`, needs Mishka Blog to
       serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
+    * `:confirm_users` — whether the users the authors choice creates have their email confirmed;
+      `true` by default. Either way no "Confirm your email" mail is sent; a user left unconfirmed
+      is confirmed later from the Users table's bulk Confirm email.
     * `:comments` — whether comments come too; `false` by default. A comment by a user of the
       site, or by someone whose email is one, is written on its Blog post; a guest's is left out.
 
-  The authors choice is read by the Blog's author target and the post addresses by the redirect
+  The authors and confirm users choices are read by the Blog's author target and the post addresses by the redirect
   target (`MishkaCmsMigration.Targets.PostRedirect`), the pages choice by the page target
   (`MishkaCmsMigration.Targets.CmsPage`) and the comments choice by the comment target
   (`MishkaCmsMigration.Targets.BlogComment`).
@@ -168,9 +171,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   one `.xml` file of up to 100 MB (see "The source's file"), the reason a file is refused under
   it. Under them,
   Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
-  the post addresses, each starting at the default the `sub_field` gives it, and a toggle for the
-  comments, off; its description says why a post's old address is redirected rather than kept. The
-  authors, post addresses and comments are the Blog's, asked only while the Blog target each is for
+  the post addresses, each starting at the default the `sub_field` gives it, a toggle for
+  confirming the imported users' email, on, and a toggle for the comments, off; its description says why a post's old address is redirected rather than kept. The
+  authors, confirm users, post addresses and comments are the Blog's, asked only while the Blog target each is for
   is installed (`run_choices/1`). For
   a master the form asks for the site the content moves to as well (`:master_create`). Its button,
   Check and save, creates the run, which connects to the source first, or reads its file
@@ -246,13 +249,23 @@ defmodule MishkaCmsMigration.MigrationRun do
       ]
     ],
     [
+      name: :confirm_users,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Confirm imported users' email")
+    ],
+    [
       name: :comments,
       type: :toggle,
       label: dgettext_noop("mishka_gervaz", "Bring the comments too")
     ]
   ]
 
-  @choice_kinds %{authors: "user", post_address: "post_redirect", comments: "comment"}
+  @choice_kinds %{
+    authors: "user",
+    confirm_users: "user",
+    post_address: "post_redirect",
+    comments: "comment"
+  }
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
@@ -303,6 +316,11 @@ defmodule MishkaCmsMigration.MigrationRun do
       field :post_address, :string,
         default: "blog",
         derives: "sanitize(trim) validate(enum=String[blog::blog_without_redirects])"
+
+      field :confirm_users, :boolean,
+        default: true,
+        validator: {MishkaCmsMigration.MigrationRun, :switch},
+        derives: "validate(boolean)"
 
       field :comments, :boolean,
         default: false,
@@ -575,7 +593,10 @@ defmodule MishkaCmsMigration.MigrationRun do
           width "minmax(164px,max-content)"
         end
 
-        action :expand, type: :accordion
+        action :expand do
+          type :accordion
+          visible fn _run, state -> state.static.id != "migration-settings-runs" end
+        end
 
         action :items do
           type :link
@@ -1687,8 +1708,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   @doc """
   The New import form's choices for the run (Choices for this run's keys): the authors, pages and
-  post addresses selects and the comments toggle, each Blog one only while the Blog target it is
-  for is installed (`MishkaCmsMigration.Target.fetch/1`): Authors for `"user"`, Post addresses for
+  post addresses selects and the confirm users and comments toggles, each Blog one only while the
+  Blog target it is for is installed (`MishkaCmsMigration.Target.fetch/1`): Authors and Confirm
+  imported users' email for `"user"`, Post addresses for
   `"post_redirect"` and the comments for `"comment"`. A node without the Blog asks for the pages
   alone.
   """
@@ -1921,6 +1943,13 @@ defmodule MishkaCmsMigration.MigrationRun do
       dgettext(
         "mishka_gervaz",
         "A file in an image's srcset was not imported, so it keeps its old address"
+      )
+
+  defp said("user_created"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "A user was created for the author, who signs in with Forgot password or a social sign-in"
       )
 
   defp said("connected"),

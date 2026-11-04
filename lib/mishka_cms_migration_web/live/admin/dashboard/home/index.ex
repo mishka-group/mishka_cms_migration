@@ -9,7 +9,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   `MishkaCmsMigration.MigrationRun` for its columns and row actions). The table follows the runs'
   PubSub notifications, which this page hands on to it.
 
-  A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
+  A card's New import, or the page opened with `?new_import=<source id>` as the Settings page's
+  Migration tab opens it (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab`), opens the run's Gervaz form for that source in a modal: the page sends the
   form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
   Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
   secret as a masked password input, or, for a source that reads a file
@@ -33,7 +34,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
   `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
-  got there, what its last report found kind by kind and its latest items, each with links to its
+  got there, the warning for users an import created (`PasswordNotice`), what its last report found kind by kind and its latest items, each with links to its
   CMS record, how far a running job is, why a failed run stopped, and what its source said of
   itself and the admin chose. The page keeps which row it last expanded and draws it again on each
   of that run's notifications, so a dry run moving on, or finishing, shows in it without a reload.
@@ -55,6 +56,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   alias MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed
   alias MishkaCmsMigration.{MigrationRun, Source}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice
   alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
 
@@ -80,8 +82,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   end
 
   @impl true
-  def handle_params(params, uri, socket),
-    do: {:noreply, assign(socket, :url_state, UrlSync.decode(params, uri, MigrationRun))}
+  def handle_params(params, uri, socket) do
+    if connected?(socket) and is_binary(params["new_import"]),
+      do: send(self(), {:new_run, params["new_import"]})
+
+    {:noreply, assign(socket, :url_state, UrlSync.decode(params, uri, MigrationRun))}
+  end
 
   @impl true
   def handle_event("new_run", %{"source" => id}, socket) do
@@ -95,6 +101,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
      |> close_modal()
      |> put_flash(:info, gettext("Connected to %{site}.", site: connected_to(run)))}
   end
+
+  def handle_info({:new_run, id}, socket), do: id |> Source.fetch() |> new_run(socket)
 
   def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_modal(socket)}
 
@@ -204,10 +212,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
 
   defp details_html(run, user) do
-    assigns = %{run: run, paths: RunDetails.item_paths(run, user)}
+    assigns = %{
+      run: run,
+      paths: RunDetails.item_paths(run, user),
+      created: PasswordNotice.created(run, user)
+    }
 
     ~H"""
-    <RunDetails.panel run={@run} paths={@paths} />
+    <RunDetails.panel run={@run} paths={@paths} created={@created} />
     """
     |> Phoenix.HTML.Safe.to_iodata()
     |> IO.iodata_to_binary()
