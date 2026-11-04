@@ -43,7 +43,7 @@ lib/
     ├── application.ex                the plugins the extension supervises
     ├── repo.ex                       the Postgres repo when the extension runs on its own (the CMS's repo inside the CMS)
     ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
-    ├── sources/                      the sources it ships: WordPress and its export file, how a post's content becomes HTML, how an export is streamed
+    ├── sources/                      the sources it ships: WordPress and its export file, how a post's content, or its Elementor layout, becomes HTML, how an export is streamed
     ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
     ├── targets/                      the targets it ships: pages into the CMS's pages, and authors, categories, tags and posts into Mishka Blog, where it runs
     ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished
@@ -61,7 +61,7 @@ dev/
 └── wordpress/                        a real WordPress in Docker, seeded with realistic content, and the script that records it
 ```
 
-`dev/wordpress/` runs WordPress and MariaDB in Docker on this machine, fills the site with the content a migration meets (every block, shortcodes, nested terms, media, threaded comments, menus, Yoast SEO) and records what it answers into `test/fixtures/wordpress/` (its `README.md` says how). Nothing replays the fixtures yet: the WordPress source (#4) will, so its tests run against what a real site says rather than hand-written JSON.
+`dev/wordpress/` runs WordPress and MariaDB in Docker on this machine, fills the site with the content a migration meets (every block, shortcodes, nested terms, media, threaded comments, menus, Yoast SEO, Elementor pages) and records what it answers into `test/fixtures/wordpress/` (its `README.md` says how). Nothing replays the fixtures yet: the WordPress source (#4) will, so its tests run against what a real site says rather than hand-written JSON.
 
 ## 🧩 Part of Mishka CMS
 

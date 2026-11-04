@@ -98,23 +98,47 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   """
   @type fetch :: (String.t(), [pos_integer()] -> %{optional(pos_integer()) => map()})
 
+  @typedoc """
+  A converted node: a `LazyHTML.Tree` node, or `{:piece, piece}` where a piece is left to
+  `migration:content:convert`.
+  """
+  @type content_node :: LazyHTML.Tree.html_node() | {:piece, map()}
+
   @doc """
   The pieces `raw` is made of, reading the reusable blocks and the gallery images it names with
   `fetch`.
   """
   @spec call(String.t(), fetch()) :: [map()]
-  def call(raw, fetch) when is_binary(raw) do
-    {tree, pieces} =
-      raw
-      |> tree()
-      |> top(%{fetch: fetch, reusable?: true})
-      |> LazyHTML.Tree.postwalk([], &marked/2)
+  def call(raw, fetch) when is_binary(raw), do: raw |> nodes(fetch) |> pieces()
+
+  @doc """
+  `raw` converted as `call/2` converts it, as nodes, for a converter that places the converted
+  content inside markup of its own before it makes the pieces (`pieces/1`), such as the text of an
+  Elementor widget (`MishkaCmsMigration.Sources.WordPress.Elementor`).
+  """
+  @spec nodes(String.t(), fetch()) :: [content_node()]
+  def nodes(raw, fetch) when is_binary(raw),
+    do: raw |> tree() |> top(%{fetch: fetch, reusable?: true})
+
+  @doc """
+  The content pieces of `nodes`, in order: the HTML around each `{:piece, piece}`, and the piece.
+  """
+  @spec pieces([content_node()]) :: [map()]
+  def pieces(nodes) do
+    {tree, pieces} = LazyHTML.Tree.postwalk(nodes, [], &marked/2)
 
     tree
     |> LazyHTML.Tree.to_html()
     |> String.split("<!--#{@piece}-->")
     |> joined(Enum.reverse(pieces))
   end
+
+  @doc """
+  A `<figure>` with the player of the YouTube or Vimeo video at `url` (see "Players"), or with a
+  link to any other address.
+  """
+  @spec embed(String.t()) :: LazyHTML.Tree.html_node()
+  def embed(url), do: url |> player() |> embedded(url)
 
   defp tree(raw), do: raw |> LazyHTML.from_fragment() |> LazyHTML.to_tree()
 
@@ -256,8 +280,6 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
 
   defp source(text) when is_binary(text), do: text
   defp source(node), do: LazyHTML.Tree.to_html([node])
-
-  defp embed(url), do: url |> player() |> embedded(url)
 
   defp embedded({title, src}, _url),
     do:
