@@ -14,7 +14,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice do
   and the site's setting, which the settings cache answers, so it adds no query.
 
   The part that asks for an answer is the main menu's Needs your decision on the Items page, whose
-  Decide… offers Write links for the site's current mode and Wait.
+  Decide… offers Write links for the site's current mode and Wait. For a source that runs a
+  language plugin it also says how translations are imported, and what of them waits for a decision
+  (`MishkaCmsMigration.Targets.Helpers.Editions`).
   """
 
   use Phoenix.Component
@@ -48,6 +50,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice do
           {explained(@cause)}
           {gettext(
             "Menu links, links inside posts and pages, and redirects are written as fixed addresses, in the way this site names the language now."
+          )}
+        </p>
+        <p :if={@cause in ["polylang", "wpml"]} class="m-0 mt-1.5" data-role="language-editions">
+          <strong>{gettext("Translations:")}</strong>
+          {gettext(
+            "Each translation is imported in its own language and linked to its other editions. One in a language the site does not publish in, or whose language the source does not say (Polylang's free plugin says none over the REST API, and WPML's lists its default language alone), waits for your decision. The site's export file (Tools > Export) carries every translation and its language."
           )}
         </p>
         <p class="m-0 mt-1.5">

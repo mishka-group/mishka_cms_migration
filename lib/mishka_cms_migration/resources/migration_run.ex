@@ -2061,6 +2061,28 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("waits_for_language_urls"),
     do: dgettext("mishka_gervaz", "Waits for the site's language addresses, as you decided")
 
+  defp said("language_missing: " <> language),
+    do:
+      dgettext("mishka_gervaz", "%{language} is not one of the site's languages",
+        language: language_name(language)
+      )
+
+  defp said("language_added: " <> language),
+    do:
+      dgettext("mishka_gervaz", "Adds %{language} to the site's languages, as you decided",
+        language: language_name(language)
+      )
+
+  defp said("language_unknown"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The source does not say its language: the site's export file carries it"
+      )
+
+  defp said("waits_for_language"),
+    do: dgettext("mishka_gervaz", "Waits for the site's export file, as you decided")
+
   defp said("translations: " <> languages),
     do:
       dgettext("mishka_gervaz", "The original of its translations: %{languages}",

@@ -18,7 +18,8 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     WordPress category is live once it exists, and in the language the item names
     (a site that runs Polylang or WPML names one), joined as one group with the categories that are
     its other editions, or, for an item that names none, in the language the site leads with
-    (`MishkaCmsMigration.Targets.Helpers.Editions`).
+    (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a language the site does not publish
+    in waits for an admin's decision.
 
     A category the run's site already has, with the slug as the Blog writes it, in any language,
     waits for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.Targets.Helpers.BySlug`).
@@ -39,6 +40,7 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
       update: :update
 
     use MishkaCmsMigration.Targets.Helpers.BySlug
+    use MishkaCmsMigration.Targets.Helpers.Editions
 
     alias MishkaCmsMigration.Targets.Helpers.{BySlug, Editions}
 

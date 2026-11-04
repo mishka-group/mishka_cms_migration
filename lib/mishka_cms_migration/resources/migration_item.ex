@@ -155,7 +155,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     "draft_pages" => ["keep", "import"],
     "language_urls" => ["keep", "import"],
     "unsupported_widgets" => ["import", "leave_out"],
-    "scripts" => ["import", "trust"]
+    "scripts" => ["import", "trust"],
+    "language_missing" => ["import", "leave_out"],
+    "language_unknown" => ["import", "keep"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1164,9 +1166,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   def decision_options(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}) do
     conflict = conflict(item)
     current = current_choice(conflict, item)
+    reason = waits_on(item)
 
     for choice <- choices(conflict),
-        do: {marked(choice_word(conflict, choice), choice == current), choice}
+        do: {marked(choice_word(conflict, choice, reason), choice == current), choice}
   end
 
   def decision_options(_state), do: []
@@ -1323,6 +1326,26 @@ defmodule MishkaCmsMigration.MigrationItem do
           left
         )
 
+  defp choice_word("language_missing", "import", "language_missing: " <> language),
+    do:
+      dgettext("mishka_gervaz", "Add %{language} to the site",
+        language: Languages.name(language) || language
+      )
+
+  defp choice_word(conflict, choice, _reason), do: choice_word(conflict, choice)
+
+  defp choice_word("language_missing", "import"),
+    do: dgettext("mishka_gervaz", "Add its language to the site")
+
+  defp choice_word("language_missing", "leave_out"),
+    do: dgettext("mishka_gervaz", "Leave this translation out")
+
+  defp choice_word("language_unknown", "import"),
+    do: dgettext("mishka_gervaz", "Import it in the site's main language")
+
+  defp choice_word("language_unknown", "keep"),
+    do: dgettext("mishka_gervaz", "Wait, to import the site's export file instead")
+
   defp choice_word("scripts", "import"), do: dgettext("mishka_gervaz", "Remove them")
 
   defp choice_word("scripts", "trust"),
@@ -1442,13 +1465,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp waiting(nil, item), do: as_planned(item)
   defp waiting(reason, item), do: reason |> code() |> waiting(reason, item.decisions)
 
-  defp waiting(conflict, _reason, decisions) when is_map_key(decisions, conflict),
+  defp waiting(conflict, reason, decisions) when is_map_key(decisions, conflict),
     do: %{
       key: "decided",
       word: dgettext("mishka_gervaz", "Decided"),
       class: "bg-[#eeedfb] text-[#5b57d6]",
       icon: "hero-check",
-      reason: choice_word(conflict, Map.fetch!(decisions, conflict))
+      reason: choice_word(conflict, Map.fetch!(decisions, conflict), reason)
     }
 
   defp waiting(_conflict, reason, _decisions), do: said(:undecided, plan_word(:undecided), reason)

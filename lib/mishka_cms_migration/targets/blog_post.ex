@@ -17,7 +17,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     none), and `"sticky"` makes it featured. A post is in the language the item names
     (a site that runs Polylang or WPML names one), joined as one group with the posts that are its
     other editions, whatever order they are imported in, or, for an item that names none, in the
-    language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`).
+    language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a
+    language the site does not publish in waits for an admin's decision, and so does one whose
+    language a source that runs a language plugin does not say, in the dry run too.
 
     ## Status and dates
 

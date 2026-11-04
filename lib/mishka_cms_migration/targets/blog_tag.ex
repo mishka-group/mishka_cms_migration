@@ -14,7 +14,8 @@ if Code.ensure_loaded?(MishkaBlog.Tag) do
     description is none), and its parent, for a source whose tags nest, the tag's parent tag. A tag
     is in the language the item names (a site that runs Polylang or WPML names one), joined as one
     group with the tags that are its other editions, or, for an item that names none, in the
-    language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`).
+    language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a
+    language the site does not publish in waits for an admin's decision.
 
     A tag the run's site already has, with the slug as the Blog writes it, in any language,
     waits for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.Targets.Helpers.BySlug`).
@@ -34,6 +35,7 @@ if Code.ensure_loaded?(MishkaBlog.Tag) do
       update: :update
 
     use MishkaCmsMigration.Targets.Helpers.BySlug
+    use MishkaCmsMigration.Targets.Helpers.Editions
 
     alias MishkaCmsMigration.Targets.Helpers.{BySlug, Editions}
 
