@@ -167,7 +167,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              source: source,
              conn: conn,
              options: options,
-             context: target_context(run, mode, context.actor, options),
+             context: target_context(run, mode, context, options),
              telemetry: telemetry
            }) do
       {:ok, report, extra}
@@ -360,10 +360,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       mode: mode
     }
 
-  defp target_context(run, mode, actor, options),
+  defp target_context(run, mode, scope, options),
     do: %{
       mode: mode,
-      actor: actor,
+      actor: scope.actor,
+      scope: scope,
       site_id: run.site_id,
       run_id: run.id,
       source: run.source,

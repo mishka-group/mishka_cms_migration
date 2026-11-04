@@ -109,6 +109,20 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
     |> Enum.uniq()
   end
 
+  # The footer's links, each its label and where it goes.
+  defp footer_links(site) do
+    {:ok, tree} = site |> template() |> Tree.parse()
+
+    footer =
+      Enum.find(Tree.walk(tree), &({"component_name", {:string, "site-footer"}} in &1.attrs))
+
+    tree
+    |> Tree.subtree(footer.id)
+    |> Tree.walk()
+    |> Enum.filter(&(&1.tag == ".link"))
+    |> Enum.map(&{label(tree, &1), destination(&1.attrs)})
+  end
+
   defp label(tree, link),
     do: tree |> Tree.children(link.id) |> Enum.map_join(& &1.text) |> String.trim()
 
@@ -260,8 +274,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert MigrationItem.conflict(menu) == "menu_goes_to"
       options = MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: menu}})
 
-      assert Enum.map(options, &elem(&1, 1)) == ["header", "leave_out"]
-      assert options |> hd() |> elem(0) =~ "top bar"
+      assert Enum.map(options, &elem(&1, 1)) == ["header", "footer", "leave_out"]
+      assert options |> Enum.at(0) |> elem(0) =~ "top bar"
+      assert options |> Enum.at(1) |> elem(0) =~ "flat"
     end
 
     test "leaves out a menu the admin decides to leave out, and never writes it",
@@ -296,6 +311,79 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert outcomes(run)["navigation-105"] == {:undecided, "menu_goes_to: Footer"}
+    end
+
+    test "puts a menu the admin sends to the footer in the footer's free slot, beside the header's menu",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "footer", "23")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert outcomes(run)["23"] == {:updated, "old_address: RSS feed"}
+
+      assert footer_links(site) == [
+               {"Contact", {:navigate, "/contact"}},
+               {"Docs", {:navigate, "/docs"}},
+               {"RSS feed", {:href, "http://localhost:8089/feed/"}}
+             ]
+
+      assert length(links(site)) == 14
+    end
+
+    test "lists a nested block menu flat in the footer, each link followed by the links under it",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "footer", "navigation-105")
+
+      imported!(site, admin)
+
+      assert footer_links(site) |> Enum.map(&elem(&1, 0)) ==
+               ["Home", "About", "Team", "Contact", "Blog"]
+    end
+
+    test "leaves a footer with links of its own for an admin's decision, and keeps them",
+         %{site: site, admin: admin} do
+      own =
+        String.replace(
+          @frame,
+          ~s(<.component component_name="site-footer" site="acme" />),
+          ~s(<.component component_name="site-footer" site="acme"><.link navigate="/terms">Terms</.link></.component>)
+        )
+
+      layout!(site, own)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "footer", "23")
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run)["23"] == {:undecided, "footer_has_links"}
+
+      decide!(site, admin, "keep", "23")
+      run = imported!(site, admin)
+
+      assert outcomes(run)["23"] == {:skipped, "site_own_kept"}
+      assert footer_links(site) == [{"Terms", {:navigate, "/terms"}}]
+    end
+
+    test "a menu written into the header after another into the footer keeps both, and a change of the first is written, not taken for an edit",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "footer", "23")
+      imported!(site, admin)
+
+      stub!(%{
+        "/wp-json/wp/v2/menu-items" => menu_items_with(%{88 => %{"title" => %{"raw" => "Start"}}})
+      })
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert {"Start", {:navigate, "/"}} in links(site)
+      assert length(footer_links(site)) == 3
     end
 
     test "keeps the rest of the layout, and groups an item's links under it as the core draws a group",

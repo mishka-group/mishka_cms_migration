@@ -66,6 +66,8 @@ defmodule MishkaCmsMigration.Report do
       `<menu>` (`MishkaCmsMigration.Targets.CmsLayout`);
     * `"header_has_links"` — the site layout's header already has links of its own, where a menu
       goes (`MishkaCmsMigration.Targets.CmsLayout`);
+    * `"footer_has_links"` — the same for the footer's free slot, where a menu goes that the admin
+      sent to the footer;
     * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
       its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
     * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed

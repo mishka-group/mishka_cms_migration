@@ -2025,6 +2025,9 @@ defmodule MishkaCmsMigration.MigrationRun do
     do:
       dgettext("mishka_gervaz", "Choose where this menu goes. Same links as %{menu}", menu: menu)
 
+  defp said("footer_has_links"),
+    do: dgettext("mishka_gervaz", "The site's footer already has its own links")
+
   defp said("slug_taken"),
     do: dgettext("mishka_gervaz", "The site already has one at this address")
 
@@ -2054,7 +2057,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
 
   defp said("no_layout"),
-    do: dgettext("mishka_gervaz", "The site's layout has no header to put it in")
+    do: dgettext("mishka_gervaz", "The site's layout has no header or footer to put it in")
 
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 

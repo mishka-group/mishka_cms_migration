@@ -22,21 +22,31 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   however deep, in menu order. An item with no address of its own is left out of the group.
 
   Each menu goes where its `"menu_goes_to"` decision says (`MishkaCmsMigration.MigrationItem`'s
-  Decide…, kept in `decisions` across runs): Header links, which show in the top bar, or Leave
-  out. The site's main menu (`MishkaCmsMigration.Sources.WordPress`'s `main`, the one at the
+  Decide…, kept in `decisions` across runs): Header links, which show in the top bar; Footer
+  links, which show beside the footer's links; or Leave out. The site's main menu (`MishkaCmsMigration.Sources.WordPress`'s `main`, the one at the
   theme's primary location) is pre-selected for Header links and writes at once. Every other menu
   waits for the admin's decision as `"menu_goes_to"`, as `"menu_goes_to: <menu>"` when it is a
   block menu with the same links as the classic menu `<menu>` (`"same_as"`), so both are shown and
   the admin leaves one out. A menu's name is never a rule.
 
-  The layout is read before anything is written, in the dry run too (`existing/2`), with one query
-  for every menu of the page:
+  The footer is the `site-footer` component, whose free slot ("Anything to put beside the links",
+  `render_slot(@inner_block)`) takes the links. The starter layout calls it self-closed, so the
+  write turns the call into an opening and a closing tag in the layout's tree
+  (`MishkaCmsCore.Runtime.Authoring.Tree`) and puts the links between them. Footer links are flat:
+  a menu with items under items is listed in menu order, each item's link followed by the links
+  under it.
 
-    * a site with no `site-main` layout, or one whose layout draws no `site-header`, skips a menu
-      placed in the header as `"no_layout"`;
-    * a header that already has links of its own, or that another menu of the same run is about to
-      write, waits for an admin's decision as `"header_has_links"`
-      (`MishkaCmsMigration.MigrationItem`'s Decide…): Keep the site's own skips the menu as
+  The layout is read before anything is written, in the dry run too (`existing/2`), with one query
+  for every menu of the page, and read again by the one write of each menu (`prepare/3`), so a
+  menu never writes over what another menu of the same run just put in the layout; the menus the
+  layout holds from earlier writes get the layout's new `updated_at`, so a write of one is never
+  taken for an edit in the CMS:
+
+    * a site with no `site-main` layout, or one whose layout draws no `site-header` or
+      `site-footer`, skips a menu placed there as `"no_layout"`;
+    * a header or footer that already has links of its own, or that another menu of the same run is
+      about to write, waits for an admin's decision as `"header_has_links"` or
+      `"footer_has_links"` (`MishkaCmsMigration.MigrationItem`'s Decide…): Keep the site's own skips the menu as
       `"site_own_kept"`, and Replace with the imported menu writes it over the layout in place of
       those links; the site's own navigation is never written over on the import's own say. The
       main menu comes first, so a second menu is the one that asks;
@@ -121,8 +131,10 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   alias MishkaCmsMigration.Targets.Helpers.{LanguageUrls, Read}
 
   @layout "site-main"
-  @slots %{header: "site-header"}
-  @conflicts %{header: "header_has_links"}
+  @slots %{header: "site-header", footer: "site-footer"}
+  @conflicts %{header: "header_has_links", footer: "footer_has_links"}
+  @recorded ~w(source_host source_kind source_id run_id title source_slug source_parent
+               source_modified_at content_hash target_resource target_id outcome reason extra)a
   @kinds ["page", "post", "category", "tag"]
   @schemes ["http", "https", "mailto", "tel"]
 
@@ -162,8 +174,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
       |> Target.decision(item, "draft_pages")
       |> settled(prepared, context)
 
-    links = navigation(item.attrs["items"], addresses, host)
-    %{template: navigated(layout.template, place(item, context), links)}
+    place = place(item, context)
+    links = navigation(item.attrs["items"], addresses, host, place)
+    %{template: navigated(layout.template, place, links)}
   end
 
   @impl MishkaCmsMigration.Target
@@ -183,6 +196,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
     do: context |> Target.decision(item, "menu_goes_to") |> chosen(item)
 
   defp chosen("header", _item), do: {:place, :header}
+  defp chosen("footer", _item), do: {:place, :footer}
   defp chosen(nil, %Item{attrs: %{"main" => true}}), do: {:place, :header}
 
   defp chosen(nil, %Item{attrs: %{"same_as" => menu}}) when is_binary(menu),
@@ -242,7 +256,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp navigated(template, place, links) do
     with {:ok, tree, node} <- slot(template, place),
          {:ok, links} <- Tree.parse(links),
-         {:ok, tree} <- tree |> emptied(node) |> Tree.insert(links, node.id, 0),
+         {:ok, tree} <- tree |> emptied(node) |> open_tag(node) |> Tree.insert(links, node.id, 0),
          {:ok, heex} <- Serializer.to_heex(tree) do
       heex
     else
@@ -250,6 +264,12 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
         raise ArgumentError, "the site layout cannot take the menu: #{inspect(refused)}"
     end
   end
+
+  defp open_tag(tree, node),
+    do: %{
+      tree
+      | nodes: Map.update!(tree.nodes, node.id, &%{&1 | meta: Map.delete(&1.meta, :self_close)})
+    }
 
   defp emptied(tree, node), do: Enum.reduce(node.children, tree, &without/2)
 
@@ -264,8 +284,43 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
       |> unanswered(context)
 
     with :ok <- drafted(drafts, item, context),
-         do: write.(%{context | prepared: %{linked: linked, drafts: drafts}})
+         do:
+           %{context | prepared: %{linked: linked, drafts: drafts}}
+           |> fresh()
+           |> write.()
+           |> retimed(item, context)
   end
+
+  defp fresh(%{record: %Layout{id: id}} = context) do
+    Layout
+    |> Ash.Query.filter(id == ^id)
+    |> Read.call(context)
+    |> List.first()
+    |> then(&%{context | record: &1 || context.record})
+  end
+
+  defp fresh(context), do: context
+
+  defp retimed({:ok, {:ok, %Layout{} = layout}} = written, item, context) do
+    MigrationItem
+    |> Ash.Query.filter(
+      source_host == ^context.source_host and source_kind == ^item.kind and
+        target_id == ^layout.id and source_id != ^item.source_id and
+        not is_nil(target_updated_at)
+    )
+    |> Read.call(context)
+    |> Enum.each(&MishkaCmsMigration.record_item!(retime(&1, layout), scope: context.scope))
+
+    written
+  end
+
+  defp retimed(written, _item, _context), do: written
+
+  defp retime(sibling, layout),
+    do:
+      sibling
+      |> Map.take(@recorded)
+      |> Map.put(:target_updated_at, layout.updated_at)
 
   defp settled("import", %{linked: linked, drafts: drafts}, context) do
     Enum.each(drafts, fn {_key, page} -> published!(page, context) end)
@@ -458,10 +513,19 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp old_address([]), do: nil
   defp old_address(titles), do: "old_address: " <> Enum.join(titles, ", ")
 
-  defp navigation(items, found, host) do
+  defp navigation(items, found, host, :header) do
     items
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {entry, index} -> top(entry, index, found, host) end)
+    |> StarterContent.nav_links()
+  end
+
+  defp navigation(items, found, host, :footer) do
+    for(
+      entry <- entries(items),
+      destination = destination(entry, found, host),
+      do: nav_entry(entry, destination)
+    )
     |> StarterContent.nav_links()
   end
 

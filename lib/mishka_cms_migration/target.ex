@@ -197,6 +197,11 @@ defmodule MishkaCmsMigration.Target do
   (`MishkaCmsMigration.Workers.Helpers.Decision`), and compares each one's `updated_at` with the
   one the run recorded when it wrote it. A record changed in the CMS since is never written again,
   and one that is gone is not brought back.
+
+  Items that share one record, such as the menus written into the site layout, each record the
+  `updated_at` of their own write. A target that writes such a record again records the new
+  `updated_at` for the other items of that record too (`MishkaCmsMigration.record_item/2`, with the
+  context's `scope`), so a write of one is not mistaken for an edit in the CMS.
   """
 
   alias Ash.Resource.Info
@@ -210,7 +215,8 @@ defmodule MishkaCmsMigration.Target do
   @typedoc """
   What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
   from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
-  CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
+  the job's `scope`, for a target that records other items it changed (see "Keeping an admin's
+  edits"), the CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
   "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), the language plugin the source runs
   (`languages`, `"polylang"` or `"wpml"`, else `nil`), and an
   admin's decisions on the items, by source id (see "An admin's decision", read with
@@ -219,6 +225,7 @@ defmodule MishkaCmsMigration.Target do
   @type context :: %{
           mode: :dry_run | :import,
           actor: map(),
+          scope: map(),
           site_id: String.t(),
           run_id: String.t(),
           source: String.t(),
