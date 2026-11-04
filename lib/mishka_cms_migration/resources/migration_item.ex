@@ -149,7 +149,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "slug_taken" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
-    "draft_pages" => ["keep", "import"]
+    "draft_pages" => ["keep", "import"],
+    "language_urls" => ["keep", "import"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1326,6 +1327,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("player_not_allowed", "import"),
     do: dgettext("mishka_gervaz", "Import without the player")
+
+  defp choice_word("language_urls", "keep"), do: dgettext("mishka_gervaz", "Wait")
+
+  defp choice_word("language_urls", "import"),
+    do: dgettext("mishka_gervaz", "Write links for the site's current mode")
 
   defp choice_word("draft_pages", "keep"),
     do: dgettext("mishka_gervaz", "Leave those links out of the menu")

@@ -211,7 +211,8 @@ defmodule MishkaCmsMigration.Target do
   What `attrs/2` is told: whether the run is a dry run or an import, who writes, on which site,
   from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
   CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
-  "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), and an
+  "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), the language plugin the source runs
+  (`languages`, `"polylang"` or `"wpml"`, else `nil`), and an
   admin's decisions on the items, by source id (see "An admin's decision", read with
   `decision/3`).
   """
@@ -226,6 +227,7 @@ defmodule MishkaCmsMigration.Target do
           parent_id: Ecto.UUID.t() | nil,
           record: struct() | nil,
           prepared: term(),
+          languages: String.t() | nil,
           decisions: %{String.t() => %{String.t() => String.t()}}
         }
 

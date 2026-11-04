@@ -42,6 +42,8 @@ defmodule MishkaCmsMigration.Report do
     * `"waits_for_blog"` — the Blog is not installed, and an admin decided the item waits for it.
     * `"waits_for_admin"` — the admin who ran the import may not allow the item's video player on
       the site, and an admin decided it waits for one who may.
+    * `"waits_for_language_urls"` — the links would not match the site's language addresses, and an
+      admin decided the item waits until they do.
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
     * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
       never written), so it is left out until a run writes the parent.
@@ -70,7 +72,10 @@ defmodule MishkaCmsMigration.Report do
       (`MishkaCmsMigration.Targets.Helpers.Frames`);
     * `"draft_pages: <labels>"` — the main menu links pages the site does not serve, as the drafts
       pages come in as, named by the links' labels (`MishkaCmsMigration.Targets.CmsLayout`): the
-      conflict is the part before `": "`.
+      conflict is the part before `": "`;
+    * `"language_urls: <cause>"` — the links the item writes would not follow the source's or the
+      site's language addresses, `<cause>` being `polylang`, `wpml` or `prefix_all`
+      (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.

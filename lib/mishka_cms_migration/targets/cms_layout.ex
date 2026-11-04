@@ -78,6 +78,15 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   pages' items and their records. A menu a run does not write, one WordPress did not change, is
   not asked about.
 
+  ## Links and the site's language addresses
+
+  The links are written as fixed addresses in the way the site names the language in its addresses
+  now, while a source that runs a language plugin (Polylang or WPML) has addresses with a language
+  prefix, and a site that gives every language a prefix may later be switched back. On such a run
+  the main menu waits for an admin's decision as `"language_urls"`, before anything else
+  (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`): Write links for the site's current mode
+  (`"import"`) goes on, Wait (`"keep"`) skips it as `"waits_for_language_urls"`.
+
   ## A second run
 
   A re-run is held to the rules every target is: a menu the source did not change is
@@ -100,7 +109,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source, Target}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
-  alias MishkaCmsMigration.Targets.Helpers.Read
+  alias MishkaCmsMigration.Targets.Helpers.{LanguageUrls, Read}
 
   @layout "site-main"
   @header {"component_name", {:string, "site-header"}}
@@ -117,21 +126,19 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write) do
-    linked = linked(item, context)
-
-    drafts =
-      linked
-      |> Enum.filter(&match?({{"page", _id}, %Page{active: false}}, &1))
-      |> unanswered(context)
-
-    with :ok <- drafted(drafts, item, context),
-         do: write.(%{context | prepared: %{linked: linked, drafts: drafts}})
+    with :ok <- LanguageUrls.call(item, context), do: prepare_links(item, context, write)
   end
 
   @impl MishkaCmsMigration.Target
-  def waiting(item, context),
-    do:
-      item |> planned_drafts(context) |> unanswered(context) |> drafted(item, context) |> waited()
+  def waiting(item, context) do
+    with :ok <- LanguageUrls.call(item, context),
+         do:
+           item
+           |> planned_drafts(context)
+           |> unanswered(context)
+           |> drafted(item, context)
+           |> waited()
+  end
 
   @impl MishkaCmsMigration.Target
   def attrs(item, %{record: layout, prepared: prepared, source_host: host} = context) do
@@ -202,6 +209,18 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp emptied(tree, header), do: Enum.reduce(header.children, tree, &without/2)
 
   defp without(id, tree), do: tree |> Tree.delete(id) |> elem(1)
+
+  defp prepare_links(item, context, write) do
+    linked = linked(item, context)
+
+    drafts =
+      linked
+      |> Enum.filter(&match?({{"page", _id}, %Page{active: false}}, &1))
+      |> unanswered(context)
+
+    with :ok <- drafted(drafts, item, context),
+         do: write.(%{context | prepared: %{linked: linked, drafts: drafts}})
+  end
 
   defp settled("import", %{linked: linked, drafts: drafts}, context) do
     Enum.each(drafts, fn {_key, page} -> published!(page, context) end)
