@@ -128,6 +128,14 @@ defmodule MishkaCmsMigration.Target do
 
       def prepare(_item, context, write), do: write.(context)
 
+  ## Where an item is written
+
+  Every item of a kind goes to the target's `resource/0` through its `actions/0`. A target whose
+  items go to different resources, such as a menu that an admin sends to the site layout or to a
+  component of its own (`MishkaCmsMigration.Targets.CmsLayout`), names them all in `resources/0`
+  and answers each item's in `writes_to/2`, handed the context with the item's decisions. The item
+  records the resource of the record it was written to, and a re-run reads it from there.
+
   ## What the CMS already holds
 
   An item may already be in the CMS without any run having written it, such as a WordPress author
@@ -257,6 +265,19 @@ defmodule MishkaCmsMigration.Target do
   @doc "The resource's actions this target writes through."
   @callback actions() :: %{create: atom(), update: atom()}
 
+  @doc """
+  Every resource this target writes, for a target whose items go to more than one (see "Where an
+  item is written"). `use` answers `[resource()]`.
+  """
+  @callback resources() :: [Ash.Resource.t()]
+
+  @doc """
+  The resource and the actions that write `item` (see "Where an item is written"). `use` answers
+  `{resource(), actions()}`.
+  """
+  @callback writes_to(Item.t(), context()) ::
+              {Ash.Resource.t(), %{create: atom(), update: atom()}}
+
   @doc "The input of the create or update action for `item`."
   @callback attrs(Item.t(), context()) :: map()
 
@@ -320,6 +341,12 @@ defmodule MishkaCmsMigration.Target do
       def actions, do: %{create: unquote(create), update: unquote(update)}
 
       @impl MishkaCmsMigration.Target
+      def resources, do: [unquote(resource)]
+
+      @impl MishkaCmsMigration.Target
+      def writes_to(_item, _context), do: {unquote(resource), actions()}
+
+      @impl MishkaCmsMigration.Target
       def note(_item, _context), do: nil
 
       @impl MishkaCmsMigration.Target
@@ -331,7 +358,7 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def waiting(_item, _context), do: nil
 
-      defoverridable note: 2, existing: 2, prepare: 3, waiting: 2
+      defoverridable resources: 0, writes_to: 2, note: 2, existing: 2, prepare: 3, waiting: 2
     end
   end
 

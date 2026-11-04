@@ -147,7 +147,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "site_has_own" => ["keep", "import"],
     "header_has_links" => ["keep", "import"],
     "footer_has_links" => ["keep", "import"],
-    "menu_goes_to" => ["header", "footer", "leave_out"],
+    "menu_goes_to" => ["header", "footer", "component", "leave_out"],
+    "component_name_taken" => ["keep", "leave_out"],
     "slug_taken" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
@@ -1338,6 +1339,19 @@ defmodule MishkaCmsMigration.MigrationItem do
         "mishka_gervaz",
         "Footer links: they show beside the footer's links, a nested menu listed flat in order"
       )
+
+  defp choice_word("menu_goes_to", "component"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "A component: it can be placed on any page or layout with its component name"
+      )
+
+  defp choice_word("component_name_taken", "keep"),
+    do: dgettext("mishka_gervaz", "Use the existing component")
+
+  defp choice_word("component_name_taken", "leave_out"),
+    do: dgettext("mishka_gervaz", "Leave out")
 
   defp choice_word("menu_goes_to", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
 

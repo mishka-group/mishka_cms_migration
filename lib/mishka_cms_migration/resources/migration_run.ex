@@ -2025,6 +2025,9 @@ defmodule MishkaCmsMigration.MigrationRun do
     do:
       dgettext("mishka_gervaz", "Choose where this menu goes. Same links as %{menu}", menu: menu)
 
+  defp said("component_name_taken"),
+    do: dgettext("mishka_gervaz", "The site already has a component with this name")
+
   defp said("footer_has_links"),
     do: dgettext("mishka_gervaz", "The site's footer already has its own links")
 

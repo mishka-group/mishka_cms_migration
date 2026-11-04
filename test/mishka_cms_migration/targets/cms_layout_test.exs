@@ -21,7 +21,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.{Layout, Page}
+  alias MishkaCmsCore.Runtime.{Component, Layout, Page}
   alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsLayout
@@ -31,7 +31,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
     "admin:dashboard:migration",
     "admin:dashboard:runtime:page",
     "admin:dashboard:blog:post",
-    "admin:dashboard:runtime:layout"
+    "admin:dashboard:runtime:layout",
+    "admin:dashboard:runtime:component"
   ]
   @header {"component_name", {:string, "site-header"}}
 
@@ -121,6 +122,20 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
     |> Tree.walk()
     |> Enum.filter(&(&1.tag == ".link"))
     |> Enum.map(&{label(tree, &1), destination(&1.attrs)})
+  end
+
+  defp component(site, name),
+    do:
+      Component
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.site_id == site.id and &1.name == name))
+
+  defp component_links(component) do
+    {:ok, tree} = Tree.parse(component.template)
+
+    for %{tag: ".link"} = link <- Tree.walk(tree),
+        uniq: true,
+        do: {label(tree, link), destination(link.attrs)}
   end
 
   defp label(tree, link),
@@ -274,9 +289,10 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert MigrationItem.conflict(menu) == "menu_goes_to"
       options = MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: menu}})
 
-      assert Enum.map(options, &elem(&1, 1)) == ["header", "footer", "leave_out"]
+      assert Enum.map(options, &elem(&1, 1)) == ["header", "footer", "component", "leave_out"]
       assert options |> Enum.at(0) |> elem(0) =~ "top bar"
       assert options |> Enum.at(1) |> elem(0) =~ "flat"
+      assert options |> Enum.at(2) |> elem(0) =~ "any page or layout"
     end
 
     test "leaves out a menu the admin decides to leave out, and never writes it",
@@ -384,6 +400,105 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert outcomes(run)["22"] == {:updated, nil}
       assert {"Start", {:navigate, "/"}} in links(site)
       assert length(footer_links(site)) == 3
+    end
+
+    test "writes a menu the admin sends to a component as a component named from its slug, and leaves the layout alone",
+         %{site: site, admin: admin} do
+      layout = layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+
+      run = imported!(site, admin)
+      footer = component(site, "nav-footer")
+
+      assert outcomes(run)["23"] == {:created, "old_address: RSS feed"}
+
+      assert component_links(footer) == [
+               {"Contact", {:navigate, "/contact"}},
+               {"Docs", {:navigate, "/docs"}},
+               {"RSS feed", {:href, "http://localhost:8089/feed/"}}
+             ]
+
+      assert footer_links(site) == []
+      assert length(links(site)) == 14
+      assert template(site) != layout.template
+
+      item =
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "23"))
+
+      assert {item.target_id, item.target_resource} == {footer.id, inspect(Component)}
+    end
+
+    test "keeps a nested block menu's groups in its component, as the header draws them",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "navigation-105")
+
+      imported!(site, admin)
+
+      {:ok, tree} =
+        "nav-main-navigation"
+        |> then(&component(site, &1))
+        |> Map.fetch!(:template)
+        |> Tree.parse()
+
+      buttons = for %{tag: "button"} = node <- Tree.walk(tree), do: Map.new(node.attrs)["id"]
+
+      assert buttons == [{:string, "site-nav-2-button"}]
+    end
+
+    test "writes a component again when the source changes it, and keeps it once an admin edits it",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+      imported!(site, admin)
+      assert outcomes(imported!(site, admin))["23"] == {:skipped, "unchanged"}
+
+      stub!(%{
+        "/wp-json/wp/v2/menu-items" =>
+          menu_items_with(%{102 => %{"title" => %{"raw" => "Reach us"}}})
+      })
+
+      assert outcomes(imported!(site, admin))["23"] == {:updated, "old_address: RSS feed"}
+
+      assert {"Reach us", {:navigate, "/contact"}} in component_links(
+               component(site, "nav-footer")
+             )
+
+      component(site, "nav-footer")
+      |> Ash.Changeset.for_update(:update, %{description: "Mine"}, actor: admin, tenant: site.id)
+      |> Ash.update!()
+
+      stub!(%{
+        "/wp-json/wp/v2/menu-items" =>
+          menu_items_with(%{102 => %{"title" => %{"raw" => "Write"}}})
+      })
+
+      assert outcomes(imported!(site, admin))["23"] == {:skipped, "edited_in_cms"}
+    end
+
+    test "waits when the site already has a component with the name, and connects to it once the admin decides so",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      own =
+        create_component!(site_id: site.id, name: "nav-footer", template: "<p>Mine</p>")
+
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run)["23"] == {:undecided, "component_name_taken"}
+
+      decide!(site, admin, "keep", "23")
+      run = imported!(site, admin)
+
+      assert outcomes(run)["23"] == {:skipped, "connected"}
+      assert component(site, "nav-footer").template == own.template
     end
 
     test "keeps the rest of the layout, and groups an item's links under it as the core draws a group",

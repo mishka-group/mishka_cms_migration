@@ -10,7 +10,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   In an import an item to create or update has its content converted (`migration:content:convert`),
   is offered to the plugins (`migration:item:before_import`), is handed to its target's `prepare/3`
   (`MishkaCmsMigration.Target`), which may fetch what the write needs from the source or skip it,
-  is written through its target's create or update action as the admin who pressed Import (a create
+  is written through its target's create or update action (`MishkaCmsMigration.Target`'s
+  `writes_to/2` names the resource and the actions) as the admin who pressed Import (a create
   that is a generic action, such as the core Media's `:upload`, is run as one, and an update that is
   an upserting create, such as the core Setting's `:set`, is run as that create), and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
@@ -81,9 +82,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   def call(%{mode: :dry_run} = state, %Item{} = item, {:connected, _target, _record}),
     do: entry(state, item, :skipped, "connected")
 
-  def call(%{mode: :import} = state, %Item{} = item, {:connected, target, record}) do
+  def call(%{mode: :import} = state, %Item{} = item, {:connected, _target, record}) do
     state
-    |> recorded(item, target, %{id: record.id, updated_at: nil}, {:skipped, "connected"})
+    |> recorded(item, %{record | updated_at: nil}, {:skipped, "connected"})
     |> stored()
     |> entered(item, :skipped, "connected")
   end
@@ -143,13 +144,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp transacted(state, items, {_outcome, target, _record} = plan, context, note),
     do:
-      Ash.transact([target.resource(), MigrationItem], fn ->
+      Ash.transact(target.resources() ++ [MigrationItem], fn ->
         store(state, items, plan, context, note)
       end)
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, target, written, {outcome, note}) do
+         {:ok, _item} <- recorded(state, source_item, written, {outcome, note}) do
       {:ok, written}
     end
   end
@@ -171,17 +172,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp parent_record({:ok, _items}, _context), do: {:skipped, "parent_missing"}
   defp parent_record({:error, error}, _context), do: {:error, error}
 
-  defp write(target, item, nil, context) do
-    target.resource()
-    |> Info.action(target.actions().create)
-    |> create(target.resource(), target.attrs(item, context), context)
+  defp write(target, item, record, context) do
+    {resource, actions} = target.writes_to(item, context)
+    write(resource, actions, target.attrs(item, context), record, context)
   end
 
-  defp write(target, item, record, context) do
-    target.resource()
-    |> Info.action(target.actions().update)
-    |> update(record, target.attrs(item, context), context)
-  end
+  defp write(resource, actions, attrs, nil, context),
+    do: resource |> Info.action(actions.create) |> create(resource, attrs, context)
+
+  defp write(resource, actions, attrs, record, context),
+    do: resource |> Info.action(actions.update) |> update(record, attrs, context)
 
   defp update(%{type: :create} = upsert, %resource{}, attrs, context),
     do: create(upsert, resource, attrs, context)
@@ -197,7 +197,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp recorded(state, item, target, %{id: id, updated_at: updated_at}, {outcome, note}) do
+  defp recorded(state, item, %resource{id: id, updated_at: updated_at}, {outcome, note}) do
     MishkaCmsMigration.record_item(
       %{
         source_host: state.run.source_host,
@@ -209,7 +209,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         source_parent: item.parent,
         source_modified_at: item.modified_at,
         content_hash: Item.hash(item),
-        target_resource: inspect(target.resource()),
+        target_resource: inspect(resource),
         target_id: id,
         target_updated_at: updated_at,
         outcome: outcome,

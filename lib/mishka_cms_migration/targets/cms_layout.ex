@@ -23,7 +23,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   Each menu goes where its `"menu_goes_to"` decision says (`MishkaCmsMigration.MigrationItem`'s
   Decide…, kept in `decisions` across runs): Header links, which show in the top bar; Footer
-  links, which show beside the footer's links; or Leave out. The site's main menu (`MishkaCmsMigration.Sources.WordPress`'s `main`, the one at the
+  links, which show beside the footer's links; A component, which can be placed on any page or
+  layout; or Leave out. The site's main menu (`MishkaCmsMigration.Sources.WordPress`'s `main`, the one at the
   theme's primary location) is pre-selected for Header links and writes at once. Every other menu
   waits for the admin's decision as `"menu_goes_to"`, as `"menu_goes_to: <menu>"` when it is a
   block menu with the same links as the classic menu `<menu>` (`"same_as"`), so both are shown and
@@ -35,6 +36,14 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   (`MishkaCmsCore.Runtime.Authoring.Tree`) and puts the links between them. Footer links are flat:
   a menu with items under items is listed in menu order, each item's link followed by the links
   under it.
+
+  A component is a `MishkaCmsCore.Runtime.Component` of its own for the menu (the target's
+  `writes_to/2`), named `nav-` and the menu's slug, as `nav-footer`, with the header's markup
+  (`StarterContent.nav_links/1`, groups included) as its template. The admin places it with
+  `<.component component_name="nav-footer" />` on any page or layout. The layout is not touched. A
+  site that already has a component of that name waits for the admin's decision as
+  `"component_name_taken"`: Use the existing component connects the menu to it and writes nothing,
+  or the menu is left out.
 
   The layout is read before anything is written, in the dry run too (`existing/2`), with one query
   for every menu of the page, and read again by the one write of each menu (`prepare/3`), so a
@@ -108,8 +117,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   ## A second run
 
   A re-run is held to the rules every target is: a menu the source did not change is
-  `"unchanged"`, and a layout an admin changed since the import wrote it is kept as the admin left it
-  (`"edited_in_cms"`). A menu the source changed is written again, its links in place of the ones
+  `"unchanged"`, and a layout or component an admin changed since the import wrote it is kept as the
+  admin left it (`"edited_in_cms"`). A menu the source changed is written again, its links in place of the ones
   the last import wrote.
   """
 
@@ -124,7 +133,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   alias MishkaCmsCore.Install.StarterContent
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Authoring.Tree.{Node, Serializer}
-  alias MishkaCmsCore.Runtime.{Languages, Layout, Page, PageEditions}
+  alias MishkaCmsCore.Runtime.{Component, Languages, Layout, Page, PageEditions}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source, Target}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
@@ -139,14 +148,26 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   @schemes ["http", "https", "mailto", "tel"]
 
   @impl MishkaCmsMigration.Target
+  def resources, do: [Layout, Component]
+
+  @impl MishkaCmsMigration.Target
+  def writes_to(item, context) do
+    case place(item, context) do
+      :component -> {Component, %{create: :create, update: :update}}
+      _layout_place -> {Layout, actions()}
+    end
+  end
+
+  @impl MishkaCmsMigration.Target
   def existing(items, context) do
     goes = Enum.map(items, &{&1, goes_to(&1, context)})
-    layout = if Enum.any?(goes, &match?({_item, {:place, _place}}, &1)), do: layout(context)
+    layout = if Enum.any?(goes, &in_layout?/1), do: layout(context)
+    components = components(goes, context)
 
     {found, _taken} =
       goes
       |> Enum.sort_by(fn {item, _goes} -> item.attrs["main"] != true end)
-      |> Enum.map_reduce(MapSet.new(), &settle(&1, &2, layout, context))
+      |> Enum.flat_map_reduce(MapSet.new(), &settle(&1, &2, layout, components, context))
 
     Map.new(found)
   end
@@ -168,7 +189,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   end
 
   @impl MishkaCmsMigration.Target
-  def attrs(item, %{record: layout, prepared: prepared, source_host: host} = context) do
+  def attrs(item, %{record: record, prepared: prepared, source_host: host} = context) do
     addresses =
       context
       |> Target.decision(item, "draft_pages")
@@ -176,8 +197,14 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
     place = place(item, context)
     links = navigation(item.attrs["items"], addresses, host, place)
-    %{template: navigated(layout.template, place, links)}
+    written(place, item, record, links)
   end
+
+  defp written(:component, item, _record, links),
+    do: %{name: component_name(item), template: links}
+
+  defp written(place, _item, layout, links),
+    do: %{template: navigated(layout.template, place, links)}
 
   @impl MishkaCmsMigration.Target
   def note(_item, %{mode: :dry_run}), do: nil
@@ -197,6 +224,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   defp chosen("header", _item), do: {:place, :header}
   defp chosen("footer", _item), do: {:place, :footer}
+  defp chosen("component", _item), do: {:place, :component}
   defp chosen(nil, %Item{attrs: %{"main" => true}}), do: {:place, :header}
 
   defp chosen(nil, %Item{attrs: %{"same_as" => menu}}) when is_binary(menu),
@@ -206,17 +234,52 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
 
   defp place(item, context), do: item |> goes_to(context) |> elem(1)
 
-  defp settle({item, {:place, place}}, taken, layout, context) do
+  defp settle({item, {:place, :component}}, taken, _layout, components, context) do
+    found =
+      components
+      |> Map.get(component_name(item))
+      |> named(Target.decision(context, item, "component_name_taken"))
+
+    {for(found <- found, do: {item.source_id, found}), taken}
+  end
+
+  defp settle({item, {:place, place}}, taken, layout, _components, context) do
     found =
       layout
       |> open(place, MapSet.member?(taken, place))
       |> decided(Target.decision(context, item, @conflicts[place]), @conflicts[place])
 
-    {{item.source_id, found}, claimed(found, taken, place)}
+    {[{item.source_id, found}], claimed(found, taken, place)}
   end
 
-  defp settle({item, undecided}, taken, _layout, _context),
-    do: {{item.source_id, undecided}, taken}
+  defp settle({item, undecided}, taken, _layout, _components, _context),
+    do: {[{item.source_id, undecided}], taken}
+
+  defp in_layout?({_item, {:place, place}}), do: place != :component
+  defp in_layout?({_item, _undecided}), do: false
+
+  defp components(goes, context) do
+    names = for {item, {:place, :component}} <- goes, do: component_name(item)
+    components(names, context.site_id, context)
+  end
+
+  defp components([], _site_id, _context), do: %{}
+
+  defp components(names, site_id, context),
+    do:
+      Component
+      |> Ash.Query.filter(name in ^names and site_id == ^site_id)
+      |> Read.call(context)
+      |> Map.new(&{&1.name, &1})
+
+  defp named(nil, _decision), do: []
+  defp named(_component, nil), do: [{:undecided, "component_name_taken"}]
+  defp named(component, "keep"), do: [{:connected, component}]
+
+  defp component_name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
+    do: "nav-" <> (Slug.slugify(slug) || item.source_id)
+
+  defp component_name(item), do: "nav-" <> item.source_id
 
   defp claimed({:updated, _layout}, taken, place), do: MapSet.put(taken, place)
   defp claimed(_found, taken, _place), do: taken
@@ -513,7 +576,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp old_address([]), do: nil
   defp old_address(titles), do: "old_address: " <> Enum.join(titles, ", ")
 
-  defp navigation(items, found, host, :header) do
+  defp navigation(items, found, host, place) when place in [:header, :component] do
     items
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {entry, index} -> top(entry, index, found, host) end)
