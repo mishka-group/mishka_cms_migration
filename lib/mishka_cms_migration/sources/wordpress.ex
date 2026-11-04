@@ -77,7 +77,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       pieces too. An entry laid out with Elementor is its layout instead
       (`MishkaCmsMigration.Sources.WordPress.Elementor`), and its links and files below are read
       from that content; the widgets in it the CMS has no equivalent for are named in its
-      `"unsupported_widgets"`, which only such an entry has. `attrs` keeps `slug`, `status`, `link`,
+      `"unsupported_widgets"`, and those of them Elementor drew nothing for in its
+      `"no_fallback_widgets"`, which only such an entry has. `attrs` keeps `slug`, `status`, `link`,
       `author`, `featured_media`, `date_gmt`, `template`, `excerpt` (its raw text), and `parent` and
       `menu_order` for a page, `categories`, `tags`, `sticky` and `format` for a post. Its `links`
       are the links of its content to a post
@@ -605,15 +606,18 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
 
-  defp body({:ok, content, unsupported}, _raw, _fetch),
+  defp body({:ok, content, unsupported, no_fallback}, _raw, _fetch),
     do:
       {content, for(%{html: html} when is_binary(html) <- content, into: "", do: html),
-       unsupported_widgets(unsupported)}
+       unsupported_widgets(unsupported, no_fallback)}
 
   defp body(:none, raw, fetch), do: {Content.call(raw, fetch), raw, %{}}
 
-  defp unsupported_widgets([]), do: %{}
-  defp unsupported_widgets(names), do: %{"unsupported_widgets" => names}
+  defp unsupported_widgets([], _no_fallback), do: %{}
+  defp unsupported_widgets(names, []), do: %{"unsupported_widgets" => names}
+
+  defp unsupported_widgets(names, no_fallback),
+    do: %{"unsupported_widgets" => names, "no_fallback_widgets" => no_fallback}
 
   defp without_elementor(%{"meta" => %{} = meta} = extra),
     do: %{extra | "meta" => Map.reject(meta, fn {key, _value} -> elementor?(key) end)}

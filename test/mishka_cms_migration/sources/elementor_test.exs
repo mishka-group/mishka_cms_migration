@@ -215,8 +215,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       %{page: items!("page", "elementor-pages")["elementor-contact"]}
     end
 
-    test "names them once each, in the order they come", %{page: page} do
+    test "names them once each, in the order they come, and those Elementor drew nothing for", %{
+      page: page
+    } do
       assert page.attrs["unsupported_widgets"] == @unsupported
+      assert page.attrs["no_fallback_widgets"] == ["form", "slides"]
     end
 
     test "has what Elementor drew for them in their place, without its classes, data, scripts or icons",
@@ -399,6 +402,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
       contact = pages["elementor-contact"]
       assert contact.attrs["unsupported_widgets"] == @unsupported
+      assert contact.attrs["no_fallback_widgets"] == @unsupported
       assert html(contact) |> LazyHTML.query("iframe, img") |> Enum.empty?()
       assert texts(html(contact), "h1") == ["Talk to us"]
 

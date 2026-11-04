@@ -118,8 +118,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     for, such as a form, a slider or a map, waits for an admin's decision
     (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), in the dry
     run too (`waiting/2`), also a post an earlier import wrote: Import with the fallback HTML for
-    those parts writes it with what Elementor drew for them (`"fallback_html: <names>"`), and Leave
-    the page out leaves it out.
+    those parts writes it with what Elementor drew for them (`"fallback_html: <names>"`, and
+    `"no_fallback: <names>"` for those it drew nothing for), and Leave the page out leaves it out.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).

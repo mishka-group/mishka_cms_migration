@@ -148,13 +148,13 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       imported!(site, admin)
       decide!(site, admin, @contact, "import")
 
-      fallback = "fallback_html: form, google_maps, image-carousel, slides"
+      fallback = "fallback_html: google_maps, image-carousel; no_fallback: form, slides"
       assert outcomes(imported!(site, admin), "page")[@contact] == {:created, fallback}
+      assert MigrationRun.reason_label(fallback) =~ "No fallback available for form, slides"
 
       contact = pages(site)["/elementor-contact"]
       assert {:ok, %Tree{}} = Tree.parse(contact.template)
       assert contact.template =~ "maps.google.com/maps"
-      assert MigrationRun.reason_label(fallback) =~ "form, google_maps, image-carousel, slides"
     end
 
     test "Leave the page out leaves it out of every later run, and writes nothing for it", %{
@@ -181,6 +181,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       assert Widgets.call(more, decided) == :ok
       assert Widgets.waiting(more, decided) == nil
       assert Widgets.note(more, decided) == "fallback_html: form, slides"
+
+      drawn_nothing = put_in(more.attrs["no_fallback_widgets"], ["form", "slides"])
+      assert Widgets.note(drawn_nothing, decided) == "no_fallback: form, slides"
     end
   end
 end

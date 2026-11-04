@@ -68,8 +68,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   styles, `data-` attributes, the `srcset` of other sizes, scripts and decorative (`aria-hidden`)
   parts. Its name (`widgetType`, or the element's `elType`) is among the names `call/3` answers,
   each once, in the order they come, for the target to ask an admin before it writes the fallback
-  (`MishkaCmsMigration.Targets.Helpers.Widgets`). An export carries no rendering, so such a widget
-  read from an export has no fallback, and nothing stands in its place.
+  (`MishkaCmsMigration.Targets.Helpers.Widgets`). One Elementor drew nothing for has no fallback,
+  and nothing stands in its place: one whose `data-id` the rendering does not have, one whose
+  part holds nothing but empty boxes, such as a Pro widget on a site without Pro, and every such
+  widget read from an export, which carries no rendering. `call/3` names those apart.
 
   The images of the image and gallery widgets are read from WordPress with `fetch`
   (`/wp/v2/media`), all in one request, for their alt text, caption and attachment page.
@@ -135,10 +137,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   @doc """
   The content pieces of `row`, an entry Elementor laid out, made as a `kind` (`"page"` or
-  `"post"`) is, and the names of the widgets in it the CMS has no equivalent for, reading its images
-  with `fetch`; `:none` for an entry Elementor did not lay out.
+  `"post"`) is, the names of the widgets in it the CMS has no equivalent for, and the names of
+  those of them Elementor drew nothing for, reading its images with `fetch`; `:none` for an entry
+  Elementor did not lay out.
   """
-  @spec call(map(), String.t(), Content.fetch()) :: {:ok, [map()], [String.t()]} | :none
+  @spec call(map(), String.t(), Content.fetch()) ::
+          {:ok, [map()], [String.t()], [String.t()]} | :none
   def call(
         %{"meta" => %{"_elementor_edit_mode" => "builder", "_elementor_data" => data}} = row,
         kind,
@@ -160,11 +164,13 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
       fallbacks: fallbacks(row, unsupported)
     }
 
-    {:ok, elements |> Enum.flat_map(&element(&1, ctx)) |> Content.pieces(),
-     unsupported |> Enum.map(&elem(&1, 1)) |> Enum.uniq()}
+    {:ok, elements |> Enum.flat_map(&element(&1, ctx)) |> Content.pieces(), named(unsupported),
+     unsupported |> Enum.reject(&is_map_key(ctx.fallbacks, elem(&1, 0))) |> named()}
   end
 
   defp laid_out(_no_layout, _row, _kind, _fetch), do: :none
+
+  defp named(unsupported), do: unsupported |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
 
   defp found(%{"elType" => type, "elements" => children}, found)
        when type in @layouts and is_list(children),
@@ -199,14 +205,22 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
     for {id, _name} <- unsupported,
         is_binary(id) and Regex.match?(@element_id, id),
+        drawn = rendered |> LazyHTML.query(~s([data-id="#{id}"])) |> fallback(),
+        not blank?(drawn),
         into: %{},
-        do: {id, rendered |> LazyHTML.query(~s([data-id="#{id}"])) |> fallback()}
+        do: {id, drawn}
   end
 
   defp fallbacks(_row, _unsupported), do: %{}
 
   defp fallback(drawn),
     do: drawn |> LazyHTML.child_nodes() |> LazyHTML.to_tree() |> LazyHTML.Tree.postwalk(&kept/1)
+
+  defp blank?(nodes), do: Enum.all?(nodes, &blank_node?/1)
+
+  defp blank_node?(text) when is_binary(text), do: String.trim(text) == ""
+  defp blank_node?({_tag, [], children}), do: blank?(children)
+  defp blank_node?(_node), do: false
 
   defp kept({tag, _attrs, _children}) when tag in @not_kept, do: []
 

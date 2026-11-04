@@ -15,7 +15,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   widgets after `": "` (`"unsupported_widgets: form, slides"`), in the dry run (the target's
   `waiting/2`, `waiting/2` here) and in `prepare/3` for any write (`call/2`). Import with the
   fallback HTML for those parts (`"import"`) writes it with that HTML, and the report names them
-  (`"fallback_html: <names>"`, `note/2`); Leave the page out leaves the item out, as Leave out does.
+  (`"fallback_html: <names>"`, `note/2`), and those the builder drew nothing for, which have no
+  fallback (`"no_fallback: <names>"`); Leave the page out leaves the item out, as Leave out does.
   """
 
   alias MishkaCmsMigration.Source.Item
@@ -48,8 +49,9 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   def waiting(item, context), do: item |> call(context) |> found()
 
   @doc """
-  What the report says of `item`'s widgets once it is written: `"fallback_html: <names>"`, else
-  `nil`.
+  What the report says of `item`'s widgets once it is written: `"fallback_html: <names>"` for those
+  written with what the builder drew for them, and `"no_fallback: <names>"` for those it drew
+  nothing for (the source's `"no_fallback_widgets"`), joined by `"; "`, else `nil`.
   """
   @spec note(Item.t(), Target.context()) :: String.t() | nil
   def note(item, context), do: item |> conflict() |> noted(item, context)
@@ -67,9 +69,22 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
 
   defp noted(nil, _item, _context), do: nil
 
-  defp noted(@conflict <> ": " <> names, item, context),
-    do: context |> Target.decision(item, @conflict) |> fallback(names)
+  defp noted(@conflict <> ": " <> _names, item, context),
+    do: context |> Target.decision(item, @conflict) |> fallback(item)
 
-  defp fallback("import", names), do: "fallback_html: " <> names
-  defp fallback(_undecided, _names), do: nil
+  defp fallback("import", %Item{attrs: attrs}) do
+    none = attrs["no_fallback_widgets"] || []
+
+    [
+      listed("fallback_html: ", attrs["unsupported_widgets"] -- none),
+      listed("no_fallback: ", none)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("; ")
+  end
+
+  defp fallback(_undecided, _item), do: nil
+
+  defp listed(_reason, []), do: nil
+  defp listed(reason, names), do: reason <> Enum.join(names, ", ")
 end

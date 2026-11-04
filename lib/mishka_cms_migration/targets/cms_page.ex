@@ -132,7 +132,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   decision (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), once
   its path does not, in the dry run too (`waiting/2`), also a page an earlier import wrote: Import
   with the fallback HTML for those parts writes it with what Elementor drew for them
-  (`"fallback_html: <names>"`), and Leave the page out leaves it out.
+  (`"fallback_html: <names>"`, and `"no_fallback: <names>"` for those it drew nothing for), and
+  Leave the page out leaves it out.
   """
 
   use MishkaCmsMigration.Target,
