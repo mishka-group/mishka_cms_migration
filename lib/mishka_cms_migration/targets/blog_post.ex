@@ -14,8 +14,12 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     An item's title is the post's title, its `"slug"` the post's slug (its title for a draft
     WordPress left without one), its content pieces, converted, the post's content
     (`MishkaCmsMigration.Source.Item.html/1`), its `"excerpt"` the post's excerpt (an empty one is
-    none), and `"sticky"` makes it featured. A post is in the language the site leads with
-    (`MishkaCmsCore.Runtime.Languages.primary/1`): a WordPress post has no language of its own.
+    none), and `"sticky"` makes it featured. A post is in the language the item names
+    (a site that runs Polylang or WPML names one), joined as one group with the posts that are its
+    other editions, whatever order they are imported in, or, for an item that names none, in the
+    language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a
+    language the site does not publish in waits for an admin's decision, and so does one whose
+    language a source that runs a language plugin does not say, in the dry run too.
 
     ## Status and dates
 
@@ -53,7 +57,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     `href` as written and the source's slug of the post it points at (the WordPress source finds
     them, `MishkaCmsMigration.Sources.WordPress`). Each such link points at that post's Blog
     address instead (`address/3`), its slug made as the Blog's create makes it
-    (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/2`) in the language the site leads with, and
+    (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/2`) in the post's own language, and
     keeps its `#fragment`: `http://old.example/2025/12/hello/#more` becomes `/blog/hello#more`.
     It is the address the run writes the post at, so a post that links to one listed after it
     points at it too. Its `"pages"` name the links of its content that point at a page of the
@@ -139,6 +143,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsMigration.Targets.Helpers.{
       BySlug,
       ContentChecks,
+      Editions,
       Frames,
       Scripts,
       SeoTags,
@@ -150,9 +155,12 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
+      language = Editions.language(item, context)
+
       item
       |> Status.call()
       |> dated(date(item.attrs["date_gmt"]))
+      |> Map.merge(Editions.attrs(item, context, MishkaBlog.BlogPost))
       |> Map.merge(%{
         title: item.title,
         slug: slug(item),
@@ -161,14 +169,13 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> Item.html()
           |> Scripts.removed(item, context)
           |> Frames.playable(context)
-          |> relinked(item.attrs["links"], context)
+          |> relinked(item.attrs["links"], {language, context})
           |> CmsPage.relinked(item.attrs["pages"], context)
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),
         seo_tags: SeoTags.call(item, context, item.attrs["featured_media"]),
         featured: item.attrs["sticky"] == true,
-        language: Languages.primary(context.site_id),
         collection_ids: written(context, "category", item.attrs["categories"]),
         tag_ids: written(context, "tag", item.attrs["tags"]),
         blogger_ids: written(context, "user", item.attrs["author"])
@@ -201,6 +208,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     @impl MishkaCmsMigration.Target
     def note(item, context) do
       [
+        Editions.note(item, context),
         item |> Status.call() |> drafted(),
         authored(item, context),
         pictured(item, context),
@@ -261,19 +269,20 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp excerpt(""), do: nil
     defp excerpt(excerpt), do: excerpt
 
-    defp relinked(html, links, context) when is_map(links) and map_size(links) > 0,
-      do: links |> Map.drop(left_out_links(links, context)) |> relinked_to(html, context)
+    defp relinked(html, links, {_language, context} = to)
+         when is_map(links) and map_size(links) > 0,
+         do: links |> Map.drop(left_out_links(links, context)) |> relinked_to(html, to)
 
-    defp relinked(html, _no_links, _context), do: html
+    defp relinked(html, _no_links, _to), do: html
 
-    defp relinked_to(links, html, _context) when map_size(links) == 0, do: html
+    defp relinked_to(links, html, _to) when map_size(links) == 0, do: html
 
-    defp relinked_to(links, html, context),
+    defp relinked_to(links, html, to),
       do:
         html
         |> LazyHTML.from_fragment()
         |> LazyHTML.to_tree()
-        |> LazyHTML.Tree.postwalk(&relink(&1, links, context))
+        |> LazyHTML.Tree.postwalk(&relink(&1, links, to))
         |> LazyHTML.Tree.to_html()
 
     defp left_out_links(links, context) do
@@ -290,21 +299,18 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       for {href, slug} <- links, MapSet.member?(left_out, slug), do: href
     end
 
-    defp relink({"a", attributes, children}, links, context),
-      do: {"a", Enum.map(attributes, &href(&1, links, context)), children}
+    defp relink({"a", attributes, children}, links, to),
+      do: {"a", Enum.map(attributes, &href(&1, links, to)), children}
 
-    defp relink(node, _links, _context), do: node
+    defp relink(node, _links, _to), do: node
 
-    defp href({"href", old}, links, context) when is_map_key(links, old),
-      do: {"href", links |> Map.fetch!(old) |> slug_address(context) |> anchored(old)}
+    defp href({"href", old}, links, to) when is_map_key(links, old),
+      do: {"href", links |> Map.fetch!(old) |> slug_address(to) |> anchored(old)}
 
-    defp href(attribute, _links, _context), do: attribute
+    defp href(attribute, _links, _to), do: attribute
 
-    defp slug_address(slug, context),
-      do:
-        __MODULE__
-        |> BySlug.slug(slug)
-        |> address(Languages.primary(context.site_id), context.site_id)
+    defp slug_address(slug, {language, context}),
+      do: __MODULE__ |> BySlug.slug(slug) |> address(language, context.site_id)
 
     defp anchored(nil, old), do: old
     defp anchored(new, old), do: old |> URI.parse() |> fragment(new)

@@ -308,9 +308,10 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert has_element?(view, ~s|#{@warning}[data-cause="prefix_all"]|)
       assert has_element?(view, ~s|#{@warning} [role="alert"]|, "Tip:")
       assert has_element?(view, ~s|#{@warning} [role="alert"]|, "Suggestion:")
+      refute has_element?(view, ~s|#{@warning} [data-role="language-editions"]|)
     end
 
-    test "is on the head of a run whose source runs a language plugin",
+    test "is on the head of a run whose source runs a language plugin, and says how its translations are imported",
          %{conn: conn, site: site, admin: admin, run: run} do
       body =
         "index"
@@ -321,7 +322,10 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       stub!(%{"/wp-json/" => {"application/json", body}})
       later = later_run!(site, admin, run)
 
-      assert has_element?(open!(conn, admin, later), ~s|#{@warning}[data-cause="wpml"]|)
+      view = open!(conn, admin, later)
+
+      assert has_element?(view, ~s|#{@warning}[data-cause="wpml"]|)
+      assert has_element?(view, ~s|#{@warning} [data-role="language-editions"]|, "export file")
     end
   end
 

@@ -11,8 +11,12 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   template must compile.
 
   An item's title is the page's title, its content pieces, converted, the page's template (below),
-  and the page is in the language the site leads with
-  (`MishkaCmsCore.Runtime.Languages.primary/1`): a WordPress page has no language of its own. It is
+  and the page is in the language the item names (a site that runs Polylang or WPML names one),
+  joined as one group with the pages that are its other editions, whatever order they are imported
+  in, or, for an item that names none, in the language the site leads with
+  (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a language the site does not publish
+  in waits for an admin's decision, and so does one whose language a source that runs a language
+  plugin does not say, in the dry run too. It is
   drawn in the site's `site-main` layout (`MishkaCmsCore.Runtime.SiteLayout.layout_id/1`), between
   the header and the footer every page of the site shares, as the pages an extension provisions are.
   The core names the page after its title, as it does for a page typed in the form.
@@ -144,7 +148,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   require Ash.Query
 
-  alias MishkaCmsCore.Runtime.{Languages, Page, SiteLayout}
+  alias MishkaCmsCore.Runtime.{Page, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
@@ -152,6 +156,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsMigration.Targets.Helpers.{
     BySlug,
     ContentChecks,
+    Editions,
     Frames,
     Read,
     Scripts,
@@ -164,7 +169,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def attrs(item, context) do
-    %{
+    item
+    |> Editions.attrs(context, Page)
+    |> Map.merge(%{
       title: item.title,
       path:
         item
@@ -173,9 +180,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       template: template(item, context),
       active: active?(item, context),
       seo_tags: SeoTags.call(item, context, nil),
-      language: Languages.primary(context.site_id),
       layout_id: SiteLayout.layout_id(context.site_id)
-    }
+    })
   end
 
   @impl MishkaCmsMigration.Target
@@ -200,6 +206,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   def note(item, context),
     do:
       [
+        Editions.note(item, context),
         item |> Status.call() |> drafted(),
         moved(item),
         BySlug.note(item, context),
