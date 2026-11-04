@@ -74,6 +74,30 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
   defp drawn_as?(classes, id), do: MapSet.subset?(builder(id), classes)
 
+  defp laid_out!(elements, kind \\ "page") do
+    [row] = Enum.filter(recorded("elementor-pages"), &(&1["slug"] == "elementor-landing"))
+    stub!()
+    {:ok, conn} = WordPress.connect(@connection, "app password")
+
+    assert {:ok, item} =
+             row
+             |> put_in(["meta", "_elementor_data"], JSON.encode!(elements))
+             |> put_in(["content", "rendered"], "")
+             |> WordPress.normalize(kind, Map.put(@context, :conn, conn))
+             |> built(kind)
+
+    item
+  end
+
+  defp widget(type, settings),
+    do: %{
+      "id" => "w" <> Integer.to_string(System.unique_integer([:positive])),
+      "elType" => "widget",
+      "widgetType" => type,
+      "settings" => settings,
+      "elements" => []
+    }
+
   describe "a page laid out with sections" do
     setup do
       %{page: items!("page", "elementor-pages")["elementor-landing"]}
@@ -247,6 +271,34 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       assert texts(html, "figure > figcaption") == ["The cover image"]
       assert html |> LazyHTML.query("div:empty") |> Enum.empty?()
       refute Map.has_key?(post.attrs, "unsupported_widgets")
+    end
+  end
+
+  describe "a video widget" do
+    test "whose address was cleared draws no video, and one never set draws Elementor's demo" do
+      cleared =
+        for {type, key} <- [
+              {"youtube", "youtube_url"},
+              {"vimeo", "vimeo_url"},
+              {"dailymotion", "dailymotion_url"},
+              {"videopress", "videopress_url"}
+            ],
+            value <- ["", nil, "  "],
+            do: widget("video", %{"video_type" => type, key => value})
+
+      assert cleared
+             |> laid_out!()
+             |> html()
+             |> LazyHTML.query("iframe, video, a")
+             |> Enum.empty?()
+
+      assert [widget("video", %{})] |> laid_out!() |> html() |> attribute("iframe", "src") ==
+               ["https://www.youtube-nocookie.com/embed/XHOmBV4js_E"]
+
+      assert [widget("video", %{"video_type" => "vimeo"})]
+             |> laid_out!()
+             |> html()
+             |> attribute("iframe", "src") == ["https://player.vimeo.com/video/235215203"]
     end
   end
 

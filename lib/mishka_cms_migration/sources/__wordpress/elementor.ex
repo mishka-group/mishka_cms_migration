@@ -40,7 +40,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     * a button — a link drawn as the builder's button, centred or right-aligned as it is;
     * a video — the player of a YouTube or Vimeo video
       (`MishkaCmsMigration.Sources.WordPress.Content.embed/1`), a link to a Dailymotion or
-      VideoPress one, and a `<video>` of a file the site hosts or of another address;
+      VideoPress one, and a `<video>` of a file the site hosts or of another address; a video
+      whose address was never set is Elementor's demo video, as Elementor draws it, and one whose
+      address was cleared is none;
     * an icon list — a Bulleted list, each item linked when it links, without its icons;
     * an image gallery, and Elementor Pro's gallery — a grid of as many columns as it has, of
       Figures each linked to its file or to its attachment page;
@@ -486,7 +488,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp addressed(type, settings) when is_map_key(@videos, type) do
     {key, default} = Map.fetch!(@videos, type)
-    {:player, text(settings[key], default)}
+    {:player, Map.get(settings, key, default)}
   end
 
   defp addressed(_type, _settings), do: nil
@@ -495,12 +497,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp hosted(%{"hosted_url" => %{"url" => url}}), do: url
   defp hosted(_settings), do: nil
 
-  defp played({:player, url}), do: [url |> String.trim() |> Content.embed()]
-
-  defp played({:file, url}) when is_binary(url) and url != "",
-    do: [{"video", [{"controls", ""}, {"src", url}], []}]
-
+  defp played({kind, url}) when is_binary(url), do: url |> String.trim() |> drawn(kind)
   defp played(_none), do: []
+
+  defp drawn("", _kind), do: []
+  defp drawn(url, :player), do: [Content.embed(url)]
+  defp drawn(url, :file), do: [{"video", [{"controls", ""}, {"src", url}], []}]
 
   defp text(text, _default) when is_binary(text) and text != "", do: text
   defp text(_none, default), do: default
