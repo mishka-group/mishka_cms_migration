@@ -302,6 +302,42 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     end
   end
 
+  describe "an unsafe address" do
+    test "javascript:, vbscript: and data: but an image's are dropped from every link and source" do
+      html =
+        [
+          widget("heading", %{"title" => "Heading", "link" => %{"url" => "javascript:alert(1)"}}),
+          widget("button", %{"text" => "Button", "link" => %{"url" => " JaVaScRiPt:alert(1)"}}),
+          widget("image", %{
+            "image" => %{"url" => "data:image/png;base64,iVBORw0KGgo="},
+            "link_to" => "custom",
+            "link" => %{"url" => "vbscript:msgbox(1)"}
+          }),
+          widget("icon-list", %{
+            "icon_list" => [%{"text" => "Item", "link" => %{"url" => "data:text/html,<b>x</b>"}}]
+          }),
+          widget("text-editor", %{
+            "editor" => ~s|<p><a href="java\tscript:alert(1)">t</a><img src="javascript:x"></p>|
+          }),
+          widget("video", %{
+            "video_type" => "hosted",
+            "hosted_url" => %{"url" => "javascript:alert(1)"}
+          }),
+          widget("html", %{
+            "html" => ~s(<iframe src="data:text/html,x"></iframe><a href="/ok">ok</a>)
+          })
+        ]
+        |> laid_out!()
+        |> html()
+
+      addresses = attribute(html, "[href]", "href") ++ attribute(html, "[src]", "src")
+
+      assert addresses == ["/ok", "data:image/png;base64,iVBORw0KGgo="]
+      assert texts(html, "h2") == ["Heading"]
+      assert html |> LazyHTML.query("a") |> Enum.map(&LazyHTML.text/1) |> Enum.member?("Button")
+    end
+  end
+
   describe "Elementor's own meta" do
     test "is left out of extra, so an entry Elementor could lay out reads as it did before Elementor" do
       [row | _] = recorded("pages")
