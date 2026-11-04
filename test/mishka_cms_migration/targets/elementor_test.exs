@@ -87,7 +87,7 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       assert pages(site) == %{}
 
       contact = item(site, @contact)
-      assert MigrationItem.conflict(contact) == @widgets
+      assert MigrationItem.conflict(contact) == "unsupported_widgets"
       assert MigrationRun.reason_label(@widgets) =~ "form, google_maps, image-carousel, slides"
 
       assert MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: contact}}) == [
@@ -169,19 +169,18 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       assert item(site, @contact).left_out
     end
 
-    test "asks again once the page has another widget the CMS has no equivalent for" do
+    test "holds for the page with every such widget it has, and the report names them all" do
       {:ok, item} =
         Item.build(%{kind: "page", source_id: 1, attrs: %{"unsupported_widgets" => ["form"]}})
 
-      decided = %{decisions: %{"1" => %{"unsupported_widgets: form" => "import"}}}
+      assert Widgets.call(item, %{decisions: %{}}) == {:undecided, "unsupported_widgets: form"}
 
-      assert Widgets.call(item, decided) == :ok
-      assert Widgets.note(item, decided) == "fallback_html: form"
-
+      decided = %{decisions: %{"1" => %{"unsupported_widgets" => "import"}}}
       more = put_in(item.attrs["unsupported_widgets"], ["form", "slides"])
-      assert Widgets.call(more, decided) == {:undecided, "unsupported_widgets: form, slides"}
-      assert Widgets.waiting(more, decided) == {:undecided, "unsupported_widgets: form, slides"}
-      assert Widgets.note(more, decided) == nil
+
+      assert Widgets.call(more, decided) == :ok
+      assert Widgets.waiting(more, decided) == nil
+      assert Widgets.note(more, decided) == "fallback_html: form, slides"
     end
   end
 end

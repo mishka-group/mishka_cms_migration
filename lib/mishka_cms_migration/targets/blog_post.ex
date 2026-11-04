@@ -58,8 +58,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     It is the address the run writes the post at, so a post that links to one listed after it
     points at it too. Its `"pages"` name the links of its content that point at a page of the
     source, and each points at the path that page is written at instead, keeping its `?query` and
-    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/2`): `http://old.example/contact/` is
-    `/contact`. Any other link is kept as it is: a category, a file, an outside site, a post or
+    `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/3`): `http://old.example/contact/` is
+    `/contact`, or `/contact-29` once an admin decided to import that page as new beside the
+    site's own. Any other link is kept as it is: a category, a file, an outside site, a post or
     page the source no longer has, or a post an admin left out, found by the slug its item recorded
     (`MishkaCmsMigration.MigrationItem`'s `source_slug`), which keeps its old address.
 
@@ -72,16 +73,19 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`"featured_image_missing"`); a dry run, which writes no file, does not.
 
     Its `"media"` name the addresses of its content that are files of the source, and each `src`,
-    `href` and video `poster` of them points at the file's Media address instead
-    (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
+    `href`, video `poster` and `srcset` candidate of them points at the file's Media address
+    instead (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
-    file that was not written is kept as it is.
+    file that was not written is kept as it is, and an `srcset` candidate of one is named in the
+    report (`"srcset_file_missing"`).
 
     ## Its SEO
 
     Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
     post's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description,
-    robots, share image and a canonical address on another site. A share image that is the post's
+    robots, share image, a canonical address on another site, and the social and Twitter title,
+    description, image and card when they say something else than the page's own (see the helper).
+    A share image that is the post's
     featured image is left out: the post's page then shows the core's share card, which draws the
     featured image with the post's title, where a stored `og:image` would replace the card. The
     WordPress REST API cannot tell Yoast's chosen image from its fallback to the featured image.
@@ -92,9 +96,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     allowed on the site before the post is written, in an import only, as the admin
     (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them
     (`"frames_allowed: <origins>"`), in the dry run too. For an admin who may not change the site's
-    settings the post waits for an admin's decision (`"player_not_allowed"`): Wait for an admin
-    keeps it for a run by one who may, and Import without the player writes it with that player
-    left out (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
+    settings the post waits for an admin's decision (`"player_not_allowed"`), in the dry run too
+    (`waiting/2`), also a post an earlier import wrote: Wait for an admin keeps it for a run by one
+    who may, and Import without the player writes it with that player left out
+    (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
     leaves out its other attributes, such as `allowfullscreen`.
 
     ## Its Elementor layout
@@ -103,8 +108,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`MishkaCmsMigration.Sources.WordPress.Elementor`). One with widgets the CMS has no equivalent
     for, such as a form, a slider or a map, waits for an admin's decision
     (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), in the dry
-    run too: Import with the fallback HTML for those parts writes it with what Elementor drew for
-    them (`"fallback_html: <names>"`), and Leave the page out leaves it out.
+    run too (`waiting/2`), also a post an earlier import wrote: Import with the fallback HTML for
+    those parts writes it with what Elementor drew for them (`"fallback_html: <names>"`), and Leave
+    the page out leaves it out.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).
@@ -137,7 +143,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           |> Item.html()
           |> Frames.playable(context)
           |> relinked(item.attrs["links"], context)
-          |> CmsPage.relinked(item.attrs["pages"])
+          |> CmsPage.relinked(item.attrs["pages"], context)
           |> CmsMedia.relinked(item.attrs["media"], context),
         excerpt: excerpt(item.attrs["excerpt"]),
         featured_image_url: featured_image(item, context),
@@ -167,16 +173,6 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
-    def existing(items, context),
-      do:
-        for(
-          item <- items,
-          found = Widgets.waiting(item, context) || Frames.waiting(item, context),
-          into: %{},
-          do: {item.source_id, found}
-        )
-
-    @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
       do:
         with(
@@ -186,12 +182,17 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
+    def waiting(item, context),
+      do: Widgets.waiting(item, context) || Frames.waiting(item, context)
+
+    @impl MishkaCmsMigration.Target
     def note(item, context) do
       [
         item |> Status.call() |> drafted(),
         authored(item, context),
         pictured(item, context),
         Widgets.note(item, context),
+        CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)

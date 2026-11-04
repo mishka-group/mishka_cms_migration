@@ -213,6 +213,29 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert posts(site) == %{}
     end
 
+    test "skips by the run's choices what they leave out anyway: comments while they are off, redirects for posts without them",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
+               [{:skipped, "not_chosen"}]
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+
+      run =
+        site
+        |> wordpress_run!(admin, %{post_address: "blog_without_redirects", comments: true})
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() ==
+               [{:skipped, "not_chosen"}]
+
+      assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+    end
+
     test "Wait for the Blog keeps an item until the Blog is there, and Leave out leaves it out",
          %{
            site: site,
@@ -231,6 +254,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                [{:undecided, "blog_missing"}]
 
       assert blog(Collection, site) == %{}
+      assert MigrationItem.conflict(category_item(site)) == "blog_missing"
 
       with_blog!()
       run = imported!(site, admin)
@@ -239,7 +263,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
       assert is_map_key(blog(Collection, site), "Elixir")
       refute is_map_key(blog(Tag, site), "Elixir")
+      assert MigrationItem.conflict(category_item(site)) == nil
     end
+
+    defp category_item(site),
+      do:
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "category" and &1.source_id == "6"))
   end
 
   describe "an import" do
@@ -414,6 +445,37 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       again = imported!(site, admin)
       assert %{"10" => {:updated, "another_slug"}} = outcomes(again, "tag")
       assert blog(Tag, site)["Elixir"].slug == "elixir-10"
+    end
+
+    test "Import as new stays once an import wrote it: switching to Connect is refused, and the record is kept and written again",
+         %{site: site, admin: admin} do
+      {tag, _collection} = own_terms!(site, admin)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"tag", "10"}], "import")
+      imported!(site, admin)
+      written = blog(Tag, site)["Elixir"]
+
+      item =
+        Enum.find(
+          Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+          &(&1.source_kind == "tag" and &1.source_id == "10")
+        )
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :decision}]}} =
+               MishkaCmsMigration.decide_item(item, "keep", actor: admin, tenant: site.id)
+
+      assert Ash.get!(MigrationItem, item.id, tenant: site.id, authorize?: false).decisions ==
+               %{"slug_taken" => "import"}
+
+      change_in_wordpress!("tag")
+      again = imported!(site, admin)
+
+      assert %{"10" => {:updated, "another_slug"}} = outcomes(again, "tag")
+
+      assert {blog(Tag, site)["Elixir"].id, blog(Tag, site)["Elixir"].slug} ==
+               {written.id, "elixir-10"}
+
+      assert blog(Tag, site)["Elixir, as the site has it"].id == tag.id
     end
 
     test "a slug WordPress keeps percent-encoded is matched, and made anew, as the Blog stores it",
@@ -1009,6 +1071,25 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                outcomes(run, "post")
     end
 
+    test "an import points a post's links to a page imported as new beside the site's own at the path it was written at",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:page"])
+      create_page!(site_id: site.id, path: "/about/team", title: "Our own team")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, [{"page", "25"}], "import")
+
+      imported!(site, admin)
+
+      hrefs =
+        posts(site)["Linking between posts and media"]
+        |> content()
+        |> LazyHTML.query("a")
+        |> LazyHTML.attribute("href")
+
+      assert Enum.frequencies(hrefs)["/about/team-25"] == 2
+      refute "/about/team" in hrefs
+    end
+
     test "an import points a post's links to the run's posts at their Blog addresses and to its pages at their CMS paths, and keeps every other link",
          %{site: site, admin: admin} do
       imported!(site, admin)
@@ -1207,6 +1288,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert Seo.tag_value(checklist, "description") =~ "Keep addresses"
       assert Seo.tag_value(checklist, "robots") == "noindex, nofollow"
       assert Seo.tag_value(blocks, "og:image") == files["diagram"]
+
+      assert Seo.tag_value(checklist, "og:title") == "SEO checklist (social title)"
+      assert Seo.tag_value(checklist, "og:description") =~ "social description"
+      assert Seo.tag_value(checklist, "twitter:title") == "SEO checklist (Twitter title)"
+      assert Seo.tag_value(checklist, "twitter:description") == "The Twitter description."
+      refute Seo.tag_value(blocks, "og:title"), "Yoast's default social title is the page's title"
+      refute Seo.tag_value(blocks, "twitter:card"), "the head draws the large card by itself"
+      refute Seo.tag_value(blocks, "twitter:image"), "the head repeats the og:image for Twitter"
 
       assert Seo.tag_value(tips, "canonical") ==
                "https://syndicated.example.test/phoenix-liveview-tips/"

@@ -470,6 +470,9 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   end
 
   describe "links to pages" do
+    defp relink_context(site, admin),
+      do: %{source_host: "localhost:8089", actor: admin, site_id: site.id}
+
     defp hrefs(page),
       do:
         page.template
@@ -493,40 +496,71 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert Enum.all?(old_site, &(&1 =~ "/wp-content/uploads/"))
     end
 
-    test "a link keeps its query and fragment, and goes to the path however it was written" do
+    test "a link to a page imported as new beside the site's own goes to the path it was written at",
+         %{site: site, admin: admin} do
+      own = create_page!(site_id: site.id, path: "/contact", title: "Our own contact")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "29", "import")
+
+      imported!(site, admin)
+      pages = pages(site)
+
+      assert "/contact-29" in hrefs(pages["/about"])
+      refute "/contact" in hrefs(pages["/about"])
+      assert "/about/team" in hrefs(pages["/about"])
+      assert pages["/contact"].id == own.id
+    end
+
+    test "a link keeps its query and fragment, and goes to the path however it was written",
+         %{site: site, admin: admin} do
       html =
         ~s(<a href="http://localhost:8089/contact/?ref=nav#form">a</a>) <>
           ~s(<a href="/about/team/">b</a>) <>
           ~s(<a href="http://localhost:8089/?page_id=25&amp;x=1#staff">c</a>) <>
           ~s(<a href="http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/">d</a>)
 
+      team = %{"link" => "http://localhost:8089/about/team/", "id" => "25"}
+
       pages = %{
-        "http://localhost:8089/contact/?ref=nav#form" => "http://localhost:8089/contact/",
-        "/about/team/" => "http://localhost:8089/about/team/",
-        "http://localhost:8089/?page_id=25&x=1#staff" => "http://localhost:8089/about/team/",
-        "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/" =>
-          "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/"
+        "http://localhost:8089/contact/?ref=nav#form" => %{
+          "link" => "http://localhost:8089/contact/",
+          "id" => "29"
+        },
+        "/about/team/" => team,
+        "http://localhost:8089/?page_id=25&x=1#staff" => team,
+        "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/" => %{
+          "link" => "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/",
+          "id" => "40"
+        }
       }
 
       assert html
-             |> CmsPage.relinked(pages)
+             |> CmsPage.relinked(pages, relink_context(site, admin))
              |> LazyHTML.from_fragment()
              |> LazyHTML.query("a")
              |> LazyHTML.attribute("href") ==
                ["/contact?ref=nav#form", "/about/team", "/about/team#staff", "/wrdprs"]
     end
 
-    test "a link to a page with no address of its own yet, and any other link, is kept as it is" do
+    test "a link to a page with no address of its own yet, and any other link, is kept as it is",
+         %{site: site, admin: admin} do
       html =
         ~s(<a href="http://localhost:8089/?page_id=30">a</a>) <>
           ~s(<a href="http://localhost:8089/category/news/">b</a>) <>
           ~s(<a href="https://elixir-lang.org/">c</a>)
 
-      pages = %{"http://localhost:8089/?page_id=30" => "http://localhost:8089/?page_id=30"}
+      pages = %{
+        "http://localhost:8089/?page_id=30" => %{
+          "link" => "http://localhost:8089/?page_id=30",
+          "id" => "30"
+        }
+      }
 
-      assert CmsPage.relinked(html, pages) == html
-      assert CmsPage.relinked(html, %{}) == html
-      assert CmsPage.relinked(html, nil) == html
+      context = relink_context(site, admin)
+
+      assert CmsPage.relinked(html, pages, context) == html
+      assert CmsPage.relinked(html, %{}, context) == html
+      assert CmsPage.relinked(html, nil, context) == html
     end
   end
 
@@ -572,6 +606,19 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       refute page.template =~ "player.vimeo.com"
       assert page.template =~ "maps.example.com"
       assert Settings.get("security.frame_origins", [], site.id) == []
+    end
+
+    test "a dry run plans a page an import wrote before for a decision once WordPress gives it a player the admin may not allow",
+         %{site: site, admin: admin} do
+      assert {:created, nil} = outcomes(fake_pages!(site, admin, [row(1, %{})]))["1"]
+
+      player = ~s(<iframe src="https://player.vimeo.com/video/76979871"></iframe>)
+      rows = [row(1, %{"content" => [%{"html" => player}]})]
+      run = site |> create_run!(admin, %{"page" => rows}) |> dry_run!(admin)
+
+      assert outcomes(run)["1"] == {:undecided, "player_not_allowed"}
+      assert outcomes(import!(run, admin))["1"] == {:undecided, "player_not_allowed"}
+      refute pages(site)["/page-1"].template =~ "vimeo"
     end
   end
 

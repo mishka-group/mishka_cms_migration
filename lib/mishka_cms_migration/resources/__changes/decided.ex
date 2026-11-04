@@ -10,8 +10,12 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
   `"leave_out"` leaves the item out instead.
 
   Given as the action's `decision` argument, the choice of one item's Decide…, a choice the
-  conflict does not offer (`MishkaCmsMigration.MigrationItem.choices/1`), and any choice on an item
-  that waits on none, is refused on `decision`, in words an admin reads; no choice changes nothing.
+  conflict does not offer (`MishkaCmsMigration.MigrationItem.choices/1`), any choice on an item
+  that waits on none, and any choice on an item whose decision already took effect
+  (`MishkaCmsMigration.MigrationItem.settled?/1`), is refused on `decision`, in words an admin
+  reads; no choice changes nothing. A decision that took effect stays: an item an import wrote as
+  new is never moved onto the slug of the site's own record, which the Blog would refuse, and one
+  it connected to the site's record is never written over it.
 
       update :choose do
         argument :decision, :string
@@ -34,6 +38,11 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
   alias MishkaCmsMigration.MigrationItem
 
   @nothing dgettext_noop("errors", "Nothing on this item waits for your decision.")
+
+  @took_effect dgettext_noop(
+                 "errors",
+                 "Your decision already took effect: the import wrote or connected this item by it, so it stays."
+               )
   @not_offered dgettext_noop("errors", "Pick one of the choices this item offers.")
 
   @impl true
@@ -41,15 +50,16 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
     choice = opts[:choice] || Ash.Changeset.get_argument(changeset, :decision)
 
     changeset.data
-    |> MigrationItem.conflict()
-    |> answer(choice, changeset.data)
+    |> MigrationItem.settled?()
+    |> answer(MigrationItem.conflict(changeset.data), choice, changeset.data)
     |> settled(changeset, opts[:choice])
   end
 
-  defp answer(_conflict, nil, _item), do: :none
-  defp answer(nil, _choice, _item), do: {:error, @nothing}
+  defp answer(_settled, _conflict, nil, _item), do: :none
+  defp answer(true, _conflict, _choice, _item), do: {:error, @took_effect}
+  defp answer(false, nil, _choice, _item), do: {:error, @nothing}
 
-  defp answer(conflict, choice, item),
+  defp answer(false, conflict, choice, item),
     do: answered(conflict, choice, item, choice in MigrationItem.choices(conflict))
 
   defp answered(_conflict, "leave_out", _item, true), do: {:ok, left_out: true}

@@ -324,6 +324,30 @@ defmodule MishkaCmsMigration.Source do
 
   def url_host(_connection), do: nil
 
+  @doc """
+  The candidates of an `srcset` attribute, each as `{url, descriptor}` (`{"hero-300.jpg", "300w"}`;
+  the descriptor is `""` for a candidate with none), in the order written. Candidates are told
+  apart by a comma followed by white space, or by one that follows a width or density descriptor.
+  """
+  @spec srcset(String.t()) :: [{String.t(), String.t()}]
+  def srcset(value) when is_binary(value),
+    do:
+      for(
+        candidate <- Regex.split(~r/,\s+|(?<=\d[wx]),/, value, trim: true),
+        [url | descriptor] <- [String.split(candidate, ~r/\s+/, parts: 2, trim: true)],
+        do: {String.trim_trailing(url, ","), Enum.join(descriptor)}
+      )
+
+  @doc """
+  The `srcset` attribute `candidates` (`srcset/1`) written back as the attribute's value.
+  """
+  @spec srcset_value([{String.t(), String.t()}]) :: String.t()
+  def srcset_value(candidates),
+    do:
+      Enum.map_join(candidates, ", ", fn {url, descriptor} ->
+        String.trim("#{url} #{descriptor}")
+      end)
+
   defp host_of(%URI{host: host} = uri) when is_binary(host) and host != "",
     do: String.downcase(host) <> port_of(uri)
 

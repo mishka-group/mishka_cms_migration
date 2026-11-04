@@ -15,6 +15,8 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaCmsCore.Runtime.{Media, MediaCategory}
+  alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Targets.CmsMedia
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:runtime:media"]
@@ -217,6 +219,81 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert downloads() == []
       assert media(site)["hero"].relative_path == hero.relative_path
       assert stored(media(site)["hero"]) == seeded("hero.jpg")
+    end
+  end
+
+  describe "srcset" do
+    @site_uploads "http://localhost:8089" <> @uploads
+
+    defp srcset_item(html, media) do
+      {:ok, item} =
+        Item.build(%{
+          kind: "post",
+          source_id: "1",
+          title: "T",
+          content: [%{html: html}],
+          attrs: %{"media" => media}
+        })
+
+      item
+    end
+
+    defp srcsets(html),
+      do:
+        html
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("[srcset]")
+        |> LazyHTML.attribute("srcset")
+
+    test "relinking points every candidate of an img's and a picture source's srcset at its Media file, keeping descriptors, sizes and other URLs",
+         %{site: site, admin: admin} do
+      stub!(%{(@uploads <> "gallery-2.jpg") => :no_site})
+      imported!(site, admin)
+      media = media(site)
+      context = %{source_host: "localhost:8089", actor: admin, site_id: site.id, mode: :import}
+
+      html =
+        ~s(<img src="#{@site_uploads}gallery-1.jpg" sizes="100vw, 800px" ) <>
+          ~s(srcset="#{@site_uploads}gallery-1.jpg 800w, #{@site_uploads}gallery-1-300x225.jpg 300w, https://cdn.example.test/x.jpg 2x, #{@site_uploads}gallery-2.jpg 100w">) <>
+          ~s(<picture><source srcset="#{@site_uploads}hero-300x169.jpg 1x"><img src="/x.png"></picture>)
+
+      moved = %{
+        (@site_uploads <> "gallery-1.jpg") => 6,
+        (@site_uploads <> "gallery-1-300x225.jpg") => 6,
+        (@site_uploads <> "hero-300x169.jpg") => 4,
+        (@site_uploads <> "gallery-2.jpg") => 7
+      }
+
+      [img, source] = html |> CmsMedia.relinked(moved, context) |> srcsets()
+      gallery = media["gallery-1"].relative_path
+
+      assert img ==
+               "#{gallery} 800w, #{gallery} 300w, https://cdn.example.test/x.jpg 2x, " <>
+                 "#{@site_uploads}gallery-2.jpg 100w"
+
+      assert source == "#{media["hero"].relative_path} 1x"
+
+      relinked = CmsMedia.relinked(html, moved, context)
+      assert relinked =~ ~s(sizes="100vw, 800px")
+
+      assert CmsMedia.srcset_note(srcset_item(html, moved), context) == "srcset_file_missing"
+    end
+
+    test "no note when every candidate was imported, none is a file of the source, or the run is a dry run",
+         %{site: site, admin: admin} do
+      stub!()
+      imported!(site, admin)
+      context = %{source_host: "localhost:8089", actor: admin, site_id: site.id, mode: :import}
+
+      html =
+        ~s(<img srcset="#{@site_uploads}gallery-1.jpg 800w, https://cdn.example.test/x.jpg 2x">)
+
+      moved = %{(@site_uploads <> "gallery-1.jpg") => 6}
+
+      refute CmsMedia.srcset_note(srcset_item(html, moved), context)
+      refute CmsMedia.srcset_note(srcset_item(html, %{}), context)
+      refute CmsMedia.srcset_note(srcset_item(html, %{"/gone.jpg" => 99}), context)
+      refute CmsMedia.srcset_note(srcset_item(html, %{"x" => 99}), %{context | mode: :dry_run})
     end
   end
 end

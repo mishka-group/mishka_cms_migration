@@ -59,9 +59,11 @@ defmodule MishkaCmsMigration.MigrationItem do
   connected to the record the site has, or it waits); `"import"`, the item is written the import's
   way; or `"leave_out"`, where the conflict offers it. The answer is kept in `decisions`, by
   conflict, brings the item back, and holds for every later dry run and import, whose target reads
-  it (`MishkaCmsMigration.Target.decision/3`); a decision made after the item was written changes
-  nothing about it. `:decide_keep` and `:decide_import` give the same answer for the rows an admin
-  picks, and leave the rows whose conflict does not offer it as they are.
+  it (`MishkaCmsMigration.Target.decision/3`). Once an import has written the item by it, or
+  connected it to the site's record, the decision took effect (`settled?/1`) and stays: `:choose`
+  refuses another, in words, and the item keeps the record it has. `:decide_keep` and
+  `:decide_import` give the same answer for the rows an admin picks, and leave the rows whose
+  conflict does not offer it, or whose decision took effect, as they are.
 
   The master actions (`:master_leave_out`, `:master_bring_back`, `:master_choose`,
   `:master_decide_keep`, `:master_decide_import`) do the same on any site.
@@ -100,7 +102,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`chosen/2`). A category's or a tag's Map to… (Gervaz's `:edit` row action, which shows the
   page's modal first) opens this resource's Gervaz form on the item, one `mapped_id` field whose
   choices are the site's records of that kind in the language it leads with, and Import as its own
-  (`map_options/1`). An item with a conflict has Decide… instead, which opens the same form with
+  (`map_options/1`). An item with a conflict has Decide… instead while the conflict is open
+  (`conflict/1`), which opens the same form with
   one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
   Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
   picked rows together. The Plan cell shows the choice before the plan, and the record a mapped
@@ -145,9 +148,11 @@ defmodule MishkaCmsMigration.MigrationItem do
     "header_has_links" => ["keep", "import"],
     "slug_taken" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
-    "player_not_allowed" => ["keep", "import"]
+    "player_not_allowed" => ["keep", "import"],
+    "draft_pages" => ["keep", "import"],
+    "language_urls" => ["keep", "import"],
+    "unsupported_widgets" => ["import", "leave_out"]
   }
-  @widgets "unsupported_widgets: "
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
   @source [:source_host, :source_kind, :source_id]
@@ -1109,23 +1114,37 @@ defmodule MishkaCmsMigration.MigrationItem do
   def mappable?(%{source_kind: kind}), do: kind in @mappable
 
   @doc """
-  The conflict `item` waits on for an admin's decision, such as `"site_has_own"`: the reason of
-  its last dry run's plan when that plan is `:undecided`, else of its last import when that left it
-  `:undecided` after a plan to write it, or with no plan, else the conflict an admin decided (the
-  first, for an item that met several), so a decision can be changed after a run followed it. `nil`
-  for an item that never met one.
+  The conflict `item` waits on for an admin's decision, such as `"site_has_own"`, while it is open:
+  the reason of its last dry run's plan when that plan is `:undecided`, else of its last import
+  when that left it `:undecided` after a plan to write it, or with no plan, else the conflict an
+  admin decided (the first, for an item that met several) until the decision took effect
+  (`settled?/1`), so a decision can be changed until an import wrote or connected the item by it.
+  A reason that names what the conflict is about after `": "`, as `"draft_pages: Team, Leadership"`
+  does, is the conflict before it. `nil` for an item that never met one, and for one whose decision
+  took effect: Decide… is shown only while it is not `nil`, and Map to… comes back.
   """
   @spec conflict(map()) :: String.t() | nil
-  def conflict(item),
-    do: waits_on(item) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
+  def conflict(item), do: code(waits_on(item)) || open_decision(item)
+
+  @doc """
+  Whether the admin's decision on `item` took effect: an import wrote the item by it, or connected
+  it to the site's record, so it has a CMS record (`target_id`), and nothing on it waits for a
+  decision now. Changing it then could only move a record written as new onto the site's own
+  address, or leave one connected unwritten, so it stays
+  (`MishkaCmsMigration.Resources.Changes.Decided`).
+  """
+  @spec settled?(map()) :: boolean()
+  def settled?(%{decisions: decisions, target_id: id, outcome: outcome} = item)
+      when decisions != %{} and is_binary(id) and outcome != :undecided,
+      do: is_nil(waits_on(item))
+
+  def settled?(_item), do: false
 
   @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
-  or, for widgets the CMS has no equivalent for (`"unsupported_widgets: <names>"`), `"import"` and
-  `"leave_out"`; none for `nil` or a conflict this extension does not know.
+  or `"import"` and `"leave_out"`; none for `nil` or a conflict this extension does not know.
   """
   @spec choices(String.t() | nil) :: [String.t()]
-  def choices(@widgets <> _names), do: ["import", "leave_out"]
   def choices(conflict), do: Map.get(@choices, conflict, [])
 
   @doc """
@@ -1284,10 +1303,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           left
         )
 
-  defp choice_word(@widgets <> _names, "import"),
+  defp choice_word("unsupported_widgets", "import"),
     do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")
 
-  defp choice_word(@widgets <> _names, "leave_out"),
+  defp choice_word("unsupported_widgets", "leave_out"),
     do: dgettext("mishka_gervaz", "Leave the page out")
 
   defp choice_word("site_has_own", "keep"), do: dgettext("mishka_gervaz", "Keep the site's own")
@@ -1315,6 +1334,17 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("player_not_allowed", "import"),
     do: dgettext("mishka_gervaz", "Import without the player")
+
+  defp choice_word("language_urls", "keep"), do: dgettext("mishka_gervaz", "Wait")
+
+  defp choice_word("language_urls", "import"),
+    do: dgettext("mishka_gervaz", "Write links for the site's current mode")
+
+  defp choice_word("draft_pages", "keep"),
+    do: dgettext("mishka_gervaz", "Leave those links out of the menu")
+
+  defp choice_word("draft_pages", "import"),
+    do: dgettext("mishka_gervaz", "Publish the linked pages")
 
   defp records(kind, site_id, user), do: kind |> Target.fetch() |> records_of(site_id, user)
 
@@ -1354,8 +1384,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp planned(item), do: item |> waits_on() |> waiting(item)
 
   defp waiting(nil, item), do: as_planned(item)
+  defp waiting(reason, item), do: reason |> code() |> waiting(reason, item.decisions)
 
-  defp waiting(conflict, %{decisions: decisions}) when is_map_key(decisions, conflict),
+  defp waiting(conflict, _reason, decisions) when is_map_key(decisions, conflict),
     do: %{
       key: "decided",
       word: dgettext("mishka_gervaz", "Decided"),
@@ -1364,19 +1395,29 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: choice_word(conflict, Map.fetch!(decisions, conflict))
     }
 
-  defp waiting(conflict, _item), do: said(:undecided, plan_word(:undecided), conflict)
+  defp waiting(_conflict, reason, _decisions), do: said(:undecided, plan_word(:undecided), reason)
 
-  defp waits_on(%{plan: :undecided, plan_reason: conflict}) when is_binary(conflict), do: conflict
+  defp waits_on(%{plan: :undecided, plan_reason: reason}) when is_binary(reason), do: reason
 
-  defp waits_on(%{plan: nil, outcome: :undecided, reason: conflict}) when is_binary(conflict),
-    do: conflict
+  defp waits_on(%{plan: nil, outcome: :undecided, reason: reason}) when is_binary(reason),
+    do: reason
 
-  defp waits_on(%{plan: plan, outcome: :undecided, reason: conflict, decisions: decisions})
-       when plan in [:created, :updated] and is_binary(conflict) and
-              not is_map_key(decisions, conflict),
-       do: conflict
+  defp waits_on(%{plan: plan, outcome: :undecided, reason: reason, decisions: decisions})
+       when plan in [:created, :updated] and is_binary(reason),
+       do: reason |> code() |> undecided(reason, decisions)
 
   defp waits_on(_item), do: nil
+
+  defp undecided(conflict, _reason, decisions) when is_map_key(decisions, conflict), do: nil
+  defp undecided(_conflict, reason, _decisions), do: reason
+
+  defp open_decision(item), do: item |> settled?() |> decided_conflict(item.decisions)
+
+  defp decided_conflict(false, decisions), do: decisions |> Map.keys() |> Enum.min(fn -> nil end)
+  defp decided_conflict(true, _decisions), do: nil
+
+  defp code(nil), do: nil
+  defp code(reason), do: reason |> String.split(": ", parts: 2) |> hd()
 
   defp as_planned(%{plan: :skipped, plan_reason: "left_out_by_admin"}),
     do: %{

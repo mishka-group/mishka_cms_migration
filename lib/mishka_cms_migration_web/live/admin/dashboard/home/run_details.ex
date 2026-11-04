@@ -24,6 +24,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     * The latest items, the report's last entries newest first, each with links to its CMS record
       when it has one (`item_paths/2`, `MishkaCmsMigration.MigrationRun.record_links/1`), and how
       many more it counted, which opens the run's Items page.
+    * When the links an import writes may not match the site's language addresses, the warning that
+      says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), under the head.
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
@@ -48,6 +50,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   alias MishkaCmsCore.Localized
   alias MishkaCmsMigration.{MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice
 
   @latest 8
   @running [:dry_running, :importing]
@@ -87,6 +90,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     >
       <.head id={@id} run={@run} report={@report} total={@total} />
       <.stopped :if={@failure} failure={@failure} />
+      <LanguageNotice.warning run={@run} />
 
       <section
         :if={@kinds != []}

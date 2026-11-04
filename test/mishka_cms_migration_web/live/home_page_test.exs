@@ -849,6 +849,36 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       :ok
     end
 
+    test "warns in the expanded row when the site gives every language a prefix",
+         %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+
+      run =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password"
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      MishkaCmsCore.Settings.put("site.language_urls", "prefix_all",
+        site_id: site.id,
+        category: "general"
+      )
+
+      view = open!(conn, admin)
+      expand!(view, run)
+
+      assert has_element?(
+               view,
+               ~s|#{@details} [data-role="language-urls-warning"][data-cause="prefix_all"]|
+             )
+    end
+
     test "queues the job, and once it is done shows what it found, kind by kind, without a reload",
          %{conn: conn, site: site} do
       stub!()

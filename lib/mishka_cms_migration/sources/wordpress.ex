@@ -29,7 +29,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       It answers a wrong password, an unknown user and a request whose `Authorization` header the
       host dropped the same way (`rest_not_logged_in`), so these cannot be told apart.
 
-  `extra/1` keeps the site's name, its home address and timezone, and who signed in.
+  `extra/1` keeps the site's name, its home address and timezone, and who signed in. When the REST
+  index lists the REST namespace of a language plugin, Polylang's `pll/v1` or WPML's `wpml/v1`, it
+  keeps which one as `"languages"` (`"polylang"` or `"wpml"`): such a site names the language in its
+  addresses, as `/fa/about/`, which the links an import writes do not follow
+  (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`).
 
   ## What it reads
 
@@ -83,11 +87,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `link`, and it is the post whose `link` has its path, or whose id it names. A link to a
       category, a file, an attachment page or a post the site no longer has is left out, and so is
       every link when the connection is not at hand. Its `pages` are the links of its content that
-      are left, to a page of the site, each `href` as written to the page's `link`: `/?page_id=<id>`
+      are left, to a page of the site, each `href` as written to the page's `"link"` and `"id"`
+      (`%{"link" => "http://old.example/contact/", "id" => "29"}`): `/?page_id=<id>`
       is asked for by its id and any other by the last segment of its path, the same way, from
       `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
       `media` are the addresses of
-      its converted content (`src`, `href` and a video's `poster`) that are a file of the site's
+      its converted content (`src`, `href`, a video's `poster` and every candidate of an `srcset`) that are a file of the site's
       media library, each
       as written to the id of the file it is: the original or one of the sizes WordPress made of it
       (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
@@ -100,7 +105,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `noarchive`, `nosnippet` and `noimageindex`, joined by `", "`), `"image"`, the share image's
       address, with `"image_id"`, the file of the media library it is, found with the content's
       files in the same request, and `"canonical"`, only when it is on another host than the
-      source's (every entry's own address is its canonical by default). Each is read from Rank
+      source's (every entry's own address is its canonical by default); and the social fields
+      `"og_title"`, `"og_description"`, `"twitter_title"`, `"twitter_description"`,
+      `"twitter_image"` (with `"twitter_image_id"`, found like `"image_id"`) and `"twitter_card"`
+      (only `summary`, as the head draws `summary_large_image` by itself), each only when it says
+      something else than the title or the description (or, for the Open Graph description, the
+      entry's excerpt), which is what Yoast's head answers when nothing was written. Each is read from Rank
       Math's `rank_math_*` fields in `meta`, then Yoast's `_yoast_wpseo_*`, then the head Yoast
       answers (`yoast_head_json`), which is what the site served. An export carries every one of
       these fields; the REST API answers only a post's Yoast title and description among them, and
@@ -268,10 +278,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {"icon", "site_icon", "Site Icon"}
   ]
   @texts ["title", "tagline"]
+  @language_plugins %{"pll/v1" => "polylang", "wpml/v1" => "wpml"}
 
   @seo_titles ["rank_math_title", "_yoast_wpseo_title"]
   @seo_descriptions ["rank_math_description", "_yoast_wpseo_metadesc"]
   @seo_images ["rank_math_facebook_image", "_yoast_wpseo_opengraph-image"]
+  @seo_social_titles ["rank_math_facebook_title", "_yoast_wpseo_opengraph-title"]
+  @seo_social_descriptions [
+    "rank_math_facebook_description",
+    "_yoast_wpseo_opengraph-description"
+  ]
+  @seo_twitter_titles ["rank_math_twitter_title", "_yoast_wpseo_twitter-title"]
+  @seo_twitter_descriptions ["rank_math_twitter_description", "_yoast_wpseo_twitter-description"]
+  @seo_twitter_images ["rank_math_twitter_image", "_yoast_wpseo_twitter-image"]
+  @seo_twitter_cards ["rank_math_twitter_card_type"]
   @seo_canonicals ["rank_math_canonical_url", "_yoast_wpseo_canonical"]
   @seo_robots ~w(noindex nofollow noarchive nosnippet noimageindex)
   @seo_variable ~r/%%(\w+)%%|%(\w+)%/
@@ -322,7 +342,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       "timezone" => index["timezone_string"],
       "signed_in_as" => user["username"]
     }
+    |> Map.merge(languages(index["namespaces"]))
   end
+
+  defp languages(namespaces) when is_list(namespaces),
+    do: namespaces |> Enum.find_value(&Map.get(@language_plugins, &1)) |> languages()
+
+  defp languages(plugin) when is_binary(plugin), do: %{"languages" => plugin}
+  defp languages(_none), do: %{}
 
   @impl MishkaCmsMigration.Source
   def list(%{req: req}, kind, cursor) when is_map_key(@routes, kind) do
@@ -614,7 +641,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       "links" =>
         for({href, %{"slug" => slug}} <- posts, slug != "", into: %{}, do: {href, decoded(slug)}),
       "pages" =>
-        for({href, %{"link" => link}} <- pages, is_binary(link), into: %{}, do: {href, link})
+        for(
+          {href, %{"link" => link, "id" => id}} <- pages,
+          is_binary(link),
+          into: %{},
+          do: {href, %{"link" => link, "id" => to_string(id)}}
+        )
     }
   end
 
@@ -687,40 +719,84 @@ defmodule MishkaCmsMigration.Sources.WordPress do
        when is_binary(home) do
     home = URI.parse(home)
     files = content |> addresses() |> Enum.filter(&file?(&1, home))
-    image = seo |> Map.get("image") |> List.wrap() |> Enum.filter(&file?(&1, home))
+
+    images =
+      for field <- ["image", "twitter_image"],
+          url <- List.wrap(seo[field]),
+          file?(url, home),
+          do: {field, url}
 
     rows =
       Enum.flat_map(
         [
           include: image_ids(html),
-          slug: files |> Enum.concat(image) |> Enum.flat_map(&file_slugs/1)
+          slug:
+            files |> Enum.concat(Enum.map(images, &elem(&1, 1))) |> Enum.flat_map(&file_slugs/1)
         ],
         &asked_rows(read, {"/wp/v2/media", @media_fields}, &1)
       )
 
     {for(href <- files, id = file_of(rows, href), into: %{}, do: {href, id}),
-     image_id(seo, Enum.find_value(image, &file_of(rows, &1)))}
+     Enum.reduce(images, seo, fn {field, url}, seo -> image_id(seo, field, file_of(rows, url)) end)}
   end
 
   defp media(_html, _content, seo, _context), do: {%{}, seo}
 
-  defp image_id(seo, nil), do: seo
-  defp image_id(seo, id), do: Map.put(seo, "image_id", id)
+  defp image_id(seo, _field, nil), do: seo
+  defp image_id(seo, field, id), do: Map.put(seo, field <> "_id", id)
 
   defp seo(row, context) do
     meta = with_map(row["meta"])
     head = with_map(row["yoast_head_json"])
+    title = typed(meta, @seo_titles) || served_title(head, row)
+    description = typed(meta, @seo_descriptions) || said(head["description"])
 
     %{
-      "title" => typed(meta, @seo_titles) || served_title(head, row),
-      "description" => typed(meta, @seo_descriptions) || said(head["description"]),
+      "title" => title,
+      "description" => description,
       "robots" => robots(meta) || served_robots(head["robots"]),
       "image" => said(meta, @seo_images) || served_image(head["og_image"]),
       "canonical" =>
         (said(meta, @seo_canonicals) || said(head["canonical"])) |> elsewhere(context)
     }
+    |> Map.merge(social(meta, head, row, {title, description}))
     |> Map.reject(fn {_field, value} -> is_nil(value) end)
   end
+
+  defp social(meta, head, row, {title, description}) do
+    %{
+      "og_title" =>
+        (typed(meta, @seo_social_titles) ||
+           served_title(Map.put(head, "title", head["og_title"]), row))
+        |> differing(title),
+      "og_description" =>
+        (typed(meta, @seo_social_descriptions) || served_description(head["og_description"], row))
+        |> differing(description),
+      "twitter_title" =>
+        (typed(meta, @seo_twitter_titles) || said(head["twitter_title"])) |> differing(title),
+      "twitter_description" =>
+        (typed(meta, @seo_twitter_descriptions) || said(head["twitter_description"]))
+        |> differing(description),
+      "twitter_image" => said(meta, @seo_twitter_images) || said(head["twitter_image"]),
+      "twitter_card" => meta |> said(@seo_twitter_cards) |> card() || card(head["twitter_card"])
+    }
+  end
+
+  defp differing(value, value), do: nil
+  defp differing(value, _other), do: value
+
+  defp card("summary"), do: "summary"
+  defp card(_default_or_other), do: nil
+
+  defp served_description(text, %{"excerpt" => %{"rendered" => excerpt}}) when is_binary(excerpt),
+    do: text |> said() |> own_description(excerpt |> LazyHTML.from_fragment() |> LazyHTML.text())
+
+  defp served_description(text, _row), do: said(text)
+
+  defp own_description(nil, _excerpt), do: nil
+
+  defp own_description(text, excerpt),
+    do: text |> differing(excerpt |> String.split() |> Enum.join(" "))
 
   defp with_map(%{} = map), do: map
   defp with_map(_none), do: %{}
@@ -826,10 +902,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         for %{html: html} when is_binary(html) <- content, into: "", do: html
       )
 
-    for attribute <- @addressed,
-        address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
-        uniq: true,
-        do: address
+    singles =
+      for attribute <- @addressed,
+          address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
+          do: address
+
+    candidates =
+      for value <- tree |> LazyHTML.query("[srcset]") |> LazyHTML.attribute("srcset"),
+          {url, _descriptor} <- Source.srcset(value),
+          do: url
+
+    Enum.uniq(singles ++ candidates)
   end
 
   defp file?(href, home), do: href |> String.trim() |> URI.parse() |> file_on?(home)

@@ -19,7 +19,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot be
   recorded, the item's entry says it failed, with why. A dry run writes nothing in the CMS: it
   reports the plan and records it on each item (`:record_plan`, its outcome and reason as the
-  item's `plan` and `plan_reason`), which leaves alone what an import recorded.
+  item's `plan` and `plan_reason`), which leaves alone what an import recorded. An item it would
+  create or update is first handed to its target's `waiting/2`, the dry run's stand-in for
+  `prepare/3`: one the import's `prepare/3` would leave waiting for a decision, or skip, is planned
+  so.
 
   An item written otherwise than the source has it has its entry and its record say so: its
   target's note (`MishkaCmsMigration.Target`'s `note/2`), then the pieces of its content no plugin
@@ -55,7 +58,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
     * `{:created, target, nil, decisions}` or `{:updated, target, record, decisions}` — written
       in an import, reported and recorded as the item's plan in a dry run, with its target's note
-      and the pieces of its content left unconverted as its reason;
+      and the pieces of its content left unconverted as its reason, or as what its target's
+      `waiting/2` answers instead;
     * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
       in an import, never written, and reported as skipped, `"connected"`;
     * `{:skipped, reason}`, `{:failed, reason}` or `{:undecided, conflict}` — recorded with its
@@ -84,20 +88,22 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> entered(item, :skipped, "connected")
   end
 
-  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record, decisions}),
-    do:
-      entry(
-        state,
-        item,
-        outcome,
-        note(target, item, item_context(state, item, record, decisions), to_convert(item))
-      )
+  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record, decisions}) do
+    context = item_context(state, item, record, decisions)
+    item |> target.waiting(context) |> planned(state, item, {outcome, target, context})
+  end
 
   def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record, decisions}) do
     state
     |> written(item, {outcome, target, record}, item_context(state, item, record, decisions))
     |> settled(state, item, outcome)
   end
+
+  defp planned(nil, state, item, {outcome, target, context}),
+    do: entry(state, item, outcome, note(target, item, context, to_convert(item)))
+
+  defp planned({waiting, reason}, state, item, _write) when waiting in [:skipped, :undecided],
+    do: entry(state, item, waiting, reason)
 
   defp settled({:ok, _record, note}, _state, item, outcome),
     do: Report.entry(item.kind, item.source_id, item.title, outcome, note)

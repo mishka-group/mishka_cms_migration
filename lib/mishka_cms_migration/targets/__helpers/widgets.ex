@@ -11,18 +11,17 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   in the content, its fallback HTML (`MishkaCmsMigration.Sources.WordPress.Elementor`).
 
   Such an item is never written on its own: it waits for an admin's decision
-  (`MishkaCmsMigration.MigrationItem`'s Decide…) on `"unsupported_widgets: <names>"`, the names
-  joined by `", "`, in `existing/2` for an item no run has written, in the dry run too
-  (`waiting/2`), and in `prepare/3` for any write (`call/2`). Import with the fallback HTML for
-  those parts (`"import"`) writes it with that HTML, and the report says so
+  (`MishkaCmsMigration.MigrationItem`'s Decide…) on `"unsupported_widgets"`, its reason naming the
+  widgets after `": "` (`"unsupported_widgets: form, slides"`), in the dry run (the target's
+  `waiting/2`, `waiting/2` here) and in `prepare/3` for any write (`call/2`). Import with the
+  fallback HTML for those parts (`"import"`) writes it with that HTML, and the report names them
   (`"fallback_html: <names>"`, `note/2`); Leave the page out leaves the item out, as Leave out does.
-  The conflict names the widgets, so a page that gains another such widget asks again.
   """
 
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
 
-  @conflict "unsupported_widgets: "
+  @conflict "unsupported_widgets"
 
   @doc """
   The conflict `item` waits on: `"unsupported_widgets: <names>"` for an item laid out with widgets
@@ -30,7 +29,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   """
   @spec conflict(Item.t()) :: String.t() | nil
   def conflict(%Item{attrs: %{"unsupported_widgets" => [_ | _] = names}}),
-    do: @conflict <> Enum.join(names, ", ")
+    do: @conflict <> ": " <> Enum.join(names, ", ")
 
   def conflict(_item), do: nil
 
@@ -42,8 +41,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   def call(item, context), do: item |> conflict() |> decided(item, context)
 
   @doc """
-  What `existing/2` says of `item`: `{:undecided, conflict}` until an admin decides to import it
-  with the fallback HTML, then `nil`, to be written, as for an item with no such widgets.
+  What the target's `waiting/2` says of `item`: `{:undecided, conflict}` until an admin decides to
+  import it with the fallback HTML, then `nil`, to be written, as for an item with no such widgets.
   """
   @spec waiting(Item.t(), Target.context()) :: Target.found() | nil
   def waiting(item, context), do: item |> call(context) |> found()
@@ -58,7 +57,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
   defp decided(nil, _item, _context), do: :ok
 
   defp decided(conflict, item, context),
-    do: context |> Target.decision(item, conflict) |> answered(conflict)
+    do: context |> Target.decision(item, @conflict) |> answered(conflict)
 
   defp answered("import", _conflict), do: :ok
   defp answered(_undecided, conflict), do: {:undecided, conflict}
@@ -68,8 +67,8 @@ defmodule MishkaCmsMigration.Targets.Helpers.Widgets do
 
   defp noted(nil, _item, _context), do: nil
 
-  defp noted(@conflict <> names = conflict, item, context),
-    do: context |> Target.decision(item, conflict) |> fallback(names)
+  defp noted(@conflict <> ": " <> names, item, context),
+    do: context |> Target.decision(item, @conflict) |> fallback(names)
 
   defp fallback("import", names), do: "fallback_html: " <> names
   defp fallback(_undecided, _names), do: nil

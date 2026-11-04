@@ -79,18 +79,22 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   ## Its pictures and files
 
   Its `"media"` name the addresses of its content that are files of the source, and each `src`,
-  `href` and video `poster` of them points at the Media address of the file the same run, or an earlier one,
-  wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
-  too. The address of a file that was not written is kept as it is, and so is every other link.
+  `href`, video `poster` and `srcset` candidate of them points at the Media address of the file the
+  same run, or an earlier one, wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a
+  size WordPress made of a file too. The address of a file that was not written is kept as it is,
+  and so is every other link; an `srcset` candidate of such a file is named in the report
+  (`"srcset_file_missing"`).
 
   ## Its links to pages
 
   Its `"pages"` name the links of its content that point at a page of the source, each by its
   `href` as written and the address WordPress gives that page (the WordPress source finds them,
   `MishkaCmsMigration.Sources.WordPress`). Each such link points at the path that page is written
-  at instead (`relinked/2`), however the link was written, and keeps its `?query` and `#fragment`:
-  `http://old.example/about/team/#staff` becomes `/about/team#staff`. It is the path the run
-  writes the page at, so a page that links to one listed after it points at it too. A page with no
+  at instead (`relinked/3`), however the link was written, and keeps its `?query` and `#fragment`:
+  `http://old.example/about/team/#staff` becomes `/about/team#staff`, and a link to a page an
+  admin decided to import as new beside the site's own (`"slug_taken"`) its other path,
+  `/contact-29`. It is the path the run writes the page at, so a page that links to one listed
+  after it points at it too. A page with no
   address of its own yet, such as a draft, and any other link, such as a category's or a feed's,
   is kept as it is. The same links in a post point at the same paths
   (`MishkaCmsMigration.Targets.BlogPost`).
@@ -107,9 +111,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   allowed on the site before the page is written, in an import only, as the admin
   (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them
   (`"frames_allowed: <origins>"`), in the dry run too. For an admin who may not change the site's
-  settings the page waits for an admin's decision (`"player_not_allowed"`), once its path does not:
-  Wait for an admin keeps it for a run by one who may, and Import without the player writes it
-  with that player left out (`"player_left_out"`).
+  settings the page waits for an admin's decision (`"player_not_allowed"`), once its path does not,
+  in the dry run too (`waiting/2`), also a page an earlier import wrote: Wait for an admin keeps it
+  for a run by one who may, and Import without the player writes it with that player left out
+  (`"player_left_out"`).
 
   ## Its Elementor layout
 
@@ -117,9 +122,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   (`MishkaCmsMigration.Sources.WordPress.Elementor`), and is written as any other page. One with
   widgets the CMS has no equivalent for, such as a form, a slider or a map, waits for an admin's
   decision (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), once
-  its path does not, in the dry run too: Import with the fallback HTML for those parts writes it
-  with what Elementor drew for them (`"fallback_html: <names>"`), and Leave the page out leaves it
-  out.
+  its path does not, in the dry run too (`waiting/2`), also a page an earlier import wrote: Import
+  with the fallback HTML for those parts writes it with what Elementor drew for them
+  (`"fallback_html: <names>"`), and Leave the page out leaves it out.
   """
 
   use MishkaCmsMigration.Target,
@@ -142,7 +147,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   def attrs(item, context) do
     %{
       title: item.title,
-      path: item |> path() |> placed(item, Target.decision(context, item, "slug_taken")),
+      path:
+        item
+        |> path()
+        |> placed(item.source_id, slug(item), Target.decision(context, item, "slug_taken")),
       template: template(item, context),
       active: active?(item, context),
       seo_tags: SeoTags.call(item, context, nil),
@@ -156,7 +164,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
     taken = items |> Enum.map(&path/1) |> Enum.reject(&is_nil/1) |> taken(context)
 
     for item <- items,
-        found = taken |> Map.get(path(item)) |> found(item, context),
+        page = taken[path(item)],
+        found = held(page, Target.decision(context, item, "slug_taken")),
         into: %{},
         do: {item.source_id, found}
   end
@@ -171,6 +180,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       )
 
   @impl MishkaCmsMigration.Target
+  def waiting(item, context), do: Widgets.waiting(item, context) || Frames.waiting(item, context)
+
+  @impl MishkaCmsMigration.Target
   def note(item, context),
     do:
       [
@@ -178,29 +190,61 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         moved(item),
         BySlug.note(item, context),
         Widgets.note(item, context),
+        CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)
       |> noted()
 
   @doc """
-  `html` with each link that `pages` names, an `href` as the source wrote it to the address the
-  source gives the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the
-  path the CMS serves that page at (`path/1`'s rules: the path of its address, in ASCII), with the
-  link's own `?query` and `#fragment`. A link whose page has no address of its own, and every other
-  link, is kept as it is.
+  `html` with each link that `pages` names, an `href` as the source wrote it to the `"link"` and
+  `"id"` of the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the path
+  the CMS serves that page at, with the link's own `?query` and `#fragment`: the path of its
+  address, in ASCII, followed by `-<id>` once an admin decided to import that page as new beside
+  the site's page at that path (`"slug_taken"`), as `attrs/2` writes it. A link whose page has no
+  address of its own, and every other link, is kept as it is. The admins' decisions are read from
+  the pages' items (`MishkaCmsMigration.MigrationItem`) with one query, as `context`'s admin.
   """
-  @spec relinked(String.t(), map() | nil) :: String.t()
-  def relinked(html, pages) when is_map(pages) and map_size(pages) > 0,
-    do:
-      CmsMedia.moved(
-        html,
-        for({old, link} <- pages, new = pointed(link, old), into: %{}, do: {old, new})
+  @spec relinked(String.t(), map() | nil, Target.context()) :: String.t()
+  def relinked(html, pages, context) when is_map(pages) and map_size(pages) > 0 do
+    items = items(pages, context)
+
+    CmsMedia.moved(
+      html,
+      for(
+        {old, %{"link" => link, "id" => id}} <- pages,
+        new = link |> written_path(items[id]) |> pointed_at(old),
+        into: %{},
+        do: {old, new}
       )
+    )
+  end
 
-  def relinked(html, _pages), do: html
+  def relinked(html, _pages, _context), do: html
 
-  defp pointed(link, old), do: link |> served() |> ascii() |> pointed_at(old)
+  @doc """
+  The path the page whose address at the source is `link` is written at, as `attrs/2` writes it:
+  the path of its address, in ASCII, followed by `-<source id>` once an admin decided to import it
+  as new beside the site's page at that path (`"slug_taken"` in the `decisions` of `item`, the
+  page's `MishkaCmsMigration.MigrationItem`, or `nil` for a page no run has met). `nil` for an
+  address with no path of its own, such as a draft's `/?page_id=30`.
+  """
+  @spec written_path(String.t() | nil, map() | nil) :: String.t() | nil
+  def written_path(link, %{source_id: id, source_slug: slug, decisions: decisions}),
+    do: link |> served() |> ascii() |> placed(id, slug, decisions["slug_taken"])
+
+  def written_path(link, nil), do: link |> served() |> ascii()
+
+  defp items(pages, context),
+    do:
+      context.source_host
+      |> MishkaCmsMigration.items_by_sources!(
+        "page",
+        pages |> Map.values() |> Enum.map(& &1["id"]) |> Enum.uniq(),
+        actor: context.actor,
+        tenant: context.site_id
+      )
+      |> Map.new(&{&1.source_id, &1})
 
   defp pointed_at(nil, _old), do: nil
 
@@ -223,25 +267,13 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       |> Read.call(context)
       |> Map.new(&{&1.path, &1})
 
-  defp found(nil, item, context), do: waiting(item, context)
-
-  defp found(page, item, context),
-    do: page |> held(Target.decision(context, item, "slug_taken")) |> or_frames(item, context)
-
   defp held(page, "keep"), do: {:connected, page}
   defp held(_page, "import"), do: nil
   defp held(_page, nil), do: {:undecided, "slug_taken"}
 
-  defp or_frames(nil, item, context), do: waiting(item, context)
-  defp or_frames(found, _item, _context), do: found
-
-  defp waiting(item, context), do: Widgets.waiting(item, context) || Frames.waiting(item, context)
-
-  defp placed("/", item, "import"),
-    do: ascii("/" <> (slug(item) || "page") <> "-" <> item.source_id)
-
-  defp placed(path, item, "import") when is_binary(path), do: path <> "-" <> item.source_id
-  defp placed(path, _item, _decision), do: path
+  defp placed("/", id, slug, "import"), do: ascii("/" <> (slug || "page") <> "-" <> id)
+  defp placed(path, id, _slug, "import") when is_binary(path), do: path <> "-" <> id
+  defp placed(path, _id, _slug, _decision), do: path
 
   defp active?(item, %{options: %{pages: "publish"}}), do: Status.call(item) == "publish"
   defp active?(_item, _context), do: false
@@ -297,7 +329,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         (item
          |> Item.html()
          |> Frames.playable(context)
-         |> relinked(item.attrs["pages"])
+         |> relinked(item.attrs["pages"], context)
          |> CmsMedia.relinked(item.attrs["media"], context)
          |> LazyHTML.from_fragment()
          |> LazyHTML.to_html()
