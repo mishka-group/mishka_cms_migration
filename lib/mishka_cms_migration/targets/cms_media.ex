@@ -70,8 +70,8 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
       admin who pressed Import, who needs the core's `admin:dashboard:runtime:redirect`
       (`"same_file_used"`); a rule that already sends that address to the original is reused. The
       run's `post_address` choice `"blog_without_redirects"` writes no redirect, and the report says so
-      (`"same_file_used_no_redirect"`). A redirect for the sizes WordPress made of the file is not
-      written.
+      (`"same_file_used_no_redirect"`). The sizes WordPress made of the file
+      (`media_details.sizes`, listed with the file) are redirected to the original too.
     * Keep both (`"keep"`) — imported as its own file, as any other (`"same_file_kept"`).
 
   The answer holds for every later run: an item connected to the original is never downloaded
@@ -306,26 +306,41 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
     do: {:connected, media, "same_file_used_no_redirect"}
 
   defp used(media, item, context) do
-    with :ok <- redirected(item.attrs["source_url"], media.relative_path, context),
+    with {:ok, froms} <- old_addresses(item),
+         :ok <- redirected(froms, media.relative_path, context),
          do: {:connected, media, "same_file_used"}
   end
 
-  defp redirected(url, to, context) do
+  defp old_addresses(%Item{attrs: %{"source_url" => url}, extra: extra}) do
     case Redirects.normalize_path(url) do
-      {:ok, from} ->
-        Redirect
-        |> Ash.Query.filter(from_path == ^from)
-        |> Read.call(context)
-        |> redirected(from, to, context)
-
-      :error ->
-        {:error, "not_redirectable"}
+      {:ok, file} -> {:ok, Enum.uniq([file | sizes(extra)])}
+      :error -> {:error, "not_redirectable"}
     end
   end
 
-  defp redirected([%Redirect{to: to}], _from, to, _context), do: :ok
+  defp sizes(%{"media_details" => %{"sizes" => %{} = sizes}}),
+    do:
+      for(
+        %{"source_url" => url} when is_binary(url) <- Map.values(sizes),
+        {:ok, path} <- [Redirects.normalize_path(url)],
+        do: path
+      )
 
-  defp redirected(_other, from, to, context) do
+  defp sizes(_extra), do: []
+
+  defp redirected(froms, to, context) do
+    held =
+      Redirect
+      |> Ash.Query.filter(from_path in ^froms)
+      |> Read.call(context)
+      |> Map.new(&{&1.from_path, &1.to})
+
+    froms
+    |> Enum.reject(&(held[&1] == to))
+    |> Enum.reduce_while(:ok, fn from, :ok -> from |> redirect(to, context) |> halted() end)
+  end
+
+  defp redirect(from, to, context) do
     Redirect
     |> Ash.Changeset.for_create(:create, %{from_path: from, to: to, status: 301},
       actor: context.actor,
@@ -334,6 +349,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
     |> Ash.create()
     |> created()
   end
+
+  defp halted(:ok), do: {:cont, :ok}
+  defp halted(error), do: {:halt, error}
 
   defp created({:ok, %Redirect{}}), do: :ok
   defp created({:error, error}), do: {:error, error}

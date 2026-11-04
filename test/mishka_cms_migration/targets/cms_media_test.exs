@@ -352,6 +352,10 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert %{"/wp-content/uploads/2026/11/gallery-2.jpg" => redirect} = redirects(site)
       assert {redirect.to, redirect.status} == {hero.relative_path, 301}
 
+      sizes = for {path, _} <- redirects(site), path =~ "gallery-2-", do: path
+      assert sizes != []
+      assert Enum.all?(redirects(site), fn {_, rule} -> rule.to == hero.relative_path end)
+
       context = %{source_host: "localhost:8089", actor: admin, site_id: site.id, mode: :import}
       old = "http://localhost:8089" <> @uploads <> "gallery-2.jpg"
 
