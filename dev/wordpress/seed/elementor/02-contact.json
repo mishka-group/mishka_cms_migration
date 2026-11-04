@@ -1,0 +1,118 @@
+{
+  "type": "page",
+  "slug": "elementor-contact",
+  "status": "publish",
+  "date": "2026-05-03 09:00:00",
+  "author": "nadia",
+  "title": "Elementor contact page",
+  "settings": {},
+  "elements": [
+    {
+      "id": "c0c1001",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "column" },
+      "elements": [
+        { "id": "c0c1002", "elType": "widget", "widgetType": "heading", "settings": { "title": "Talk to us", "header_size": "h1" }, "elements": [] },
+        {
+          "id": "c0c1003",
+          "elType": "widget",
+          "widgetType": "text-editor",
+          "settings": { "editor": "<p>Write to us with the form, or find the office on the map. The pictures below are a slider.</p>" },
+          "elements": []
+        }
+      ]
+    },
+    {
+      "id": "c0c1010",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "row" },
+      "elements": [
+        {
+          "id": "c0c1011",
+          "elType": "container",
+          "isInner": true,
+          "settings": { "flex_direction": "column" },
+          "elements": [
+            {
+              "id": "c0c1012",
+              "elType": "widget",
+              "widgetType": "form",
+              "settings": {
+                "form_name": "Contact",
+                "form_fields": [
+                  { "_id": "f0c0001", "custom_id": "name", "field_type": "text", "field_label": "Name", "placeholder": "Your name", "required": "true" },
+                  { "_id": "f0c0002", "custom_id": "email", "field_type": "email", "field_label": "Email", "placeholder": "you@example.test", "required": "true" },
+                  { "_id": "f0c0003", "custom_id": "message", "field_type": "textarea", "field_label": "Message", "placeholder": "How can we help?" }
+                ],
+                "button_text": "Send",
+                "email_to": "hello@example.test",
+                "success_message": "Thank you, we will write back soon."
+              },
+              "elements": []
+            }
+          ]
+        },
+        {
+          "id": "c0c1013",
+          "elType": "container",
+          "isInner": true,
+          "settings": { "flex_direction": "column" },
+          "elements": [
+            {
+              "id": "c0c1014",
+              "elType": "widget",
+              "widgetType": "google_maps",
+              "settings": { "address": "Azadi Tower, Tehran", "zoom": { "unit": "px", "size": 14, "sizes": [] } },
+              "elements": []
+            },
+            {
+              "id": "c0c1015",
+              "elType": "widget",
+              "widgetType": "text-editor",
+              "settings": { "editor": "<p>Or write to <a href=\"mailto:hello@example.test\">hello@example.test</a>.</p>" },
+              "elements": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c0c1020",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "column" },
+      "elements": [
+        {
+          "id": "c0c1021",
+          "elType": "widget",
+          "widgetType": "image-carousel",
+          "settings": {
+            "carousel_name": "Office pictures",
+            "carousel": [
+              { "id": "{{id:gallery-1}}", "url": "{{url:gallery-1}}" },
+              { "id": "{{id:gallery-2}}", "url": "{{url:gallery-2}}" },
+              { "id": "{{id:gallery-3}}", "url": "{{url:gallery-3}}" }
+            ],
+            "slides_to_show": "1",
+            "navigation": "both"
+          },
+          "elements": []
+        },
+        {
+          "id": "c0c1022",
+          "elType": "widget",
+          "widgetType": "slides",
+          "settings": {
+            "slides": [
+              { "_id": "f0c0011", "heading": "Fast", "description": "Pages load in milliseconds.", "button_text": "Read more", "link": { "url": "{{link:docs}}" } },
+              { "_id": "f0c0012", "heading": "Open", "description": "Every line of it is open source.", "button_text": "See the code", "link": { "url": "https://github.com/mishka-group" } }
+            ]
+          },
+          "elements": []
+        }
+      ]
+    }
+  ]
+}
