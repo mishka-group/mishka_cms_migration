@@ -142,10 +142,42 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
       |> Map.new(fn {id, media} -> {id, media.relative_path} end)
 
   @doc """
-  `html` with each `src`, `href` and `poster` that `media` names, an address as the source wrote it
-  to the source id of the file it is (`MishkaCmsMigration.Sources.WordPress`'s `media`), pointing at
-  that file's Media address (`addresses/2`). The address of a file that was not written, and every
-  other, is kept as it is.
+  What the report says about the `srcset` candidates of `item`'s content: `"srcset_file_missing"`
+  when one names a file of the source's media (the item's `"media"`) that no run wrote, so it keeps
+  its old address (`relinked/3`). A dry run writes no file and says nothing. The files are read in
+  one query, and only when the content has such a candidate.
+  """
+  @spec srcset_note(Item.t(), MishkaCmsMigration.Target.context()) :: String.t() | nil
+  def srcset_note(%Item{attrs: %{"media" => media}} = item, %{mode: mode} = context)
+      when is_map(media) and map_size(media) > 0 and mode != :dry_run do
+    ids =
+      item
+      |> Item.html()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[srcset]")
+      |> LazyHTML.attribute("srcset")
+      |> Enum.flat_map(&Source.srcset/1)
+      |> Enum.flat_map(fn {url, _descriptor} -> List.wrap(media[url]) end)
+      |> Enum.uniq()
+
+    missing(ids, context)
+  end
+
+  def srcset_note(_item, _context), do: nil
+
+  defp missing([], _context), do: nil
+
+  defp missing(ids, context),
+    do: ids |> addresses(context) |> map_size() |> missing_note(length(ids))
+
+  defp missing_note(written, wanted) when written < wanted, do: "srcset_file_missing"
+  defp missing_note(_written, _wanted), do: nil
+
+  @doc """
+  `html` with each `src`, `href`, `poster` and `srcset` candidate that `media` names, an address as
+  the source wrote it to the source id of the file it is (`MishkaCmsMigration.Sources.WordPress`'s
+  `media`), pointing at that file's Media address (`addresses/2`). The address of a file that was
+  not written, and every other, is kept as it is.
   """
   @spec relinked(String.t(), map() | nil, MishkaCmsMigration.Target.context()) :: String.t()
   def relinked(html, media, context) when is_map(media) and map_size(media) > 0 do
@@ -159,7 +191,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   @doc """
   `html` with each `src`, `href` and `poster` (a video's picture) whose value is a key of `moved`
-  written as that key's value; the other attributes are kept as they are. `relinked/3` and
+  written as that key's value, and each URL of an `srcset` (an image's, or a `source`'s in a
+  `picture`) that is a key of `moved` written as that key's value, its descriptor kept; the other
+  attributes are kept as they are. `relinked/3` and
   `MishkaCmsMigration.Targets.CmsPage.relinked/3` point the addresses of files and of pages at
   where they went.
   """
@@ -179,11 +213,22 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   defp moved_node(node, _moved), do: node
 
+  defp moved_attribute({"srcset", value}, moved) do
+    candidates = Source.srcset(value)
+
+    if Enum.any?(candidates, fn {url, _descriptor} -> is_map_key(moved, url) end),
+      do:
+        {"srcset", candidates |> Enum.map(&moved_candidate(&1, moved)) |> Source.srcset_value()},
+      else: {"srcset", value}
+  end
+
   defp moved_attribute({name, old}, moved)
        when name in @addressed and is_map_key(moved, old),
        do: {name, Map.fetch!(moved, old)}
 
   defp moved_attribute(attribute, _moved), do: attribute
+
+  defp moved_candidate({url, descriptor}, moved), do: {Map.get(moved, url, url), descriptor}
 
   defp refused(item, context) do
     with {:ok, uri} <- sourced(item.attrs["source_url"], context.source_host),

@@ -79,9 +79,11 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   ## Its pictures and files
 
   Its `"media"` name the addresses of its content that are files of the source, and each `src`,
-  `href` and video `poster` of them points at the Media address of the file the same run, or an earlier one,
-  wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file
-  too. The address of a file that was not written is kept as it is, and so is every other link.
+  `href`, video `poster` and `srcset` candidate of them points at the Media address of the file the
+  same run, or an earlier one, wrote for it (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a
+  size WordPress made of a file too. The address of a file that was not written is kept as it is,
+  and so is every other link; an `srcset` candidate of such a file is named in the report
+  (`"srcset_file_missing"`).
 
   ## Its links to pages
 
@@ -172,6 +174,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         item |> Status.call() |> drafted(),
         moved(item),
         BySlug.note(item, context),
+        CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)
