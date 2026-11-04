@@ -115,6 +115,25 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   in the dry run too (`waiting/2`), also a page an earlier import wrote: Wait for an admin keeps it
   for a run by one who may, and Import without the player writes it with that player left out
   (`"player_left_out"`).
+
+  ## Its scripts
+
+  A page whose content holds a `<script>` or an inline event handler (`onclick`, `onerror`, ...)
+  waits for an admin's decision (`"scripts: <found>"`,
+  `MishkaCmsMigration.Targets.Helpers.Scripts`), in the dry run too: Remove them writes it without
+  them (`"scripts_removed: <found>"`), and Keep them (I trust this content) writes it as it is
+  (`"scripts_kept: <found>"`).
+
+  ## Its Elementor layout
+
+  A page laid out with Elementor arrives as the page builder's own elements
+  (`MishkaCmsMigration.Sources.WordPress.Elementor`), and is written as any other page. One with
+  widgets the CMS has no equivalent for, such as a form, a slider or a map, waits for an admin's
+  decision (`"unsupported_widgets: <names>"`, `MishkaCmsMigration.Targets.Helpers.Widgets`), once
+  its path does not, in the dry run too (`waiting/2`), also a page an earlier import wrote: Import
+  with the fallback HTML for those parts writes it with what Elementor drew for them
+  (`"fallback_html: <names>"`, and `"no_fallback: <names>"` for those it drew nothing for), and
+  Leave the page out leaves it out.
   """
 
   use MishkaCmsMigration.Target,
@@ -129,7 +148,17 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
-  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Read, SeoTags, Status}
+
+  alias MishkaCmsMigration.Targets.Helpers.{
+    BySlug,
+    ContentChecks,
+    Frames,
+    Read,
+    Scripts,
+    SeoTags,
+    Status,
+    Widgets
+  }
 
   @drafted ["pending", "private", "password", "future"]
 
@@ -162,10 +191,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write),
-    do: with(:ok <- Frames.call(item, context), do: write.(context))
+    do: with(:ok <- ContentChecks.call(item, context), do: write.(context))
 
   @impl MishkaCmsMigration.Target
-  def waiting(item, context), do: Frames.waiting(item, context)
+  def waiting(item, context), do: ContentChecks.waiting(item, context)
 
   @impl MishkaCmsMigration.Target
   def note(item, context),
@@ -174,6 +203,8 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
         item |> Status.call() |> drafted(),
         moved(item),
         BySlug.note(item, context),
+        Widgets.note(item, context),
+        Scripts.note(item, context),
         CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
@@ -312,6 +343,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       ~s(<div phx-no-curly-interpolation>) <>
         (item
          |> Item.html()
+         |> Scripts.removed(item, context)
          |> Frames.playable(context)
          |> relinked(item.attrs["pages"], context)
          |> CmsMedia.relinked(item.attrs["media"], context)

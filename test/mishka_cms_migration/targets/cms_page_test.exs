@@ -632,9 +632,15 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     <p>after</p></div><div>outside\
     """
 
-    test "with a { or a <% in it neither breaks the page nor runs", %{site: site, admin: admin} do
-      run =
-        fake_pages!(site, admin, [row(1, %{"content" => [%{"html" => @hostile}]})])
+    test "with a { or a <% in it neither breaks the page nor runs, its script kept as trusted", %{
+      site: site,
+      admin: admin
+    } do
+      rows = [row(1, %{"content" => [%{"html" => @hostile}]})]
+      assert outcomes(fake_pages!(site, admin, rows))["1"] == {:undecided, "scripts: script"}
+
+      decide!(site, admin, "1", "trust")
+      run = migrate!(site, admin, %{"page" => rows})
 
       assert counts(run).created == 1
       [page] = Map.values(pages(site))

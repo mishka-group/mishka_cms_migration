@@ -1,0 +1,108 @@
+{
+  "type": "post",
+  "slug": "elementor-release-notes",
+  "status": "publish",
+  "date": "2026-05-04 09:00:00",
+  "author": "omid",
+  "title": "Release notes, laid out with Elementor",
+  "categories": "releases",
+  "settings": {},
+  "elements": [
+    {
+      "id": "c0b1001",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "column" },
+      "elements": [
+        { "id": "c0b1002", "elType": "widget", "widgetType": "heading", "settings": { "title": "What is new in 1.2" }, "elements": [] },
+        {
+          "id": "c0b1003",
+          "elType": "widget",
+          "widgetType": "text-editor",
+          "settings": {
+            "editor": "<p>This post is laid out with Elementor's containers. It follows the <a href=\"{{link:release-1-1-changelog}}\">1.1 notes</a>.</p>\n<p><img class=\"alignnone size-medium wp-image-{{id:photo}}\" src=\"{{medium:photo}}\" alt=\"A pink and peach gradient with the text WebP photo\" /></p>"
+          },
+          "elements": []
+        }
+      ]
+    },
+    {
+      "id": "c0b1010",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "row" },
+      "elements": [
+        {
+          "id": "c0b1011",
+          "elType": "container",
+          "isInner": true,
+          "settings": { "flex_direction": "column" },
+          "elements": [
+            { "id": "c0b1012", "elType": "widget", "widgetType": "heading", "settings": { "title": "Faster", "header_size": "h3" }, "elements": [] },
+            { "id": "c0b1013", "elType": "widget", "widgetType": "text-editor", "settings": { "editor": "<p>Pages are cached per site.</p>" }, "elements": [] }
+          ]
+        },
+        {
+          "id": "c0b1014",
+          "elType": "container",
+          "isInner": true,
+          "settings": { "flex_direction": "column" },
+          "elements": [
+            { "id": "c0b1015", "elType": "widget", "widgetType": "heading", "settings": { "title": "Safer", "header_size": "h3" }, "elements": [] },
+            { "id": "c0b1016", "elType": "widget", "widgetType": "text-editor", "settings": { "editor": "<p>Uploads are checked by their bytes.</p>" }, "elements": [] }
+          ]
+        },
+        {
+          "id": "c0b1017",
+          "elType": "container",
+          "isInner": true,
+          "settings": { "flex_direction": "column" },
+          "elements": [
+            { "id": "c0b1018", "elType": "widget", "widgetType": "heading", "settings": { "title": "Easier", "header_size": "h3" }, "elements": [] },
+            {
+              "id": "c0b1019",
+              "elType": "widget",
+              "widgetType": "button",
+              "settings": { "text": "Get the guide", "link": { "url": "{{url:guide}}", "is_external": "on", "nofollow": "" } },
+              "elements": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c0b1020",
+      "elType": "container",
+      "isInner": false,
+      "settings": { "content_width": "boxed", "flex_direction": "column" },
+      "elements": [
+        {
+          "id": "c0b1021",
+          "elType": "widget",
+          "widgetType": "image-gallery",
+          "settings": {
+            "wp_gallery": [
+              { "id": "{{id:gallery-1}}", "url": "{{url:gallery-1}}" },
+              { "id": "{{id:gallery-2}}", "url": "{{url:gallery-2}}" },
+              { "id": "{{id:gallery-3}}", "url": "{{url:gallery-3}}" }
+            ],
+            "gallery_columns": "3",
+            "gallery_link": "file"
+          },
+          "elements": []
+        },
+        { "id": "c0b1022", "elType": "widget", "widgetType": "spacer", "settings": {}, "elements": [] },
+        { "id": "c0b1023", "elType": "widget", "widgetType": "video", "settings": { "video_type": "vimeo", "vimeo_url": "https://vimeo.com/76979871" }, "elements": [] },
+        {
+          "id": "c0b1024",
+          "elType": "widget",
+          "widgetType": "video",
+          "settings": { "video_type": "hosted", "hosted_url": { "url": "{{url:sample}}", "id": "{{id:sample}}" } },
+          "elements": []
+        },
+        { "id": "c0b1025", "elType": "widget", "widgetType": "divider", "settings": {}, "elements": [] },
+        { "id": "c0b1026", "elType": "widget", "widgetType": "shortcode", "settings": { "shortcode": "[caption width=\"300\"]<img src=\"{{medium:cover}}\" alt=\"A purple to orange gradient used as a cover background\" class=\"wp-image-{{id:cover}}\" /> The cover image[/caption]" }, "elements": [] }
+      ]
+    }
+  ]
+}

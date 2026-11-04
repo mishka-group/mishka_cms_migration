@@ -63,6 +63,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   library they show or link to in its `media` (`MishkaCmsMigration.Sources.WordPress`), for the
   target to point them at where the posts, the pages and the files move.
 
+  An address that runs code or carries a document of its own is dropped, its element kept without
+  it, wherever the content has it (`pieces/1`): a `javascript:` or `vbscript:` address, and a
+  `data:` one but an image's `src`, in an `href`, `src`, `action`, `formaction`, `poster` or
+  `xlink:href`, read as a browser reads it, whatever its case and the spaces, tabs and line breaks
+  in it.
+
   ## Players
 
   A YouTube video (`youtube.com/watch?v=`, `youtu.be/`, `/embed/`, `/shorts/`, `/live/`) is played
@@ -79,6 +85,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   @grids %{"core/columns" => :columns, "core/media-text" => :columns, "core/group" => :rows}
 
   @dropped_attrs ["class", "style"]
+
+  @addressed ~w(href src action formaction poster xlink:href)
+  @running ["javascript:", "vbscript:"]
+  @unread ~r/[\x00-\x20\x7f]+/
 
   @block_tags ~w(address article aside blockquote details div dl figure footer h1 h2 h3 h4 h5 h6
                  header hr iframe nav ol p pre section table ul video)
@@ -98,17 +108,36 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
   """
   @type fetch :: (String.t(), [pos_integer()] -> %{optional(pos_integer()) => map()})
 
+  @typedoc """
+  A converted node: a `LazyHTML.Tree` node, or `{:piece, piece}` where a piece is left to
+  `migration:content:convert`.
+  """
+  @type content_node :: LazyHTML.Tree.html_node() | {:piece, map()}
+
   @doc """
   The pieces `raw` is made of, reading the reusable blocks and the gallery images it names with
   `fetch`.
   """
   @spec call(String.t(), fetch()) :: [map()]
-  def call(raw, fetch) when is_binary(raw) do
-    {tree, pieces} =
-      raw
-      |> tree()
-      |> top(%{fetch: fetch, reusable?: true})
-      |> LazyHTML.Tree.postwalk([], &marked/2)
+  def call(raw, fetch) when is_binary(raw), do: raw |> nodes(fetch) |> pieces()
+
+  @doc """
+  `raw` converted as `call/2` converts it, as nodes, for a converter that places the converted
+  content inside markup of its own before it makes the pieces (`pieces/1`), such as the text of an
+  Elementor widget (`MishkaCmsMigration.Sources.WordPress.Elementor`).
+  """
+  @spec nodes(String.t(), fetch()) :: [content_node()]
+  def nodes(raw, fetch) when is_binary(raw),
+    do: raw |> tree() |> top(%{fetch: fetch, reusable?: true})
+
+  @doc """
+  The content pieces of `nodes`, in order: the HTML around each `{:piece, piece}`, and the piece,
+  without an address that runs code or carries a document of its own (`javascript:`, `vbscript:`,
+  and `data:` but an image's).
+  """
+  @spec pieces([content_node()]) :: [map()]
+  def pieces(nodes) do
+    {tree, pieces} = LazyHTML.Tree.postwalk(nodes, [], &marked/2)
 
     tree
     |> LazyHTML.Tree.to_html()
@@ -116,10 +145,30 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
     |> joined(Enum.reverse(pieces))
   end
 
+  @doc """
+  A `<figure>` with the player of the YouTube or Vimeo video at `url` (see "Players"), or with a
+  link to any other address.
+  """
+  @spec embed(String.t()) :: LazyHTML.Tree.html_node()
+  def embed(url), do: url |> player() |> embedded(url)
+
   defp tree(raw), do: raw |> LazyHTML.from_fragment() |> LazyHTML.to_tree()
 
   defp marked({:piece, piece}, pieces), do: {{:comment, @piece}, [piece | pieces]}
+
+  defp marked({tag, attrs, children}, pieces),
+    do: {{tag, Enum.reject(attrs, &unsafe?(tag, &1)), children}, pieces}
+
   defp marked(node, pieces), do: {node, pieces}
+
+  defp unsafe?(tag, {name, address}) when name in @addressed,
+    do: address |> String.replace(@unread, "") |> String.downcase() |> unsafe?(tag, name)
+
+  defp unsafe?(_tag, _attr), do: false
+
+  defp unsafe?("data:" <> _image, "img", "src"), do: false
+  defp unsafe?("data:" <> _document, _tag, _name), do: true
+  defp unsafe?(address, _tag, _name), do: String.starts_with?(address, @running)
 
   defp joined([html], []), do: html_piece(html)
 
@@ -256,8 +305,6 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
 
   defp source(text) when is_binary(text), do: text
   defp source(node), do: LazyHTML.Tree.to_html([node])
-
-  defp embed(url), do: url |> player() |> embedded(url)
 
   defp embedded({title, src}, _url),
     do:

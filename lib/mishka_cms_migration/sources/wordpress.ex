@@ -74,9 +74,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       shortcode left to `migration:content:convert`. The reusable blocks and gallery images it names
       are read from `/wp/v2/blocks` and `/wp/v2/media` with the connection the walk hands
       `normalize/3` (its context's `conn`); without one, or when WordPress does not answer, they are
-      pieces too. `attrs` keeps `slug`, `status`, `link`, `author`, `featured_media`, `date_gmt`,
-      `template`, `excerpt` (its raw text), and `parent` and `menu_order` for a page, `categories`,
-      `tags`, `sticky` and `format` for a post. Its `links` are the links of its content to a post
+      pieces too. An entry laid out with Elementor is its layout instead
+      (`MishkaCmsMigration.Sources.WordPress.Elementor`), and its links and files below are read
+      from that content; the widgets in it the CMS has no equivalent for are named in its
+      `"unsupported_widgets"`, and those of them Elementor drew nothing for in its
+      `"no_fallback_widgets"`, which only such an entry has. `attrs` keeps `slug`, `status`, `link`,
+      `author`, `featured_media`, `date_gmt`, `template`, `excerpt` (its raw text), and `parent` and
+      `menu_order` for a page, `categories`, `tags`, `sticky` and `format` for a post. Its `links`
+      are the links of its content to a post
       of the site, each `href` as written to the post's decoded slug. A link on the site's own
       host, or a path alone, is asked for: `/?p=<id>` by its id (`include`), any other by the last
       segment of its path (`slug`), from `/wp/v2/posts` in any status with only `id`, `slug` and
@@ -163,7 +168,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   and `registered_date`, a term's `taxonomy`, a file's `media_details` (its sizes among them), and
   what a plugin adds. It leaves out what WordPress works out afresh for each answer rather than
   keeps: `_links`, the `rendered` halves of the fields above, and Yoast's `yoast_head` and
-  `yoast_head_json`; and the local `modified`, which `modified_at` already says. Yoast's head
+  `yoast_head_json`; and the local `modified`, which `modified_at` already says. It leaves out
+  Elementor's own meta too (`_elementor_*`: the layout an entry's content is made of, its version,
+  caches and CSS), which Elementor answers, empty, for every entry it could lay out. Yoast's head
   carries the modified time too, so keeping either would make an item that was only saved again
   look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
   such as one read with `_fields`, is refused as `:unreadable`.
@@ -192,7 +199,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Source
-  alias MishkaCmsMigration.Sources.WordPress.{Content, Export}
+  alias MishkaCmsMigration.Sources.WordPress.{Content, Elementor, Export}
 
   @kinds [
     "user",
@@ -399,7 +406,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         context
       )
       when kind in @entries do
-    content = Content.call(html, fetch(context))
+    fetch = fetch(context)
+    {content, html, laid_out} = row |> Elementor.call(kind, fetch) |> body(html, fetch)
     {media, seo} = media(html, content, seo(row, context), context)
 
     {:ok,
@@ -413,8 +421,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          |> entry_attrs()
          |> decoded_slug()
          |> Map.merge(%{"seo" => seo, "media" => media})
+         |> Map.merge(laid_out)
          |> Map.merge(links(html, context)),
-       extra: Map.drop(row, @entry_read),
+       extra: row |> Map.drop(@entry_read) |> without_elementor(),
        content: content
      }}
   end
@@ -596,6 +605,27 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
+
+  defp body({:ok, content, unsupported, no_fallback}, _raw, _fetch),
+    do:
+      {content, for(%{html: html} when is_binary(html) <- content, into: "", do: html),
+       unsupported_widgets(unsupported, no_fallback)}
+
+  defp body(:none, raw, fetch), do: {Content.call(raw, fetch), raw, %{}}
+
+  defp unsupported_widgets([], _no_fallback), do: %{}
+  defp unsupported_widgets(names, []), do: %{"unsupported_widgets" => names}
+
+  defp unsupported_widgets(names, no_fallback),
+    do: %{"unsupported_widgets" => names, "no_fallback_widgets" => no_fallback}
+
+  defp without_elementor(%{"meta" => %{} = meta} = extra),
+    do: %{extra | "meta" => Map.reject(meta, fn {key, _value} -> elementor?(key) end)}
+
+  defp without_elementor(extra), do: extra
+
+  defp elementor?("_elementor_" <> _key), do: true
+  defp elementor?(_key), do: false
 
   defp read(req, route, params),
     do:
