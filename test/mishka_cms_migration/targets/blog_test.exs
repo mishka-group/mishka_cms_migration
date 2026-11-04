@@ -1289,6 +1289,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert Seo.tag_value(checklist, "robots") == "noindex, nofollow"
       assert Seo.tag_value(blocks, "og:image") == files["diagram"]
 
+      assert Seo.tag_value(checklist, "og:title") == "SEO checklist (social title)"
+      assert Seo.tag_value(checklist, "og:description") =~ "social description"
+      assert Seo.tag_value(checklist, "twitter:title") == "SEO checklist (Twitter title)"
+      assert Seo.tag_value(checklist, "twitter:description") == "The Twitter description."
+      refute Seo.tag_value(blocks, "og:title"), "Yoast's default social title is the page's title"
+      refute Seo.tag_value(blocks, "twitter:card"), "the head draws the large card by itself"
+      refute Seo.tag_value(blocks, "twitter:image"), "the head repeats the og:image for Twitter"
+
       assert Seo.tag_value(tips, "canonical") ==
                "https://syndicated.example.test/phoenix-liveview-tips/"
 

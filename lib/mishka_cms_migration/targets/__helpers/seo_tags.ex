@@ -20,7 +20,19 @@ defmodule MishkaCmsMigration.Targets.Helpers.SeoTags do
       is left out, and so is the target's `featured` file: a page with no stored `og:image` gets the
       core's share card (`MishkaCmsCore.Runtime.ShareCard`), which draws a Blog post's featured
       image, and a stored one would replace that card;
-    * `"canonical"` — the `canonical` link. The source keeps only a canonical on another site.
+    * `"canonical"` — the `canonical` link. The source keeps only a canonical on another site;
+    * `"og_title"` and `"og_description"` — the `og:title` and `og:description` metas, the social
+      title and description when they say something else than the title and the description;
+    * `"twitter_title"` and `"twitter_description"` — the `twitter:title` and
+      `twitter:description` metas;
+    * `"twitter_image"` — the `twitter:image` meta, kept and left out by the same rules as `"image"`
+      (its `"twitter_image_id"`), and left out too when it is the `og:image` the page stores,
+      which the head already repeats for Twitter;
+    * `"twitter_card"` — the `twitter:card` meta, only `summary`: the head draws
+      `summary_large_image` for a page with an image by itself.
+
+  The core's head stacks these over the layout's and a plugin's, a tag by its name and attributes,
+  so each one replaces the default for that tag, and none is drawn twice.
 
   An item without `"seo"` has no tags.
   """
@@ -37,12 +49,21 @@ defmodule MishkaCmsMigration.Targets.Helpers.SeoTags do
   """
   @spec call(Item.t(), Target.context(), term()) :: [map()]
   def call(%Item{attrs: %{"seo" => %{} = seo}}, context, featured) do
+    og_image = image(seo, "image", featured, context)
+    twitter_image = image(seo, "twitter_image", featured, context)
+
     [
       tag("title", %{}, seo["title"]),
       tag("meta", %{"name" => "description"}, seo["description"]),
       tag("meta", %{"name" => "robots"}, seo["robots"]),
-      tag("meta", %{"property" => "og:image"}, image(seo, featured, context)),
-      tag("link", %{"rel" => "canonical"}, seo["canonical"])
+      tag("meta", %{"property" => "og:image"}, og_image),
+      tag("link", %{"rel" => "canonical"}, seo["canonical"]),
+      tag("meta", %{"property" => "og:title"}, seo["og_title"]),
+      tag("meta", %{"property" => "og:description"}, seo["og_description"]),
+      tag("meta", %{"name" => "twitter:title"}, seo["twitter_title"]),
+      tag("meta", %{"name" => "twitter:description"}, seo["twitter_description"]),
+      tag("meta", %{"name" => "twitter:image"}, differing(twitter_image, og_image)),
+      tag("meta", %{"name" => "twitter:card"}, seo["twitter_card"])
     ]
     |> Enum.reject(&is_nil/1)
   end
@@ -52,15 +73,21 @@ defmodule MishkaCmsMigration.Targets.Helpers.SeoTags do
   defp tag(_tag, _attrs, nil), do: nil
   defp tag(tag, attrs, value), do: Seo.stored_tag(tag, attrs, value)
 
-  defp image(%{"image_id" => id}, id, _context), do: nil
+  defp differing(value, value), do: nil
+  defp differing(value, _other), do: value
 
-  defp image(%{"image_id" => id}, _featured, context),
+  defp image(seo, field, featured, context),
+    do: located(seo[field], seo[field <> "_id"], featured, context)
+
+  defp located(_url, id, id, _context) when not is_nil(id), do: nil
+
+  defp located(_url, id, _featured, context) when not is_nil(id),
     do: [id] |> CmsMedia.addresses(context) |> Map.get(to_string(id))
 
-  defp image(%{"image" => url}, _featured, context) when is_binary(url),
+  defp located(url, nil, _featured, context) when is_binary(url),
     do: elsewhere(url, Source.url_host(%{"url" => url}), context.source_host)
 
-  defp image(_seo, _featured, _context), do: nil
+  defp located(_url, _id, _featured, _context), do: nil
 
   defp elsewhere(_url, nil, _source_host), do: nil
   defp elsewhere(_url, source_host, source_host), do: nil

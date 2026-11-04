@@ -82,7 +82,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     Its `"seo"`, what Yoast SEO or Rank Math kept for it (the WordPress source reads it), is the
     post's `seo_tags` (`MishkaCmsMigration.Targets.Helpers.SeoTags`): its title, description,
-    robots, share image and a canonical address on another site. A share image that is the post's
+    robots, share image, a canonical address on another site, and the social and Twitter title,
+    description, image and card when they say something else than the page's own (see the helper).
+    A share image that is the post's
     featured image is left out: the post's page then shows the core's share card, which draws the
     featured image with the post's title, where a stored `og:image` would replace the card. The
     WordPress REST API cannot tell Yoast's chosen image from its fallback to the featured image.

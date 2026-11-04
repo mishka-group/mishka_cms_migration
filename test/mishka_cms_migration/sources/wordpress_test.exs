@@ -587,7 +587,11 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                  "Keep addresses, titles and descriptions when a site changes CMS.",
                "robots" => "noindex, nofollow",
                "image" => og_image["source_url"],
-               "image_id" => og_image["id"]
+               "image_id" => og_image["id"],
+               "og_title" => "SEO checklist (social title)",
+               "og_description" => "The social description differs from the search description.",
+               "twitter_title" => "SEO checklist (Twitter title)",
+               "twitter_description" => "The Twitter description."
              }
 
       assert posts["43"].attrs["seo"]["canonical"] ==
@@ -595,6 +599,15 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       refute is_map_key(posts["33"].attrs["seo"], "canonical")
       assert posts["52"].attrs["seo"] == %{}
+
+      for id <- ["33", "35", "50"],
+          field <- ["og_title", "og_description", "twitter_card"],
+          do:
+            refute(
+              is_map_key(posts[id].attrs["seo"], field),
+              "Yoast's default #{field} on post #{id} says what the CMS's head already says"
+            )
+
       assert pages["24"].attrs["seo"]["title"] == "About the Mishka Test Blog"
       assert pages["27"].attrs["seo"]["title"] == "Docs - Guides - Mishka Test Blog"
       refute is_map_key(pages["22"].attrs["seo"], "title")
@@ -631,6 +644,35 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       for rendered <- ["_links", "modified", "title", "caption", "description"] do
         refute is_map_key(hero.extra, rendered)
       end
+    end
+
+    test "a post's social and Twitter fields are read from Rank Math and Yoast's export fields, with their image found in the media request" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 52))
+      uploads = "http://localhost:8089/wp-content/uploads/2026/11/"
+
+      meta = %{
+        "rank_math_facebook_title" => "%title% %sep% %sitename%",
+        "rank_math_facebook_description" => "A social text",
+        "rank_math_twitter_title" => "Unknown %%ct_thing%% variable",
+        "_yoast_wpseo_twitter-description" => "Twitter text",
+        "rank_math_twitter_image" => uploads <> "gallery-1-300x225.jpg",
+        "rank_math_twitter_card_type" => "summary"
+      }
+
+      row = Map.update!(row, "meta", &Map.merge((is_map(&1) && &1) || %{}, meta))
+
+      assert {:ok, %{attrs: %{"seo" => seo}}} =
+               WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert seo["og_title"] == "{{page.title}} - {{site.name}}"
+      assert seo["og_description"] == "A social text"
+      refute is_map_key(seo, "twitter_title")
+      assert seo["twitter_description"] == "Twitter text"
+      assert seo["twitter_image"] == uploads <> "gallery-1-300x225.jpg"
+      assert seo["twitter_image_id"] == 6
+      assert seo["twitter_card"] == "summary"
     end
 
     test "a post's media name each file of the site its content shows or links to, by the file's id, a size of it too" do
