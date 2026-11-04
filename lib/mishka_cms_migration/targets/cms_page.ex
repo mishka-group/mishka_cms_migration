@@ -151,6 +151,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   alias MishkaCmsMigration.Targets.Helpers.{
     BySlug,
+    ContentChecks,
     Frames,
     Read,
     Scripts,
@@ -190,19 +191,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write),
-    do:
-      with(
-        :ok <- Widgets.call(item, context),
-        :ok <- Scripts.call(item, context),
-        :ok <- Frames.call(item, context),
-        do: write.(context)
-      )
+    do: with(:ok <- ContentChecks.call(item, context), do: write.(context))
 
   @impl MishkaCmsMigration.Target
-  def waiting(item, context),
-    do:
-      Widgets.waiting(item, context) || Scripts.waiting(item, context) ||
-        Frames.waiting(item, context)
+  def waiting(item, context), do: ContentChecks.waiting(item, context)
 
   @impl MishkaCmsMigration.Target
   def note(item, context),

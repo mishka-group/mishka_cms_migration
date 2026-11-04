@@ -135,7 +135,16 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
-    alias MishkaCmsMigration.Targets.Helpers.{BySlug, Frames, Scripts, SeoTags, Status, Widgets}
+
+    alias MishkaCmsMigration.Targets.Helpers.{
+      BySlug,
+      ContentChecks,
+      Frames,
+      Scripts,
+      SeoTags,
+      Status,
+      Widgets
+    }
 
     @drafted ["pending", "private", "password"]
 
@@ -184,19 +193,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
-      do:
-        with(
-          :ok <- Widgets.call(item, context),
-          :ok <- Scripts.call(item, context),
-          :ok <- Frames.call(item, context),
-          do: write.(context)
-        )
+      do: with(:ok <- ContentChecks.call(item, context), do: write.(context))
 
     @impl MishkaCmsMigration.Target
-    def waiting(item, context),
-      do:
-        Widgets.waiting(item, context) || Scripts.waiting(item, context) ||
-          Frames.waiting(item, context)
+    def waiting(item, context), do: ContentChecks.waiting(item, context)
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do
