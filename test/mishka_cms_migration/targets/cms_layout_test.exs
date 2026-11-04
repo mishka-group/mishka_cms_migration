@@ -158,7 +158,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       assert outcomes(run) == %{
                "22" => {:updated, nil},
-               "23" => {:skipped, "not_main_menu"}
+               "23" => {:skipped, "not_main_menu"},
+               "navigation-105" => {:skipped, "not_main_menu"}
              }
 
       assert template(site) == layout.template
@@ -185,7 +186,11 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       run = imported!(site, admin)
 
-      assert outcomes(run) == %{"22" => {:updated, nil}, "23" => {:skipped, "not_main_menu"}}
+      assert outcomes(run) == %{
+               "22" => {:updated, nil},
+               "23" => {:skipped, "not_main_menu"},
+               "navigation-105" => {:skipped, "not_main_menu"}
+             }
 
       assert links(site) == [
                {"Home", {:navigate, "/"}},

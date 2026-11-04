@@ -131,6 +131,18 @@ defmodule MishkaCmsMigration.Sources.WordPress.Content do
     do: raw |> tree() |> top(%{fetch: fetch, reusable?: true})
 
   @doc """
+  The blocks at the top of `raw`, an HTML string, or of a block's inner nodes, as
+  `{:block, name, attrs, inner, raw}` with the name's namespace (`"core/navigation-link"`), its
+  attributes as the block comment's JSON says them, the nodes it encloses (`nil` for a block with
+  no end comment) and its source nodes. What lies between blocks is dropped. For a reader of a
+  block tree other than content, such as a block navigation
+  (`MishkaCmsMigration.Sources.WordPress.Navigation`).
+  """
+  @spec blocks_in(String.t() | [LazyHTML.Tree.html_node()]) :: [tuple()]
+  def blocks_in(raw) when is_binary(raw), do: raw |> tree() |> blocks_in()
+  def blocks_in(nodes) when is_list(nodes), do: nodes |> blocks() |> Enum.filter(&block?/1)
+
+  @doc """
   The content pieces of `nodes`, in order: the HTML around each `{:piece, piece}`, and the piece,
   without an address that runs code or carries a document of its own (`javascript:`, `vbscript:`,
   and `data:` but an image's).
