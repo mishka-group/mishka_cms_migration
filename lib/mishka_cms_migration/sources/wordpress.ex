@@ -178,6 +178,27 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   look changed to `MishkaCmsMigration.Source.Item.hash/1`. A row without the fields its kind needs,
   such as one read with `_fields`, is refused as `:unreadable`.
 
+  ## Languages
+
+  A page, a post, a category and a tag read from a site that runs a language plugin carry the
+  language they are in as the item's `"language"`, and the other editions of them as its
+  `"translations"`, by language, each the source id of that edition, the item's own left out
+  (`%{"en" => "121"}`), read from what the plugin adds to the row:
+
+    * Polylang Pro's `lang`, the language's code, and `translations`, the ids of every edition by
+      code, its own among them (https://polylang.pro/doc/rest-api/). The export file source
+      (`MishkaCmsMigration.Sources.WordPressFile`) makes the same two fields of what Polylang and
+      WPML keep in an export;
+    * the WPML REST API plugin's `wpml_current_locale`, the row's locale, such as `fa_IR`, and
+      `wpml_translations`, the other editions by locale, each with its `id`
+      (https://github.com/shawnhooper/wpml-rest-api). The language is the locale's first part:
+      `fa_IR` is `fa`.
+
+  A code is lower-cased, with `-` for `_`. These fields are not kept in `extra`. A row that names
+  no language has neither key: Polylang's free plugin adds no field to the REST API, so its
+  entries and terms say their language only in the site's export. WPML's REST API answers its
+  default language alone unless a request names another, so its other editions are not listed.
+
   Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
   name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
   own pages (`MishkaCmsMigration.Targets.CmsPage`), the main menu as the links of the site layout's
@@ -260,11 +281,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
 
   @rendered ~w(_links yoast_head yoast_head_json)
+  @edition_fields ~w(lang translations wpml_current_locale wpml_translations)
 
   @entries ["page", "post"]
   @entry_attrs ~w(slug status link parent author categories tags featured_media date_gmt
                   menu_order sticky format template)
-  @entry_read ~w(id title content excerpt modified modified_gmt) ++ @entry_attrs ++ @rendered
+  @entry_read ~w(id title content excerpt modified modified_gmt) ++
+                @entry_attrs ++ @rendered ++ @edition_fields
 
   @media_attrs ~w(slug source_url mime_type media_type alt_text post date_gmt)
   @media_read ~w(id title caption description filesize modified modified_gmt) ++
@@ -449,7 +472,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          |> decoded_slug()
          |> Map.merge(%{"seo" => seo, "media" => media})
          |> Map.merge(laid_out)
-         |> Map.merge(links(html, context)),
+         |> Map.merge(links(html, context))
+         |> Map.merge(edition(row)),
        extra: row |> Map.drop(@entry_read) |> without_elementor(),
        content: content
      }}
@@ -512,8 +536,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
        source_id: id,
        title: name,
        parent: parent(row),
-       attrs: row |> Map.take(attrs) |> decoded_slug(),
-       extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered)
+       attrs: row |> Map.take(attrs) |> decoded_slug() |> Map.merge(edition(row)),
+       extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered ++ @edition_fields)
      }}
   end
 
@@ -562,6 +586,46 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   def normalize(_row, kind, _context) when kind in @kinds, do: {:error, :unreadable}
   def normalize(_row, kind, _context), do: {:error, {:unknown_kind, kind}}
+
+  defp edition(%{"lang" => lang} = row) when is_binary(lang) and lang != "",
+    do: lang |> code() |> edition(row["translations"], &{code(elem(&1, 0)), elem(&1, 1)})
+
+  defp edition(%{"wpml_current_locale" => locale} = row) when is_binary(locale) and locale != "",
+    do: locale |> locale_code() |> edition(row["wpml_translations"], &wpml_edition/1)
+
+  defp edition(_row), do: %{}
+
+  defp edition(language, translations, read) do
+    %{
+      "language" => language,
+      "translations" =>
+        for(
+          entry <- editions(translations),
+          {code, id} = read.(entry),
+          is_binary(code) and code != language and (is_integer(id) or is_binary(id)),
+          into: %{},
+          do: {code, to_string(id)}
+        )
+    }
+  end
+
+  defp editions(%{} = translations), do: Enum.to_list(translations)
+  defp editions(translations) when is_list(translations), do: translations
+  defp editions(_none), do: []
+
+  defp wpml_edition({_locale, edition}), do: wpml_edition(edition)
+  defp wpml_edition(%{"locale" => locale, "id" => id}), do: {locale_code(locale), id}
+  defp wpml_edition(_edition), do: {nil, nil}
+
+  defp code(code) when is_binary(code),
+    do: code |> String.trim() |> String.downcase() |> String.replace("_", "-")
+
+  defp code(_code), do: nil
+
+  defp locale_code(locale) when is_binary(locale),
+    do: locale |> String.split("_", parts: 2) |> hd() |> code()
+
+  defp locale_code(_locale), do: nil
 
   defp setting(id, value) when id in @texts and is_binary(value), do: value |> plain() |> filled()
 

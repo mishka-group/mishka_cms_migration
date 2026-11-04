@@ -68,6 +68,27 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       too; one whose page, post or term the export does not carry is invalid, as WordPress counts
       it. Each `wp_navigation` post is a block menu too, as the REST API answers it.
 
+  ## Languages
+
+  An export of a site that runs Polylang or WPML carries the language of each entry and term, and
+  which entries and terms are editions of one another, and a page, a post, a category and a tag row
+  carries them as Polylang Pro's REST API does, `lang` and `translations` (every edition's id by
+  language, the row's own among them), which the WordPress source reads into the item
+  (`MishkaCmsMigration.Sources.WordPress`, "Languages"):
+
+    * Polylang keeps them as its own taxonomies, which an export carries as terms (`wp:term`): an
+      entry names its `language` term (its slug is the code) and its `post_translations` term, and
+      each `post_translations` and `term_translations` term describes its group as a serialized
+      map of code to id. A term's language is its code in the `term_translations` group that names
+      it; a term in none says no language;
+    * WPML, with its WPML Export and Import, keeps them in an entry's meta and a term's meta
+      (`_wpml_import_language_code`, the code, and `_wpml_import_translation_group`, a value every
+      edition of one entry shares; https://wpml.org/documentation/translating-your-contents/multilingual-content-import/).
+      These are not kept in `meta`.
+
+  `extra/1` keeps which plugin the export came from as `"languages"` (`"polylang"` or `"wpml"`),
+  as the WordPress source does for a site.
+
   ## Where it differs from the REST API
 
   An export carries less than the REST API answers, and some of it otherwise:
@@ -120,8 +141,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     "wp:tag" => {"post_tag", "wp:tag_slug", "wp:tag_name", "wp:tag_description"}
   }
 
+  @wpml_meta ~w(_wpml_import_language_code _wpml_import_source_language_code
+                _wpml_import_translation_group)
   @mapped_meta ~w(_thumbnail_id _wp_page_template _wp_attached_file _wp_attachment_metadata
-                  _wp_attachment_image_alt)
+                  _wp_attachment_image_alt) ++ @wpml_meta
 
   @indexed_media ~w(id slug link source_url alt_text media_details)
 
@@ -130,12 +153,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   @menu_meta ~w(_menu_item_type _menu_item_object _menu_item_object_id
                 _menu_item_menu_item_parent _menu_item_url _menu_item_target)
 
+  @editions %{plugin: nil, groups: %{}, terms: %{}, wpml: %{}}
+
   @found %{
     site: %{},
     authors: %{},
     terms: %{"category" => %{}, "post_tag" => %{}},
     counts: %{},
-    rows: %{}
+    rows: %{},
+    editions: @editions
   }
 
   @kinds WordPress.kinds()
@@ -207,14 +233,22 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp indexed(name, element, found) when is_map_key(@terms, name) do
     {taxonomy, slug, _name, _description} = Map.fetch!(@terms, name)
+    id = integer(text(element, "wp:term_id"))
 
     {:cont,
-     put_in(
-       found,
-       [:terms, taxonomy, text(element, slug)],
-       integer(text(element, "wp:term_id"))
-     )}
+     found
+     |> put_in([:terms, taxonomy, text(element, slug)], id)
+     |> update_in([:editions], &wpml_indexed(&1, taxonomy, id, meta(element, "wp:termmeta")))}
   end
+
+  defp indexed("wp:term", element, found),
+    do:
+      {:cont,
+       update_in(
+         found,
+         [:editions],
+         &polylang_indexed(&1, text(element, "wp:term_taxonomy"), element)
+       )}
 
   defp indexed("item", element, found),
     do:
@@ -230,6 +264,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     found
     |> update_in([:rows, Map.fetch!(@routes, type)], &[row | &1 || []])
     |> counted(type, status, element)
+    |> update_in([:editions], &entry_indexed(&1, type, element))
   end
 
   defp item_indexed(_type, _status, _element, found), do: found
@@ -260,6 +295,62 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp counted(found, _type, _status, _element), do: found
 
+  defp entry_indexed(editions, type, element) when type in @entries,
+    do:
+      wpml_indexed(
+        editions,
+        type,
+        integer(text(element, "wp:post_id")),
+        meta(element, "wp:postmeta")
+      )
+
+  defp entry_indexed(editions, _type, _element), do: editions
+
+  defp wpml_indexed(
+         editions,
+         type,
+         id,
+         %{"_wpml_import_language_code" => language, "_wpml_import_translation_group" => group}
+       )
+       when is_binary(language) and language != "" and is_binary(group) and group != "",
+       do: %{
+         editions
+         | plugin: editions.plugin || "wpml",
+           wpml:
+             Map.update(
+               editions.wpml,
+               {type, group},
+               %{language => id},
+               &Map.put(&1, language, id)
+             )
+       }
+
+  defp wpml_indexed(editions, _type, _id, _meta), do: editions
+
+  defp polylang_indexed(editions, "language", _element), do: %{editions | plugin: "polylang"}
+
+  defp polylang_indexed(editions, "post_translations", element),
+    do:
+      put_in(
+        editions,
+        [:groups, text(element, "wp:term_slug")],
+        group(text(element, "wp:term_description"))
+      )
+
+  defp polylang_indexed(editions, "term_translations", element) do
+    group = group(text(element, "wp:term_description"))
+    %{editions | terms: Enum.reduce(group, editions.terms, &Map.put(&2, elem(&1, 1), group))}
+  end
+
+  defp polylang_indexed(editions, _taxonomy, _element), do: editions
+
+  defp group(description), do: description |> Export.php() |> group_ids()
+
+  defp group_ids(%{} = group),
+    do: for({language, id} <- group, is_integer(id), into: %{}, do: {language, id})
+
+  defp group_ids(_not_a_group), do: %{}
+
   defp connected({:ok, %{site: %{"wp:wxr_version" => _, "link" => link} = site} = found}, path)
        when is_binary(link) do
     rows = Map.new(found.rows, fn {route, rows} -> {route, Enum.reverse(rows)} end)
@@ -268,17 +359,23 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     {:ok,
      %{
        file: path,
-       index: %{"name" => site["title"], "description" => site["description"], "home" => home},
+       index:
+         %{"name" => site["title"], "description" => site["description"], "home" => home}
+         |> languages(found.editions.plugin),
        read: &read(rows, &1, &2),
        authors: found.authors,
        terms: found.terms,
        counts: found.counts,
+       editions: found.editions,
        under: under(Map.get(rows, "/wp/v2/pages", []), home)
      }}
   end
 
   defp connected({:ok, _not_an_export}, _path), do: {:error, :unreadable_file}
   defp connected(refused, _path), do: refused
+
+  defp languages(index, nil), do: index
+  defp languages(index, plugin), do: Map.put(index, "languages", plugin)
 
   defp under(pages, home),
     do:
@@ -438,12 +535,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       "content" => %{"raw" => text(element, "content:encoded") || ""}
     }
 
-  defp menu_slug(element),
-    do:
-      Enum.find_value(Export.all(element, "category"), fn reference ->
-        Export.attribute(reference, "domain") == "nav_menu" and
-          Export.attribute(reference, "nicename")
-      end)
+  defp menu_slug(element), do: referenced(element, "nav_menu")
 
   defp term_asked("category", id, _slug), do: to_string(id)
   defp term_asked("post_tag", _id, slug), do: to_string(slug)
@@ -495,9 +587,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp term(name, element, conn) do
     {taxonomy, slug_key, name_key, description_key} = Map.fetch!(@terms, name)
     slug = text(element, slug_key)
+    id = integer(text(element, "wp:term_id"))
 
     %{
-      "id" => integer(text(element, "wp:term_id")),
+      "id" => id,
       "name" => text(element, name_key),
       "slug" => slug,
       "description" => text(element, description_key) || "",
@@ -505,7 +598,55 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       "taxonomy" => taxonomy
     }
     |> parented(name, element, conn)
+    |> Map.merge(
+      term_edition(conn.editions.terms[id], id, {taxonomy, meta(element, "wp:termmeta")}, conn)
+    )
   end
+
+  defp term_edition(%{} = group, id, _wpml, _conn),
+    do:
+      edition(
+        Enum.find_value(group, fn
+          {language, ^id} -> language
+          _other -> nil
+        end),
+        group
+      )
+
+  defp term_edition(nil, id, {taxonomy, meta}, conn), do: wpml_edition(taxonomy, id, meta, conn)
+
+  defp entry_edition(element, id, meta, conn),
+    do: element |> referenced("language") |> entry_language(element, {id, meta}, conn)
+
+  defp entry_language(nil, element, {id, meta}, conn),
+    do: wpml_edition(item_type(element), id, meta, conn)
+
+  defp entry_language(language, element, {id, _meta}, conn),
+    do: edition(language, conn.editions.groups[referenced(element, "post_translations")], id)
+
+  defp wpml_edition(
+         type,
+         id,
+         %{"_wpml_import_language_code" => language, "_wpml_import_translation_group" => group},
+         conn
+       )
+       when is_binary(language) and language != "",
+       do: edition(language, conn.editions.wpml[{type, group}], id)
+
+  defp wpml_edition(_type, _id, _meta, _conn), do: %{}
+
+  defp edition(nil, _group), do: %{}
+  defp edition(language, group), do: %{"lang" => language, "translations" => group}
+
+  defp edition(language, nil, id), do: edition(language, %{language => id})
+  defp edition(language, group, _id), do: edition(language, group)
+
+  defp referenced(element, taxonomy),
+    do:
+      Enum.find_value(Export.all(element, "category"), fn reference ->
+        Export.attribute(reference, "domain") == taxonomy and
+          Export.attribute(reference, "nicename")
+      end)
 
   defp parented(term, "wp:category", element, conn),
     do:
@@ -537,9 +678,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp entry(type, element, conn) do
     meta = meta(element, "wp:postmeta")
+    row = posted(element, conn.authors)
 
-    element
-    |> posted(conn.authors)
+    row
     |> Map.merge(%{
       "password" => text(element, "wp:post_password") || "",
       "content" => %{"raw" => text(element, "content:encoded") || ""},
@@ -549,6 +690,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       "meta" => Map.drop(meta, @mapped_meta)
     })
     |> Map.merge(typed(type, element, conn))
+    |> Map.merge(entry_edition(element, row["id"], meta, conn))
   end
 
   defp typed("post", element, conn),
