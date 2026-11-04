@@ -73,10 +73,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`"featured_image_missing"`); a dry run, which writes no file, does not.
 
     Its `"media"` name the addresses of its content that are files of the source, and each `src`,
-    `href` and video `poster` of them points at the file's Media address instead
-    (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
+    `href`, video `poster` and `srcset` candidate of them points at the file's Media address
+    instead (`MishkaCmsMigration.Targets.CmsMedia.relinked/3`), a size WordPress made of a file too:
     `.../uploads/2026/11/hero-300x169.jpg` is the address of the stored `hero.jpg`. The address of a
-    file that was not written is kept as it is.
+    file that was not written is kept as it is, and an `srcset` candidate of one is named in the
+    report (`"srcset_file_missing"`).
 
     ## Its SEO
 
@@ -174,6 +175,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         item |> Status.call() |> drafted(),
         authored(item, context),
         pictured(item, context),
+        CmsMedia.srcset_note(item, context),
         Frames.note(item, context)
       ]
       |> Enum.reject(&is_nil/1)

@@ -675,6 +675,44 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert seo["twitter_card"] == "summary"
     end
 
+    defp media_requests(found) do
+      receive do
+        {:wordpress_request, %{request_path: "/wp-json/wp/v2/media"} = request} ->
+          media_requests([request | found])
+
+        {:wordpress_request, _other} ->
+          media_requests(found)
+      after
+        0 -> Enum.reverse(found)
+      end
+    end
+
+    test "a post's media name the candidates of its srcset, a size of a file too, in the same requests as its other files" do
+      stub!()
+      conn = connected!()
+      [row] = Enum.filter(recorded("posts"), &(&1["id"] == 52))
+      uploads = "http://localhost:8089/wp-content/uploads/2026/11/"
+
+      content =
+        ~s(<img src="#{uploads}hero.jpg" srcset="#{uploads}hero-300x169.jpg 300w, #{uploads}gallery-2.jpg 800w, https://cdn.example.test/x.jpg 2x">) <>
+          ~s(<picture><source srcset="#{uploads}diagram-768x403.png 768w"></picture>)
+
+      row = put_in(row, ["content", "raw"], content)
+
+      assert {:ok, %{attrs: %{"media" => media}}} =
+               WordPress.normalize(row, "post", Map.put(@context, :conn, conn))
+
+      assert media == %{
+               (uploads <> "hero.jpg") => 4,
+               (uploads <> "hero-300x169.jpg") => 4,
+               (uploads <> "gallery-2.jpg") => 7,
+               (uploads <> "diagram-768x403.png") => 10
+             }
+
+      assert [%{query_params: %{"slug" => slugs}}] = media_requests([])
+      assert ~w(hero gallery-2 diagram) -- String.split(slugs, ",") == []
+    end
+
     test "a post's media name each file of the site its content shows or links to, by the file's id, a size of it too" do
       posts = items!("post")
       uploads = "http://localhost:8089/wp-content/uploads/2026/11/"

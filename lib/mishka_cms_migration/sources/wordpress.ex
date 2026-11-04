@@ -88,7 +88,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       is asked for by its id and any other by the last segment of its path, the same way, from
       `/wp/v2/pages`, and it is the page whose `link` has its path, or whose id it names. Its
       `media` are the addresses of
-      its converted content (`src`, `href` and a video's `poster`) that are a file of the site's
+      its converted content (`src`, `href`, a video's `poster` and every candidate of an `srcset`) that are a file of the site's
       media library, each
       as written to the id of the file it is: the original or one of the sizes WordPress made of it
       (`hero-300x169.jpg` is the file `hero.jpg`). The files are asked for from `/wp/v2/media`,
@@ -876,10 +876,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         for %{html: html} when is_binary(html) <- content, into: "", do: html
       )
 
-    for attribute <- @addressed,
-        address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
-        uniq: true,
-        do: address
+    singles =
+      for attribute <- @addressed,
+          address <- tree |> LazyHTML.query("[#{attribute}]") |> LazyHTML.attribute(attribute),
+          do: address
+
+    candidates =
+      for value <- tree |> LazyHTML.query("[srcset]") |> LazyHTML.attribute("srcset"),
+          {url, _descriptor} <- Source.srcset(value),
+          do: url
+
+    Enum.uniq(singles ++ candidates)
   end
 
   defp file?(href, home), do: href |> String.trim() |> URI.parse() |> file_on?(home)
