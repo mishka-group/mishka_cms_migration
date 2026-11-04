@@ -135,11 +135,11 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
         ~s(current_user={assigns[:current_user]}>\n    <.link navigate="/pricing">Pricing</.link>\n)
       )
 
-  defp decide!(site, admin, choice),
+  defp decide!(site, admin, choice, source_id \\ "22"),
     do:
       MigrationItem
       |> Ash.read!(tenant: site.id, authorize?: false)
-      |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "22"))
+      |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == source_id))
       |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   defp menu_items_with(changes),
@@ -150,7 +150,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
        )}
 
   describe "a dry run" do
-    test "plans the main menu over the layout's header and leaves the other menu out, writing nothing",
+    test "plans the main menu over the layout's header and leaves every other menu for the admin to place, writing nothing",
          %{site: site, admin: admin} do
       layout = layout!(site)
 
@@ -158,8 +158,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       assert outcomes(run) == %{
                "22" => {:updated, nil},
-               "23" => {:skipped, "not_main_menu"},
-               "navigation-105" => {:skipped, "not_main_menu"}
+               "23" => {:undecided, "menu_goes_to"},
+               "navigation-105" => {:undecided, "menu_goes_to"}
              }
 
       assert template(site) == layout.template
@@ -188,8 +188,8 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       assert outcomes(run) == %{
                "22" => {:updated, nil},
-               "23" => {:skipped, "not_main_menu"},
-               "navigation-105" => {:skipped, "not_main_menu"}
+               "23" => {:undecided, "menu_goes_to"},
+               "navigation-105" => {:undecided, "menu_goes_to"}
              }
 
       assert links(site) == [
@@ -210,6 +210,92 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
              ]
 
       assert template(other) == untouched.template
+    end
+
+    test "writes a menu the admin sends to the header over the main menu only once the admin decides to replace it",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "header", "23")
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert outcomes(run)["23"] == {:undecided, "header_has_links"}
+
+      decide!(site, admin, "import", "23")
+      run = imported!(site, admin)
+
+      assert outcomes(run)["23"] == {:updated, "old_address: RSS feed"}
+      assert links(site) |> Enum.map(&elem(&1, 0)) == ["Contact", "Docs", "RSS feed"]
+    end
+
+    test "keeps the main menu in the header when the admin keeps it against a second menu",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "header", "23")
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "keep", "23")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert outcomes(run)["23"] == {:skipped, "site_own_kept"}
+      assert {"Home", {:navigate, "/"}} in links(site)
+      assert length(links(site)) == 14
+    end
+
+    test "offers a waiting menu the places it can go, each with a tip", %{
+      site: site,
+      admin: admin
+    } do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      menu =
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == "23"))
+
+      assert MigrationItem.conflict(menu) == "menu_goes_to"
+      options = MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: menu}})
+
+      assert Enum.map(options, &elem(&1, 1)) == ["header", "leave_out"]
+      assert options |> hd() |> elem(0) =~ "top bar"
+    end
+
+    test "leaves out a menu the admin decides to leave out, and never writes it",
+         %{site: site, admin: admin} do
+      layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "leave_out", "23")
+
+      run = imported!(site, admin)
+
+      assert outcomes(run)["23"] == {:skipped, "left_out_by_admin"}
+      assert length(links(site)) == 14
+    end
+
+    test "names the classic menu a block menu has the same links as, and waits like any other",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      contact =
+        ~s(<!-- wp:navigation-link {"label":"Reach us","type":"page","id":29,"url":"http://localhost:8089/contact/","kind":"post-type"} /-->)
+
+      navigation =
+        for post <- recorded("navigation"), do: %{post | "content" => %{"raw" => contact}}
+
+      stub!(%{
+        "/wp-json/wp/v2/navigation" => {"application/json", Jason.encode!(navigation)},
+        "/wp-json/wp/v2/menu-items" =>
+          {"application/json",
+           Jason.encode!(for item <- recorded("menu-items"), item["id"] == 102, do: item)}
+      })
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run)["navigation-105"] == {:undecided, "menu_goes_to: Footer"}
     end
 
     test "keeps the rest of the layout, and groups an item's links under it as the core draws a group",

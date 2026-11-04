@@ -2018,6 +2018,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("header_has_links"),
     do: dgettext("mishka_gervaz", "The site's header already has its own links")
 
+  defp said("menu_goes_to"),
+    do: dgettext("mishka_gervaz", "Choose where this menu goes")
+
+  defp said("menu_goes_to: " <> menu),
+    do:
+      dgettext("mishka_gervaz", "Choose where this menu goes. Same links as %{menu}", menu: menu)
+
   defp said("slug_taken"),
     do: dgettext("mishka_gervaz", "The site already has one at this address")
 
@@ -2045,9 +2052,6 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "Replaces the site's own, as you decided")
 
   defp said("no_setting"), do: dgettext("mishka_gervaz", "The CMS has no setting for it yet")
-
-  defp said("not_main_menu"),
-    do: dgettext("mishka_gervaz", "Not the site's main menu, so it is left out")
 
   defp said("no_layout"),
     do: dgettext("mishka_gervaz", "The site's layout has no header to put it in")

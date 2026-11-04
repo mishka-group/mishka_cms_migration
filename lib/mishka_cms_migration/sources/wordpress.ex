@@ -388,8 +388,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   The rows `list/3` answers for `"menu"`, of the REST API's `menus` and `menu-items` (or rows of the
   same shape): each menu with its `"items"`, the items whose `menus` is its id but those WordPress
   counts as `invalid`, and `"main"`, whether it is the site's main menu: the one at the theme's
-  `primary` location, else the first at any location, else the first made (the lowest id). Then
-  the block menus, the `wp_navigation` posts of `navigation`
+  `primary` location, else the first at any location, else the first made (the lowest id), which
+  comes first, so an import writes it before any other menu. Then the block menus, the `wp_navigation` posts of `navigation`
   (`MishkaCmsMigration.Sources.WordPress.Navigation`), with `"same_as"`, the name of the classic
   menu that has the same links, when one has.
   """
@@ -399,7 +399,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     main = menus |> Enum.min_by(&{located(&1["locations"]), &1["id"]}, fn -> %{} end)
 
     classic =
-      for menu <- menus,
+      for menu <- Enum.sort_by(menus, &(&1["id"] != main["id"])),
           do:
             Map.merge(menu, %{
               "items" => Map.get(by_menu, menu["id"], []),

@@ -146,6 +146,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   @choices %{
     "site_has_own" => ["keep", "import"],
     "header_has_links" => ["keep", "import"],
+    "menu_goes_to" => ["header", "leave_out"],
     "slug_taken" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
@@ -1326,6 +1327,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("header_has_links", "import"),
     do: dgettext("mishka_gervaz", "Replace with the imported menu")
+
+  defp choice_word("menu_goes_to", "header"),
+    do: dgettext("mishka_gervaz", "Header links: they show in the top bar")
+
+  defp choice_word("menu_goes_to", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
 
   defp choice_word("slug_taken", "keep"),
     do: dgettext("mishka_gervaz", "Connect to the existing record")

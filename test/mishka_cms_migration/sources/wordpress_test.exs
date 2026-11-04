@@ -313,7 +313,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
 
       assert Enum.map(menus, &{&1["name"], length(&1["items"])}) ==
-               [{"Footer", 3}, {"Primary", 14}, {"Main navigation", 3}]
+               [{"Primary", 14}, {"Footer", 3}, {"Main navigation", 3}]
     end
 
     test "lists no kind it does not read" do
@@ -1185,7 +1185,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                undecided: 0
              }
 
-      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 3, failed: 0, undecided: 0}
+      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 1, failed: 0, undecided: 2}
 
       assert counts(run, "post") == %{
                created: length(recorded("posts")) - 3,
@@ -1220,7 +1220,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:skipped, "no_user"},
                    {:skipped, "no_setting"},
                    {:skipped, "no_layout"},
-                   {:skipped, "not_main_menu"},
+                   {:undecided, "menu_goes_to"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}
