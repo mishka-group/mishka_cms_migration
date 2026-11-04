@@ -254,6 +254,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                [{:undecided, "blog_missing"}]
 
       assert blog(Collection, site) == %{}
+      assert MigrationItem.conflict(category_item(site)) == "blog_missing"
 
       with_blog!()
       run = imported!(site, admin)
@@ -262,7 +263,14 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert %{"10" => {:skipped, "left_out_by_admin"}} = outcomes(run, "tag")
       assert is_map_key(blog(Collection, site), "Elixir")
       refute is_map_key(blog(Tag, site), "Elixir")
+      assert MigrationItem.conflict(category_item(site)) == nil
     end
+
+    defp category_item(site),
+      do:
+        MigrationItem
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.source_kind == "category" and &1.source_id == "6"))
   end
 
   describe "an import" do

@@ -590,6 +590,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       end
     end
 
+    test "is shown while the decision has not taken effect, and gone once an import wrote the item by it",
+         %{conn: conn, site: site, admin: admin} do
+      second = second_source!(site, admin)
+      tag = second_item(site, "tag", "10")
+      MishkaCmsMigration.decide_item!(tag, "import", actor: admin, tenant: site.id)
+
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+      assert has_element?(view, row_button("decide", tag))
+
+      site |> later_run!(admin, second) |> migrate_run!(admin)
+      view = open!(conn, admin, second, "?items_filter_source_kind=tag")
+
+      assert %{outcome: :created} = item!(tag)
+      refute has_element?(view, row_button("decide", tag))
+      assert has_element?(view, row_button("map_to", tag))
+    end
+
     test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
          %{conn: conn, site: site, admin: admin} do
       without_blog!()

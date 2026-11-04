@@ -102,7 +102,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`chosen/2`). A category's or a tag's Map to… (Gervaz's `:edit` row action, which shows the
   page's modal first) opens this resource's Gervaz form on the item, one `mapped_id` field whose
   choices are the site's records of that kind in the language it leads with, and Import as its own
-  (`map_options/1`). An item with a conflict has Decide… instead, which opens the same form with
+  (`map_options/1`). An item with a conflict has Decide… instead while the conflict is open
+  (`conflict/1`), which opens the same form with
   one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
   Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
   picked rows together. The Plan cell shows the choice before the plan, and the record a mapped
@@ -1111,22 +1112,24 @@ defmodule MishkaCmsMigration.MigrationItem do
   def mappable?(%{source_kind: kind}), do: kind in @mappable
 
   @doc """
-  The conflict `item` waits on for an admin's decision, such as `"site_has_own"`: the reason of
-  its last dry run's plan when that plan is `:undecided`, else of its last import when that left it
-  `:undecided` after a plan to write it, or with no plan, else the conflict an admin decided (the
-  first, for an item that met several), so a decision can be changed after a run followed it. A
-  reason that names what the conflict is about after `": "`, as `"draft_pages: Team, Leadership"`
-  does, is the conflict before it. `nil` for an item that never met one.
+  The conflict `item` waits on for an admin's decision, such as `"site_has_own"`, while it is open:
+  the reason of its last dry run's plan when that plan is `:undecided`, else of its last import
+  when that left it `:undecided` after a plan to write it, or with no plan, else the conflict an
+  admin decided (the first, for an item that met several) until the decision took effect
+  (`settled?/1`), so a decision can be changed until an import wrote or connected the item by it.
+  A reason that names what the conflict is about after `": "`, as `"draft_pages: Team, Leadership"`
+  does, is the conflict before it. `nil` for an item that never met one, and for one whose decision
+  took effect: Decide… is shown only while it is not `nil`, and Map to… comes back.
   """
   @spec conflict(map()) :: String.t() | nil
-  def conflict(item),
-    do: code(waits_on(item)) || item.decisions |> Map.keys() |> Enum.min(fn -> nil end)
+  def conflict(item), do: code(waits_on(item)) || open_decision(item)
 
   @doc """
   Whether the admin's decision on `item` took effect: an import wrote the item by it, or connected
   it to the site's record, so it has a CMS record (`target_id`), and nothing on it waits for a
   decision now. Changing it then could only move a record written as new onto the site's own
-  address, or leave one connected unwritten, so it stays (`MishkaCmsMigration.Resources.Changes.Decided`).
+  address, or leave one connected unwritten, so it stays
+  (`MishkaCmsMigration.Resources.Changes.Decided`).
   """
   @spec settled?(map()) :: boolean()
   def settled?(%{decisions: decisions, target_id: id, outcome: outcome} = item)
@@ -1394,6 +1397,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp undecided(conflict, _reason, decisions) when is_map_key(decisions, conflict), do: nil
   defp undecided(_conflict, reason, _decisions), do: reason
+
+  defp open_decision(item), do: item |> settled?() |> decided_conflict(item.decisions)
+
+  defp decided_conflict(false, decisions), do: decisions |> Map.keys() |> Enum.min(fn -> nil end)
+  defp decided_conflict(true, _decisions), do: nil
 
   defp code(nil), do: nil
   defp code(reason), do: reason |> String.split(": ", parts: 2) |> hd()
