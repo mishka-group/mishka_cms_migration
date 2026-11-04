@@ -294,7 +294,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
             child["id"] == "2",
             do: child
 
-      assert ids(menus) == ["22", "23"]
+      assert ids(menus) == ["22", "23", "navigation-105"]
       assert {menus["22"].attrs["main"], menus["23"].attrs["main"]} == {true, false}
       assert {news["title"], news["url"]} == {"News", "http://localhost:8089/?cat=2"}
     end

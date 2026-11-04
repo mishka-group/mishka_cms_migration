@@ -948,7 +948,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 86, "skipped" => 26, "undecided" => 3}
+      assert outcomes(view) == %{"created" => 86, "skipped" => 25, "undecided" => 5}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
@@ -961,7 +961,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "post" => 21,
                "comment" => 13,
                "post_redirect" => 21,
-               "menu" => 2
+               "menu" => 3
              }
 
       assert has_element?(view, "#migration-runs-table #{action("dry_run", run)}", "Run again")
@@ -976,16 +976,16 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "post" => 21,
                "comment" => 13,
                "post_redirect" => 21,
-               "menu" => 2
+               "menu" => 3
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 86, "skipped" => 26, "undecided" => 3}
+               %{"created" => 86, "skipped" => 25, "undecided" => 5}
 
       assert has_element?(
                view,
                ~s|[data-role="run-details-outcome"][data-outcome="undecided"]|,
-               "3 need your decision"
+               "5 need your decision"
              )
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
@@ -1072,15 +1072,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         "posts"
         |> MishkaCmsMigration.Test.WordPress.recorded()
         |> Enum.map(&to_string(&1["id"]))
-        |> Enum.take(-6)
+        |> Enum.take(-5)
         |> Enum.reverse()
 
-      assert detailed(view, "run-details-item", "data-source-id") == ["22", "23" | newest_posts]
+      assert detailed(view, "run-details-item", "data-source-id") ==
+               ["navigation-105", "23", "22" | newest_posts]
 
       assert detailed(view, "run-details-item", "data-kind") ==
-               ["menu", "menu" | List.duplicate("post_redirect", 6)]
+               ["menu", "menu", "menu" | List.duplicate("post_redirect", 5)]
 
-      assert detailed(view, "run-details-item", "data-outcome") == List.duplicate("skipped", 8)
+      assert detailed(view, "run-details-item", "data-outcome") ==
+               ["undecided", "undecided" | List.duplicate("skipped", 6)]
 
       assert has_element?(
                view,
@@ -1088,7 +1090,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Left out by this run's choices"
              )
 
-      assert detailed(view, "run-details-items-more", "data-count") == ["107"]
+      assert detailed(view, "run-details-items-more", "data-count") == ["108"]
 
       for {fact, said} <- [
             {"name", "Mishka Test Blog"},
@@ -1170,7 +1172,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Imported"
              )
 
-      assert outcomes(view) == %{"created" => 89, "skipped" => 26}
+      assert outcomes(view) == %{"created" => 89, "skipped" => 25, "undecided" => 2}
 
       assert has_element?(
                view,
@@ -1178,7 +1180,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 89, "skipped" => 26}
+               %{"created" => 89, "skipped" => 25, "undecided" => 2}
 
       for {kind, counts} <- [
             {"media", %{"created" => 17, "skipped" => 1}},

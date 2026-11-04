@@ -299,17 +299,21 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {status, type} == {"all", "all"}
     end
 
-    test "reads every menu and every menu item with their raw fields, each route to its last page" do
+    test "reads every menu, menu item and block menu with their raw fields, each route to its last page" do
       stub!()
       assert {:ok, menus, nil} = WordPress.list(connected!(), "menu", nil)
 
-      for route <- ["/wp-json/wp/v2/menus", "/wp-json/wp/v2/menu-items"] do
+      for route <- [
+            "/wp-json/wp/v2/menus",
+            "/wp-json/wp/v2/menu-items",
+            "/wp-json/wp/v2/navigation"
+          ] do
         assert_received {:wordpress_request, %{request_path: ^route, query_params: params}}
         assert {params["context"], params["per_page"], params["page"]} == {"edit", "100", "1"}
       end
 
       assert Enum.map(menus, &{&1["name"], length(&1["items"])}) ==
-               [{"Footer", 3}, {"Primary", 14}]
+               [{"Primary", 14}, {"Footer", 3}, {"Main navigation", 3}]
     end
 
     test "lists no kind it does not read" do
@@ -502,6 +506,52 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {elixir["url"], elixir["new_tab"]} == {"https://elixir-lang.org/", true}
       assert is_map_key(primary.extra, "auto_add")
       refute is_map_key(primary.extra, "_links")
+    end
+
+    test "a block menu keeps the links of its navigation blocks nested like a classic menu's, never main" do
+      menus = items!("menu")
+      block = menus["navigation-105"]
+
+      assert {block.title, block.attrs["slug"], block.attrs["block"], block.attrs["main"]} ==
+               {"Main navigation", "main-navigation", true, false}
+
+      assert outline(block.attrs["items"]) == [
+               {"Home", nil, nil, []},
+               {"About", "page", "24",
+                [{"Team", "page", "25", []}, {"Contact", "page", "29", []}]},
+               {"Blog", "page", "23", []}
+             ]
+    end
+
+    test "a block menu with the same links as a classic menu names it, and one with other links names none" do
+      assert items!("menu")["navigation-105"].attrs["same_as"] == nil
+
+      contact =
+        ~s(<!-- wp:navigation-link {"label":"Reach us","type":"page","id":29,"url":"http://localhost:8089/contact/","kind":"post-type"} /-->)
+
+      navigation =
+        for post <- recorded("navigation"), do: %{post | "content" => %{"raw" => contact}}
+
+      footer_item = %{
+        "id" => 1,
+        "title" => %{"raw" => "Contact"},
+        "type" => "post_type",
+        "object" => "page",
+        "object_id" => 29,
+        "url" => "http://localhost:8089/contact/",
+        "menus" => 23,
+        "parent" => 0,
+        "menu_order" => 1,
+        "target" => ""
+      }
+
+      found =
+        items!("menu", %{
+          "/wp-json/wp/v2/navigation" => json(navigation),
+          "/wp-json/wp/v2/menu-items" => json([footer_item])
+        })
+
+      assert found["navigation-105"].attrs["same_as"] == "Footer"
     end
 
     test "the main menu is the one at the theme's primary location, else one at any location, else the first made" do
@@ -1135,7 +1185,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                undecided: 0
              }
 
-      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 2, failed: 0, undecided: 0}
+      assert counts(run, "menu") == %{created: 0, updated: 0, skipped: 1, failed: 0, undecided: 2}
 
       assert counts(run, "post") == %{
                created: length(recorded("posts")) - 3,
@@ -1170,7 +1220,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:skipped, "no_user"},
                    {:skipped, "no_setting"},
                    {:skipped, "no_layout"},
-                   {:skipped, "not_main_menu"},
+                   {:undecided, "menu_goes_to"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
                    {:skipped, "type_not_allowed"}
