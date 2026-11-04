@@ -29,7 +29,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       It answers a wrong password, an unknown user and a request whose `Authorization` header the
       host dropped the same way (`rest_not_logged_in`), so these cannot be told apart.
 
-  `extra/1` keeps the site's name, its home address and timezone, and who signed in.
+  `extra/1` keeps the site's name, its home address and timezone, and who signed in. When the REST
+  index lists the REST namespace of a language plugin, Polylang's `pll/v1` or WPML's `wpml/v1`, it
+  keeps which one as `"languages"` (`"polylang"` or `"wpml"`): such a site names the language in its
+  addresses, as `/fa/about/`, which the links an import writes do not follow
+  (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`).
 
   ## What it reads
 
@@ -263,6 +267,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {"icon", "site_icon", "Site Icon"}
   ]
   @texts ["title", "tagline"]
+  @language_plugins %{"pll/v1" => "polylang", "wpml/v1" => "wpml"}
 
   @seo_titles ["rank_math_title", "_yoast_wpseo_title"]
   @seo_descriptions ["rank_math_description", "_yoast_wpseo_metadesc"]
@@ -317,7 +322,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       "timezone" => index["timezone_string"],
       "signed_in_as" => user["username"]
     }
+    |> Map.merge(languages(index["namespaces"]))
   end
+
+  defp languages(namespaces) when is_list(namespaces),
+    do: namespaces |> Enum.find_value(&Map.get(@language_plugins, &1)) |> languages()
+
+  defp languages(plugin) when is_binary(plugin), do: %{"languages" => plugin}
+  defp languages(_none), do: %{}
 
   @impl MishkaCmsMigration.Source
   def list(%{req: req}, kind, cursor) when is_map_key(@routes, kind) do

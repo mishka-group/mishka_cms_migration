@@ -100,6 +100,18 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
              }
     end
 
+    test "keeps which language plugin the site runs, from the namespaces of its REST index" do
+      stub!()
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      assert WordPress.extra(conn)["languages"] == nil
+
+      for {namespace, plugin} <- [{"pll/v1", "polylang"}, {"wpml/v1", "wpml"}] do
+        index = Map.update!(conn.index, "namespaces", &[namespace | &1])
+        assert WordPress.extra(%{conn | index: index})["languages"] == plugin
+      end
+    end
+
     test "signs in with the user and the application password" do
       stub!()
 
