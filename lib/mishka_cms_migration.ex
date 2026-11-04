@@ -85,6 +85,8 @@ defmodule MishkaCmsMigration do
         action: :by_sources,
         args: [:source_host, :source_kind, :source_ids]
 
+      define :items_by_file_hash, action: :by_file_hash, args: [:file_hash]
+
       define :left_out_items_by_slugs,
         action: :left_out_by_slugs,
         args: [:source_host, :source_kind, :source_slugs]

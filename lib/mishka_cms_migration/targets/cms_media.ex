@@ -49,6 +49,34 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   The core's `:upload` checks the same file again, its type, its size and its bytes, and has the
   last word.
 
+  ## The same file twice
+
+  WordPress media uploaded at different times has its own ids, and each is imported as its own file.
+  Two attachments are the same file only when their bytes are: the SHA-256 of a downloaded file is
+  kept on its item (`MishkaCmsMigration.MigrationItem`'s `file_hash`), and one lookup by it, made
+  once the file is downloaded and checked, finds an item of the site that has the same bytes. A
+  name or a size alone never does. The source lists its files oldest first, so the earlier upload
+  is the original. A dry run downloads nothing, so it cannot know: it plans every file to create
+  and says the check is made when the file is downloaded (`"same_file_checked_at_download"`).
+
+  The later attachment waits for the admin's decision in the import (`"same_file: <title of the
+  original>"`, the report says `Same file as …`), with two choices:
+
+    * Use the original (`"import"`) — nothing is stored. The item is connected to the original's
+      Media record, so every address a post's or a page's content wrote for the duplicate
+      (`relinked/3`) is the original's. The duplicate's old address on the source, such as
+      `/wp-content/uploads/2026/01/photo-1.jpg`, is redirected with a 301 to the original's
+      Media address through the core's redirect rule (`MishkaCmsCore.Runtime.Redirect`), as the
+      admin who pressed Import, who needs the core's `admin:dashboard:runtime:redirect`
+      (`"same_file_used"`); a rule that already sends that address to the original is reused. The
+      run's `post_address` choice `"blog_without_redirects"` writes no redirect, and the report says so
+      (`"same_file_used_no_redirect"`). The sizes WordPress made of the file
+      (`media_details.sizes`, listed with the file) are redirected to the original too.
+    * Keep both (`"keep"`) — imported as its own file, as any other (`"same_file_kept"`).
+
+  The answer holds for every later run: an item connected to the original is never downloaded
+  again. An original the CMS no longer has is not used: the file is imported as its own.
+
   `req_options` in the application environment are merged into every download, which is how the
   suite answers them from the recorded site:
 
@@ -89,14 +117,15 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   require Ash.Query
 
-  alias MishkaCmsCore.Runtime.{FileSignature, Media, MediaCategory}
-  alias MishkaCmsMigration.Source
+  alias MishkaCmsCore.Runtime.{FileSignature, Media, MediaCategory, Redirect, Redirects}
+  alias MishkaCmsMigration.{Source, Target}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.{BySlug, Read, Written}
   alias MishkaGervaz.Resource.Info
 
   @schemes ["http", "https"]
   @addressed ["src", "href", "poster"]
+  @conflict "same_file"
 
   @impl MishkaCmsMigration.Target
   def existing(items, context),
@@ -109,7 +138,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
     path = Plug.Upload.random_file!("migration")
 
     try do
-      with :ok <- downloaded(item, path, context), do: write.(%{context | prepared: path})
+      with {:ok, hash} <- downloaded(item, path, context),
+           :unique <- same_file(item, hash, context),
+           do: write.(%{context | prepared: %{path: path, hash: hash}})
     after
       File.rm(path)
     end
@@ -120,7 +151,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   @impl MishkaCmsMigration.Target
   def attrs(item, %{record: nil} = context) do
     %{
-      file: Ash.Type.File.from_path(context.prepared),
+      file: Ash.Type.File.from_path(context.prepared.path),
       original_filename: name(item) <> extension(item.attrs["source_url"]),
       description: description(item),
       media_category_id: folder_id(context)
@@ -128,6 +159,20 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   end
 
   def attrs(item, _update), do: %{description: description(item)}
+
+  @impl MishkaCmsMigration.Target
+  def note(item, %{record: nil} = context),
+    do: noted(context.mode, Target.decision(context, item, @conflict))
+
+  def note(_item, _update), do: nil
+
+  defp noted(_mode, "keep"), do: "same_file_kept"
+  defp noted(:dry_run, _decision), do: "same_file_checked_at_download"
+  defp noted(:import, _decision), do: nil
+
+  @impl MishkaCmsMigration.Target
+  def recorded(_item, %{prepared: %{hash: hash}}), do: %{file_hash: hash}
+  def recorded(_item, _context), do: %{}
 
   @doc """
   Where the CMS serves the files the same run, or an earlier one, wrote for the source's media
@@ -230,6 +275,87 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   defp moved_candidate({url, descriptor}, moved), do: {Map.get(moved, url, url), descriptor}
 
+  defp same_file(item, hash, context),
+    do: same_file(item, hash, context, Target.decision(context, item, @conflict))
+
+  defp same_file(_item, _hash, _context, "keep"), do: :unique
+
+  defp same_file(item, hash, context, decision) do
+    hash
+    |> MishkaCmsMigration.items_by_file_hash!(actor: context.actor, tenant: context.site_id)
+    |> original(item, context, decision)
+  end
+
+  defp original([], _item, _context, _decision), do: :unique
+
+  defp original([twin | _], item, context, decision) do
+    Media
+    |> Ash.Query.filter(id == ^twin.target_id)
+    |> Read.call(context)
+    |> original(twin, item, context, decision)
+  end
+
+  defp original([], _twin, _item, _context, _decision), do: :unique
+
+  defp original([media], twin, _item, _context, nil),
+    do: {:undecided, @conflict <> ": " <> (twin.title || media.name)}
+
+  defp original([media], _twin, item, context, "import"), do: used(media, item, context)
+
+  defp used(media, _item, %{options: %{post_address: "blog_without_redirects"}}),
+    do: {:connected, media, "same_file_used_no_redirect"}
+
+  defp used(media, item, context) do
+    with {:ok, froms} <- old_addresses(item),
+         :ok <- redirected(froms, media.relative_path, context),
+         do: {:connected, media, "same_file_used"}
+  end
+
+  defp old_addresses(%Item{attrs: %{"source_url" => url}, extra: extra}) do
+    case Redirects.normalize_path(url) do
+      {:ok, file} -> {:ok, Enum.uniq([file | sizes(extra)])}
+      :error -> {:error, "not_redirectable"}
+    end
+  end
+
+  defp sizes(%{"media_details" => %{"sizes" => %{} = sizes}}),
+    do:
+      for(
+        %{"source_url" => url} when is_binary(url) <- Map.values(sizes),
+        {:ok, path} <- [Redirects.normalize_path(url)],
+        do: path
+      )
+
+  defp sizes(_extra), do: []
+
+  defp redirected(froms, to, context) do
+    held =
+      Redirect
+      |> Ash.Query.filter(from_path in ^froms)
+      |> Read.call(context)
+      |> Map.new(&{&1.from_path, &1.to})
+
+    froms
+    |> Enum.reject(&(held[&1] == to))
+    |> Enum.reduce_while(:ok, fn from, :ok -> from |> redirect(to, context) |> halted() end)
+  end
+
+  defp redirect(from, to, context) do
+    Redirect
+    |> Ash.Changeset.for_create(:create, %{from_path: from, to: to, status: 301},
+      actor: context.actor,
+      tenant: context.site_id
+    )
+    |> Ash.create()
+    |> created()
+  end
+
+  defp halted(:ok), do: {:cont, :ok}
+  defp halted(error), do: {:halt, error}
+
+  defp created({:ok, %Redirect{}}), do: :ok
+  defp created({:error, error}), do: {:error, error}
+
   defp refused(item, context) do
     with {:ok, uri} <- sourced(item.attrs["source_url"], context.source_host),
          {:ok, _extension} <- typed(uri, item.attrs["mime_type"]),
@@ -297,7 +423,15 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   defp streamed({:data, data}, {request, response}, file, limit) do
     size = Req.Response.get_private(response, :size, 0) + byte_size(data)
-    response = Req.Response.put_private(response, :size, size)
+
+    hash =
+      response
+      |> Req.Response.get_private(:hash, :crypto.hash_init(:sha256))
+      |> :crypto.hash_update(data)
+
+    response =
+      response |> Req.Response.put_private(:size, size) |> Req.Response.put_private(:hash, hash)
+
     kept(size <= limit, data, file, {request, response})
   end
 
@@ -311,7 +445,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp checked(%Req.Response{status: 200} = response, path, extension) do
     with :ok <- response |> Req.Response.get_private(:size, 0) |> fits(),
          :ok <- response |> Req.Response.get_header("content-type") |> answered(extension) do
-      signed(FileSignature.matches?(path, extension))
+      path |> FileSignature.matches?(extension) |> signed(response)
     end
   end
 
@@ -333,8 +467,15 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp same_answer(type, type), do: :ok
   defp same_answer(_type, _answered), do: {:skipped, "wrong_type"}
 
-  defp signed(true), do: :ok
-  defp signed(false), do: {:skipped, "wrong_bytes"}
+  defp signed(true, response),
+    do:
+      {:ok,
+       response
+       |> Req.Response.get_private(:hash, :crypto.hash_init(:sha256))
+       |> :crypto.hash_final()
+       |> Base.encode16(case: :lower)}
+
+  defp signed(false, _response), do: {:skipped, "wrong_bytes"}
 
   defp name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
     do: slug |> Slug.slugify() |> named(item)

@@ -33,7 +33,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
   or mapped to one by an admin, is not written: in an import it is recorded against that record,
-  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item whose
+  with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item the
+  target's `prepare/3` finds to be a record the CMS holds (`{:connected, record, reason}`) is
+  recorded the same way, as skipped with `reason`. What the target's `recorded/2` answers is
+  recorded on the item of a record written. An item whose
   conflict waits for an admin's decision is not written either: it is recorded as `:undecided`,
   with the conflict as its reason, and the next run asks again.
 
@@ -84,7 +87,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   def call(%{mode: :import} = state, %Item{} = item, {:connected, _target, record}) do
     state
-    |> recorded(item, %{record | updated_at: nil}, {:skipped, "connected"})
+    |> recorded(item, %{record | updated_at: nil}, {:skipped, "connected"}, %{})
     |> stored()
     |> entered(item, :skipped, "connected")
   end
@@ -108,6 +111,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp settled({:ok, _record, note}, _state, item, outcome),
     do: Report.entry(item.kind, item.source_id, item.title, outcome, note)
+
+  defp settled({:connected, record, reason}, state, item, _outcome),
+    do:
+      state
+      |> recorded(item, %{record | updated_at: nil}, {:skipped, reason}, %{})
+      |> stored()
+      |> entered(item, :skipped, reason)
 
   defp settled({:skipped, reason}, state, item, _outcome),
     do: entry(state, item, :skipped, reason)
@@ -150,7 +160,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, written, {outcome, note}) do
+         {:ok, _item} <-
+           recorded(state, source_item, written, {outcome, note}, target.recorded(item, context)) do
       {:ok, written}
     end
   end
@@ -197,25 +208,34 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp as(context), do: [actor: context.actor, tenant: context.site_id]
 
-  defp recorded(state, item, %resource{id: id, updated_at: updated_at}, {outcome, note}) do
+  defp recorded(
+         state,
+         item,
+         %resource{id: id, updated_at: updated_at},
+         {outcome, note},
+         added
+       ) do
     MishkaCmsMigration.record_item(
-      %{
-        source_host: state.run.source_host,
-        source_kind: item.kind,
-        source_id: item.source_id,
-        run_id: state.run.id,
-        title: item.title,
-        source_slug: source_slug(item),
-        source_parent: item.parent,
-        source_modified_at: item.modified_at,
-        content_hash: Item.hash(item),
-        target_resource: inspect(resource),
-        target_id: id,
-        target_updated_at: updated_at,
-        outcome: outcome,
-        reason: note,
-        extra: item.extra
-      },
+      Map.merge(
+        %{
+          source_host: state.run.source_host,
+          source_kind: item.kind,
+          source_id: item.source_id,
+          run_id: state.run.id,
+          title: item.title,
+          source_slug: source_slug(item),
+          source_parent: item.parent,
+          source_modified_at: item.modified_at,
+          content_hash: Item.hash(item),
+          target_resource: inspect(resource),
+          target_id: id,
+          target_updated_at: updated_at,
+          outcome: outcome,
+          reason: note,
+          extra: item.extra
+        },
+        added
+      ),
       scope: state.scope
     )
   end

@@ -1126,6 +1126,17 @@ defmodule MishkaCmsMigration.MigrationRun do
                         items: [fields: [{:kind, [type: :string, allow_nil?: false]} | @counts]]
                       ]
                     ],
+                    duplicates: [
+                      type: :map,
+                      allow_nil?: true,
+                      constraints: [
+                        fields: [
+                          found: [type: :integer, allow_nil?: false],
+                          merged: [type: :integer, allow_nil?: false],
+                          kept: [type: :integer, allow_nil?: false]
+                        ]
+                      ]
+                    ],
                     entries: [
                       type: {:array, :map},
                       allow_nil?: false,
@@ -2048,6 +2059,29 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "The site already has one at this address")
 
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
+
+  defp said("same_file: " <> title),
+    do: dgettext("mishka_gervaz", "Same file as %{title}", title: title)
+
+  defp said("same_file_checked_at_download"),
+    do: dgettext("mishka_gervaz", "Checked for an identical file when it is downloaded")
+
+  defp said("same_file_used"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Same file as another: the original is used, and the old address redirects to it, as you decided"
+      )
+
+  defp said("same_file_used_no_redirect"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Same file as another: the original is used, with no redirect from the old address, as you decided"
+      )
+
+  defp said("same_file_kept"),
+    do: dgettext("mishka_gervaz", "Same file as another, kept as its own, as you decided")
 
   defp said("draft_pages: " <> labels),
     do: dgettext("mishka_gervaz", "Links to pages that are not live: %{labels}", labels: labels)

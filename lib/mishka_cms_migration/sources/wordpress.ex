@@ -126,7 +126,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
       `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
       WordPress that answers none of its own), `alt_text`, `caption` and `description` (their raw
-      text), `post` (the post it was uploaded to, `0` for none) and `date_gmt`.
+      text), `post` (the post it was uploaded to, `0` for none) and `date_gmt`. The files are
+      listed oldest first (by id), so of two attachments that are the same file the earlier upload
+      is the one the target meets first (`MishkaCmsMigration.Targets.CmsMedia`).
     * category and tag — `title` is `name`; `attrs` keeps `slug`, `description`, `count`, `link`,
       and `parent` for a category. A term has no `modified_at`.
     * user — `title` is `name`; `attrs` keeps `username`, `email`, `slug`, `name`, `first_name`,
@@ -244,7 +246,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "user" => {"/wp/v2/users", []},
     "category" => {"/wp/v2/categories", []},
     "tag" => {"/wp/v2/tags", []},
-    "media" => {"/wp/v2/media", []},
+    "media" => {"/wp/v2/media", [orderby: "id", order: "asc"]},
     "page" => {"/wp/v2/pages", [status: "any"]},
     "post" => {"/wp/v2/posts", [status: "any"]},
     "comment" => {"/wp/v2/comments", [status: "all", type: "all"]},

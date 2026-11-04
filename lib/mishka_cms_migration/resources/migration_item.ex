@@ -8,7 +8,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   do with it (`plan`, `plan_reason`), the CMS record the last import wrote (`target_resource`,
   `target_id`), when that record last changed as the import left it (`target_updated_at`), what the
   source said about the item then (`title`, `source_slug`, `source_modified_at`, `content_hash`, and
-  the fields the CMS has no home for, `extra`), and what the last import that met it did
+  the fields the CMS has no home for, `extra`), the SHA-256 of the file an import downloaded for a
+  media item (`file_hash`, which finds a second attachment of the same bytes), and what the last import that met it did
   (`outcome`, `reason`, `run_id`). `outcome` is `nil` for an item no import has met yet, so a run's
   counts (`MishkaCmsMigration.MigrationRun`'s `created_count` and the rest) count what its import
   did alone. The item's content and its other fields, such as a post's status and author, are not
@@ -106,7 +107,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`conflict/1`), which opens the same form with
   one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
   Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
-  picked rows together. The Plan cell shows the choice before the plan, and the record a mapped
+  picked rows together (for two attachments of the same file, `"same_file"`, Keep both and Use the
+  original). The Plan cell shows the choice before the plan, and the record a mapped
   item is connected to (`mapped_paths`). The table's other view, Map, draws the items as the source
   nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), from the rows it keeps
   loaded.
@@ -150,6 +152,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     "menu_goes_to" => ["header", "footer", "component", "leave_out"],
     "component_name_taken" => ["keep", "leave_out"],
     "slug_taken" => ["keep", "import"],
+    "same_file" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
     "draft_pages" => ["keep", "import"],
@@ -167,6 +170,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     :source_parent,
     :source_modified_at,
     :content_hash,
+    :file_hash,
     :target_resource,
     :target_id,
     :target_updated_at,
@@ -186,6 +190,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
     custom_indexes do
       index [:run_id]
+      index [:site_id, :file_hash], where: "file_hash IS NOT NULL"
     end
   end
 
@@ -686,6 +691,15 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The items of a source host and kind with any of the given source ids"
     end
 
+    read :by_file_hash do
+      argument :file_hash, :string, allow_nil?: false
+
+      filter expr(file_hash == ^arg(:file_hash) and not is_nil(target_id) and left_out == false)
+      prepare build(sort: [inserted_at: :asc], limit: 1)
+
+      description "The earliest item of the site whose file has these bytes (a SHA-256), if any"
+    end
+
     read :left_out_by_slugs do
       argument :source_host, :string, allow_nil?: false
       argument :source_kind, :string, allow_nil?: false
@@ -975,6 +989,13 @@ defmodule MishkaCmsMigration.MigrationItem do
       allow_nil? true
       public? true
       description "MishkaCmsMigration.Source.Item.hash/1 of the item, as of the last write"
+    end
+
+    attribute :file_hash, :string do
+      allow_nil? true
+      public? true
+
+      description "The SHA-256 of the file the import downloaded for a media item, as hex; nil for any other item"
     end
 
     attribute :target_resource, :string do
@@ -1381,6 +1402,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("slug_taken", "import"),
     do: dgettext("mishka_gervaz", "Import as new with another slug")
+
+  defp choice_word("same_file", "keep"), do: dgettext("mishka_gervaz", "Keep both")
+  defp choice_word("same_file", "import"), do: dgettext("mishka_gervaz", "Use the original")
 
   defp choice_word("blog_missing", "keep"), do: dgettext("mishka_gervaz", "Wait for the Blog")
   defp choice_word("blog_missing", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
