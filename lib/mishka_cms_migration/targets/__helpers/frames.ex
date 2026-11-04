@@ -27,9 +27,10 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
 
   An item whose players the site does not allow, imported by an admin who may not change the
   setting, is never written with a player that shows nothing: it waits for a decision as
-  `"player_not_allowed"` (`MishkaCmsMigration.MigrationItem`'s Decide…), in `existing/2` for an item
-  no run has written, in the dry run too (`waiting/2`), and in `prepare/3` for any write
-  (`call/2`). Wait for an admin skips it as `"waits_for_admin"` until a run by an admin who may
+  `"player_not_allowed"` (`MishkaCmsMigration.MigrationItem`'s Decide…), in a dry run through the
+  target's `waiting/2` (`waiting/2`) and in an import through its `prepare/3` (`call/2`), for an
+  item an earlier import wrote as for a new one. Wait for an admin skips it as `"waits_for_admin"`
+  until a run by an admin who may
   allow the players writes it with them; Import without the player writes it with those
   `<iframe>`s left out of its content (`playable/2`), and the report says so (`"player_left_out"`).
   `note/2` says which for the report, `"frames_allowed: <origins>"` naming the origins when the
@@ -56,13 +57,14 @@ defmodule MishkaCmsMigration.Targets.Helpers.Frames do
   def call(item, context), do: item |> missing(context) |> allowed(item, context)
 
   @doc """
-  What `existing/2` says of `item` whose content frames a player the site does not allow, for an
-  admin who may not allow it: `{:undecided, "player_not_allowed"}` until an admin decides,
+  What a dry run plans for `item` (the target's `waiting/2`) whose content frames a player the site
+  does not allow, for an admin who may not allow it: `{:undecided, "player_not_allowed"}` until an
+  admin decides,
   `{:skipped, "waits_for_admin"}` once one decided to wait for an admin who may, and `nil`, to be
   written, once one decided to import it without the player, for an admin who may allow it, and
   for an item that frames no such player.
   """
-  @spec waiting(Item.t(), Target.context()) :: Target.found() | nil
+  @spec waiting(Item.t(), Target.context()) :: {:undecided | :skipped, String.t()} | nil
   def waiting(item, context), do: item |> missing(context) |> waits(item, context)
 
   @doc """

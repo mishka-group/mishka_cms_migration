@@ -92,9 +92,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     allowed on the site before the post is written, in an import only, as the admin
     (`MishkaCmsMigration.Targets.Helpers.Frames`), and the report names them
     (`"frames_allowed: <origins>"`), in the dry run too. For an admin who may not change the site's
-    settings the post waits for an admin's decision (`"player_not_allowed"`): Wait for an admin
-    keeps it for a run by one who may, and Import without the player writes it with that player
-    left out (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
+    settings the post waits for an admin's decision (`"player_not_allowed"`), in the dry run too
+    (`waiting/2`), also a post an earlier import wrote: Wait for an admin keeps it for a run by one
+    who may, and Import without the player writes it with that player left out
+    (`"player_left_out"`). The Blog keeps an `<iframe>`'s address, title and size, and
     leaves out its other attributes, such as `allowfullscreen`.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
@@ -158,18 +159,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
 
     @impl MishkaCmsMigration.Target
-    def existing(items, context),
-      do:
-        for(
-          item <- items,
-          found = Frames.waiting(item, context),
-          into: %{},
-          do: {item.source_id, found}
-        )
-
-    @impl MishkaCmsMigration.Target
     def prepare(item, context, write),
       do: with(:ok <- Frames.call(item, context), do: write.(context))
+
+    @impl MishkaCmsMigration.Target
+    def waiting(item, context), do: Frames.waiting(item, context)
 
     @impl MishkaCmsMigration.Target
     def note(item, context) do

@@ -573,6 +573,19 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert page.template =~ "maps.example.com"
       assert Settings.get("security.frame_origins", [], site.id) == []
     end
+
+    test "a dry run plans a page an import wrote before for a decision once WordPress gives it a player the admin may not allow",
+         %{site: site, admin: admin} do
+      assert {:created, nil} = outcomes(fake_pages!(site, admin, [row(1, %{})]))["1"]
+
+      player = ~s(<iframe src="https://player.vimeo.com/video/76979871"></iframe>)
+      rows = [row(1, %{"content" => [%{"html" => player}]})]
+      run = site |> create_run!(admin, %{"page" => rows}) |> dry_run!(admin)
+
+      assert outcomes(run)["1"] == {:undecided, "player_not_allowed"}
+      assert outcomes(import!(run, admin))["1"] == {:undecided, "player_not_allowed"}
+      refute pages(site)["/page-1"].template =~ "vimeo"
+    end
   end
 
   describe "content" do
