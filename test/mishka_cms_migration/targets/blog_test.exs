@@ -213,6 +213,29 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert posts(site) == %{}
     end
 
+    test "skips by the run's choices what they leave out anyway: comments while they are off, redirects for posts without them",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
+               [{:skipped, "not_chosen"}]
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+
+      run =
+        site
+        |> wordpress_run!(admin, %{post_address: "blog_without_redirects", comments: true})
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() ==
+               [{:skipped, "not_chosen"}]
+
+      assert run |> outcomes("comment") |> Map.values() |> Enum.uniq() ==
+               [{:undecided, "blog_missing"}]
+    end
+
     test "Wait for the Blog keeps an item until the Blog is there, and Leave out leaves it out",
          %{
            site: site,

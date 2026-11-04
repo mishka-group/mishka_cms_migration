@@ -45,6 +45,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   without the Blog: then it waits for an admin's decision, `{:undecided, "blog_missing"}`, until the
   admin left it out (`{:skipped, "left_out_by_admin"}`) or decided to wait for the Blog
   (`{:skipped, "waits_for_blog"}`), and a later run, once the Blog is there, plans it as any other.
+  One the run's choices (`MishkaCmsMigration.MigrationRun`'s options) leave out wherever the Blog
+  is, as its target does, is `{:skipped, "not_chosen"}` instead, with nothing to decide: a comment
+  while `comments` is off (`MishkaCmsMigration.Targets.BlogComment`), and a post's old address
+  while `post_address` is `"blog_without_redirects"` (`MishkaCmsMigration.Targets.PostRedirect`).
 
   Items are found by source host as well as by kind and id, so several sources moved into one site
   never meet: the same id from two hosts is two items, each with its own CMS record.
@@ -84,7 +88,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp plans({:error, :not_installed}, state, kind, items) when kind in @blog_kinds do
     known = known(state, kind, items)
-    Map.new(items, &{&1.source_id, blog_missing(Map.get(known, &1.source_id))})
+    chosen = chosen?(state.options, kind)
+    Map.new(items, &{&1.source_id, blog_missing(Map.get(known, &1.source_id), chosen)})
   end
 
   defp plans({:error, :not_installed}, _state, _kind, items),
@@ -171,9 +176,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp edited?(_record, _known), do: true
 
-  defp blog_missing(%{left_out: true}), do: {:skipped, "left_out_by_admin"}
-  defp blog_missing(%{decisions: %{"blog_missing" => "keep"}}), do: {:skipped, "waits_for_blog"}
-  defp blog_missing(_known), do: {:undecided, "blog_missing"}
+  defp blog_missing(%{left_out: true}, _chosen), do: {:skipped, "left_out_by_admin"}
+  defp blog_missing(_known, false), do: {:skipped, "not_chosen"}
+
+  defp blog_missing(%{decisions: %{"blog_missing" => "keep"}}, true),
+    do: {:skipped, "waits_for_blog"}
+
+  defp blog_missing(_known, true), do: {:undecided, "blog_missing"}
+
+  defp chosen?(%{comments: false}, "comment"), do: false
+  defp chosen?(%{post_address: "blog_without_redirects"}, "post_redirect"), do: false
+  defp chosen?(_options, _kind), do: true
 
   defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
   defp mapped(record, target), do: {:mapped, target, record}
