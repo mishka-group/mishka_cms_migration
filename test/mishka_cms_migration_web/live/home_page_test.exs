@@ -409,6 +409,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       refute has_element?(view, comments <> "[checked]")
       assert has_element?(view, "#migration-run-form-modal", "Bring the comments too")
 
+      confirm = ~s|#migration-run-form-modal input[name="form[options][confirm_users]"]|
+      assert has_element?(view, confirm <> "[checked]")
+      assert has_element?(view, "#migration-run-form-modal", "Confirm imported users' email")
+
       assert has_element?(
                view,
                "#migration-run-form-modal",
@@ -457,8 +461,32 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "authors" => "create",
                "pages" => "draft",
                "post_address" => "blog_without_redirects",
+               "confirm_users" => true,
                "comments" => false
              }
+    end
+
+    test "saves the confirm users choice when it is switched off", %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form(~s|#migration-run-form-modal form|, %{
+        "form" => %{
+          "connection" => %{
+            "url" => "http://localhost:8089",
+            "user" => "admin",
+            "secret" => "app password"
+          },
+          "options" => %{"confirm_users" => "false"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      assert %{"confirm_users" => false} = stored(run).options
     end
 
     test "saves the comments choice when it is switched on", %{conn: conn, site: site} do
@@ -1082,6 +1110,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "connect",
                "draft",
                "blog_without_redirects",
+               "true",
                "false"
              ]
 

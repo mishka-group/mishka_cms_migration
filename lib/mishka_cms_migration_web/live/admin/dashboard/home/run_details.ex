@@ -25,7 +25,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       when it has one (`item_paths/2`, `MishkaCmsMigration.MigrationRun.record_links/1`), and how
       many more it counted, which opens the run's Items page.
     * When the links an import writes may not match the site's language addresses, the warning that
-      says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), under the head.
+      says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), under the head, and,
+      when an import created users, the warning that their passwords cannot be carried over
+      (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice`).
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
@@ -50,7 +52,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   alias MishkaCmsCore.Localized
   alias MishkaCmsMigration.{MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
-  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
 
   @latest 8
   @running [:dry_running, :importing]
@@ -61,6 +63,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   attr :paths, :map,
     default: %{},
     doc: "the CMS record paths of the latest items by `{kind, source id}`, from `item_paths/2`"
+
+  attr :created, :integer,
+    default: 0,
+    doc: "how many users the run created, from `PasswordNotice.created/2`"
 
   @doc "The expanded row of `run`: its head, its kinds, its latest items and its source."
   def panel(assigns) do
@@ -91,6 +97,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       <.head id={@id} run={@run} report={@report} total={@total} />
       <.stopped :if={@failure} failure={@failure} />
       <LanguageNotice.warning run={@run} />
+      <PasswordNotice.run count={@created} />
 
       <section
         :if={@kinds != []}
@@ -947,6 +954,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         words: post_address(options.post_address)
       },
       %{
+        key: "confirm_users",
+        label: gettext("Imported users' email"),
+        value: options.confirm_users,
+        words: confirm_users(options.confirm_users)
+      },
+      %{
         key: "comments",
         label: gettext("Comments"),
         value: options.comments,
@@ -967,6 +980,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     do: gettext("Under /blog, with no redirect from the old addresses")
 
   defp post_address(_blog), do: gettext("Under /blog, with a redirect from each old address")
+
+  defp confirm_users(true), do: gettext("Confirmed")
+  defp confirm_users(_false), do: gettext("Left unconfirmed, to confirm from Users")
 
   defp comments(true), do: gettext("Brought in too")
   defp comments(_false), do: gettext("Left behind")

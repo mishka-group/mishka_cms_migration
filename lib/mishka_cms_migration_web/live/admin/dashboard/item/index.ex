@@ -52,7 +52,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   (`items_template`), so a reload shows the same one. Map categories, in the head, opens the page
   in the Map view on the categories (`items_template=item_tree` and the kind filter).
 
-  An expanded row (`{:expand_row, id}`) shows what is kept of the item as JSON: its stored
+  An expanded row (`{:expand_row, id}`) shows, for the item of a user an import created, the warning
+  that their password cannot be carried over (`PasswordNotice`), and what is kept of the item as JSON: its stored
   attributes and its `extra`, the source's fields the CMS has no home for, with the value of
   anything named like a secret hidden. The item's content and its other fields are not kept, and
   the row says so.
@@ -64,7 +65,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   use MishkaCmsCore.ExtensionLiveView
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
-  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
   alias MishkaGervaz.Table.Web.UrlSync
 
   @table_id "migration-items-table"
@@ -190,6 +191,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
     ~H"""
     <section data-role="item-details" data-item-id={@item.id} class="grid gap-3">
+      <PasswordNotice.item item={@item} />
       <p data-role="item-details-note" class="m-0 text-[12px] font-medium text-[#7c7a75]">
         {gettext(
           "This is what the migration keeps of the item. Its content and its other fields, such as a post's slug, status and author, are read from the source again by each run."

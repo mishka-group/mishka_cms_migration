@@ -34,7 +34,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   An expanded row (`{:expand_row, id}`) shows the run, read the same way, as
   `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails` draws it: where it is and when it
-  got there, what its last report found kind by kind and its latest items, each with links to its
+  got there, the warning for users an import created (`PasswordNotice`), what its last report found kind by kind and its latest items, each with links to its
   CMS record, how far a running job is, why a failed run stopped, and what its source said of
   itself and the admin chose. The page keeps which row it last expanded and draws it again on each
   of that run's notifications, so a dry run moving on, or finishing, shows in it without a reload.
@@ -56,6 +56,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   alias MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed
   alias MishkaCmsMigration.{MigrationRun, Source}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice
   alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
 
@@ -211,10 +212,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
     do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
 
   defp details_html(run, user) do
-    assigns = %{run: run, paths: RunDetails.item_paths(run, user)}
+    assigns = %{
+      run: run,
+      paths: RunDetails.item_paths(run, user),
+      created: PasswordNotice.created(run, user)
+    }
 
     ~H"""
-    <RunDetails.panel run={@run} paths={@paths} />
+    <RunDetails.panel run={@run} paths={@paths} created={@created} />
     """
     |> Phoenix.HTML.Safe.to_iodata()
     |> IO.iodata_to_binary()
