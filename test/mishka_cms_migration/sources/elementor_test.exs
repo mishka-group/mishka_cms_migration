@@ -18,6 +18,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.{Elements, Tree}
+  alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Sources.{WordPress, WordPressFile}
 
@@ -126,14 +127,26 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     end
   end
 
-  describe "a page's heading styling" do
-    defp heading_classes(settings) do
-      [%{"elType" => "section", "settings" => %{}, "elements" => [column(settings)]}]
+  describe "a page's Elementor styling, as the builder's own style settings" do
+    # What the Inspector reads back from the element's classes: its per-width property overrides.
+    defp styled(elements, selector) do
+      elements
       |> laid_out!()
       |> html()
-      |> classes("h1")
+      |> attribute(selector, "class")
       |> hd()
+      |> Styles.from_classes()
+      |> then(fn {authored, styles} -> {authored, without_weight(styles)} end)
     end
+
+    defp without_weight(styles),
+      do:
+        styles
+        |> Map.new(fn {bucket, props} -> {bucket, Map.delete(props, "font-weight")} end)
+        |> Map.reject(fn {_bucket, props} -> props == %{} end)
+
+    defp section(settings, widgets \\ [column(%{})]),
+      do: [%{"elType" => "section", "settings" => settings, "elements" => widgets}]
 
     defp column(settings),
       do: %{
@@ -143,94 +156,131 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
         ]
       }
 
-    test "takes the nearest of Tailwind's text sizes, and a left, centre or right alignment" do
-      classes =
-        heading_classes(%{
-          "typography_font_size" => %{"unit" => "px", "size" => 50},
-          "align" => "right"
-        })
+    defp box(top, bottom, unit \\ "px"),
+      do: %{"unit" => unit, "top" => top, "right" => "", "bottom" => bottom, "left" => ""}
 
-      assert MapSet.member?(classes, "text-5xl") and MapSet.member?(classes, "text-right")
-      refute MapSet.member?(classes, "text-4xl")
-      assert MapSet.member?(heading_classes(%{"align" => "left"}), "text-left")
+    test "gives a heading its alignment and font size, at each width, as the Inspector reads them" do
+      settings = %{
+        "align" => "right",
+        "typography_font_size" => %{"unit" => "px", "size" => 50},
+        "typography_font_size_tablet" => %{"unit" => "rem", "size" => "2.5"},
+        "align_mobile" => "center"
+      }
 
-      assert MapSet.member?(
-               heading_classes(%{"typography_font_size" => %{"unit" => "rem", "size" => "3"}}),
-               "text-5xl"
-             )
+      assert {authored, styles} = styled(section(%{}, [column(settings)]), "h1")
+
+      assert styles == %{
+               base: %{"font-size" => "50px", "text-align" => "text-right"},
+               tablet: %{"font-size" => "2.5rem"},
+               mobile: %{"text-align" => "text-center"}
+             }
+
+      assert "text-4xl" in authored
     end
 
-    test "keeps the builder's size for a size it cannot read, or a unit it has no step for" do
-      for size <- [%{"unit" => "vw", "size" => 5}, %{"unit" => "px", "size" => ""}, %{}] do
-        assert MapSet.member?(heading_classes(%{"typography_font_size" => size}), "text-4xl")
+    test "leaves a heading as the builder's when its size has no CSS unit or no number" do
+      for size <- [%{"unit" => "custom", "size" => 5}, %{"unit" => "px", "size" => ""}, %{}] do
+        assert {_authored, styles} =
+                 styled(section(%{}, [column(%{"typography_font_size" => size})]), "h1")
+
+        assert styles == %{}
       end
     end
 
-    test "takes a colour only when the theme has a token for it" do
-      assert MapSet.member?(
-               heading_classes(%{"title_color" => "#5B4FE0"}),
-               "dark:text-brand-dark"
-             )
+    test "gives a heading a colour only when the theme has a token for it" do
+      {authored, _styles} =
+        styled(section(%{}, [column(%{"title_color" => "#5B4FE0"})]), "h1")
 
-      refute MapSet.member?(heading_classes(%{"title_color" => "#5B4FE0"}), "text-fg")
+      assert "text-brand" in authored and "dark:text-brand-dark" in authored
+      refute "text-fg" in authored
 
-      classes = heading_classes(%{"title_color" => "#123456"})
-      assert MapSet.member?(classes, "text-fg") and MapSet.member?(classes, "dark:text-fg-dark")
-      refute Enum.any?(classes, &(&1 =~ "123456"))
-    end
-  end
+      {authored, _styles} =
+        styled(section(%{}, [column(%{"title_color" => "#123456"})]), "h1")
 
-  describe "a section's padding" do
-    defp section_classes(settings) do
-      [%{"elType" => "section", "settings" => settings, "elements" => [column(%{})]}]
-      |> laid_out!()
-      |> html()
-      |> classes("section")
-      |> hd()
+      assert "text-fg" in authored and "dark:text-fg-dark" in authored
     end
 
-    test "is the nearest of the spacing steps: one for both sides, or one for each" do
-      same = %{
-        "padding" => %{
-          "unit" => "px",
-          "top" => "100",
-          "bottom" => "96",
-          "left" => "0",
-          "right" => "0"
-        }
+    test "gives a section its padding and margin by side, in the unit Elementor has, at each width" do
+      settings = %{
+        "padding" => box("100", "100"),
+        "padding_mobile" => box("2", "3", "rem"),
+        "margin" => box("10", "")
       }
 
-      assert MapSet.member?(section_classes(same), "py-24")
-      refute MapSet.member?(section_classes(same), "py-16")
+      assert {authored, styles} = styled(section(settings), "section")
 
-      split = %{"padding" => %{"unit" => "px", "top" => "0", "bottom" => "42"}}
-      classes = section_classes(split)
-      assert MapSet.member?(classes, "pt-0") and MapSet.member?(classes, "pb-10")
-      refute Enum.any?(classes, &String.starts_with?(&1, "py-"))
+      assert styles == %{
+               base: %{"py" => "100px", "mt" => "10px"},
+               mobile: %{"pt" => "2rem", "pb" => "3rem"}
+             }
+
+      refute "py-16" in authored
     end
 
-    test "is the builder's own when it carries none" do
-      assert drawn_as?(section_classes(%{}), "el-section")
-
-      assert drawn_as?(
-               section_classes(%{"padding" => %{"unit" => "px", "top" => "", "bottom" => ""}}),
-               "el-section"
-             )
+    test "is the builder's own section when Elementor sets none" do
+      for settings <- [%{}, %{"padding" => box("", "")}, %{"padding" => %{"unit" => "custom"}}] do
+        assert {authored, styles} = styled(section(settings), "section")
+        assert styles == %{} and "py-16" in authored
+      end
     end
 
-    test "is never an inline style" do
-      html =
-        html(
-          laid_out!([
+    test "gives the container its boxed width and a container its gap" do
+      {_authored, styles} =
+        styled(section(%{"content_width" => %{"unit" => "px", "size" => 1140}}), "section > div")
+
+      assert styles == %{base: %{"max-width" => "1140px"}}
+
+      container = [
+        %{
+          "elType" => "container",
+          "settings" => %{
+            "flex_direction" => "row",
+            "flex_gap" => %{"column" => "40", "row" => "40", "unit" => "px"}
+          },
+          "elements" => [column(%{}), column(%{})]
+        }
+      ]
+
+      assert {_authored, %{base: %{"gap" => "40px"}}} = styled(container, "section > div > div")
+    end
+
+    test "aligns a text editor and a button with the builder's text alignment" do
+      elements = [
+        %{
+          "elType" => "section",
+          "settings" => %{},
+          "elements" => [
             %{
-              "elType" => "section",
-              "settings" => %{"padding" => %{"unit" => "px", "top" => "8", "bottom" => "8"}},
-              "elements" => [column(%{})]
+              "elType" => "column",
+              "elements" => [
+                widget("text-editor", %{"editor" => "<p>x</p>", "align" => "center"}),
+                widget("button", %{"text" => "Go", "align" => "right"})
+              ]
             }
-          ])
-        )
+          ]
+        }
+      ]
 
-      assert html |> LazyHTML.query("[style]") |> Enum.empty?()
+      html = html(laid_out!(elements))
+
+      assert [%{base: %{"text-align" => "text-center"}}, %{base: %{"text-align" => "text-right"}}] =
+               html
+               |> attribute("div[class*=text-]", "class")
+               |> Enum.map(&elem(Styles.from_classes(&1), 1))
+    end
+
+    test "writes no inline style, and a page the builder parses" do
+      elements =
+        section(%{"padding" => box("8", "8"), "margin" => box("4", "4")}, [
+          column(%{
+            "align" => "center",
+            "typography_font_size" => %{"unit" => "px", "size" => 30}
+          })
+        ])
+
+      item = laid_out!(elements)
+      assert item |> html() |> LazyHTML.query("[style]") |> Enum.empty?()
+      assert {:ok, %Tree{}} = item |> Item.html() |> Tree.parse()
     end
   end
 
