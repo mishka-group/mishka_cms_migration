@@ -478,6 +478,37 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                MishkaCmsMigration.cancel_run(run, actor: admin, tenant: site.id)
     end
 
+    test "a cancelled run holds no secret and can neither run again, import, nor run items",
+         %{site: site, admin: admin} do
+      run = site |> create_run!(admin, rows()) |> dry_run!(admin)
+      run = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
+      opts = [actor: admin, tenant: site.id]
+
+      assert {run.status, run.connection_secret} == {:cancelled, nil}
+      assert {:error, %Ash.Error.Invalid{}} = MishkaCmsMigration.start_dry_run(run, opts)
+      assert {:error, %Ash.Error.Invalid{}} = MishkaCmsMigration.start_import(run, opts)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               MishkaCmsMigration.dry_run_items(run, [Ash.UUID.generate()], opts)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               MishkaCmsMigration.import_items(run, [Ash.UUID.generate()], opts)
+    end
+
+    @tag :tmp_dir
+    test "a cancelled file run is not connectable once its export file is deleted", %{
+      site: site,
+      admin: admin,
+      tmp_dir: dir
+    } do
+      {:ok, run} = file_run(site, admin, %{file: upload!(export!(dir))})
+      assert MigrationRun.connectable?(run)
+
+      cancelled = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
+      refute File.exists?(run.connection["file"])
+      refute MigrationRun.connectable?(cancelled)
+    end
+
     test "the steps a job takes are refused to every actor, a master's included", %{
       site: site,
       admin: admin

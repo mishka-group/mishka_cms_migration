@@ -300,6 +300,20 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   defp json(view),
     do: view |> parts(~s|#{@table} [data-role="item-json"]|) |> LazyHTML.text() |> Jason.decode!()
 
+  describe "the cancelled run alert" do
+    test "is between the filters and the table of a cancelled run, and not on a run that is done",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      refute has_element?(open!(conn, admin, run), @table <> " [role=\"alert\"]", "cancelled")
+
+      cancelled = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
+      view = open!(conn, admin, cancelled)
+
+      assert has_element?(view, @table <> " [role=\"alert\"]", "This run was cancelled.")
+      assert has_element?(view, @table <> " [role=\"alert\"]", "WordPress password")
+      assert has_element?(view, @table <> " [role=\"alert\"]", "Start a New import")
+    end
+  end
+
   describe "the language addresses warning" do
     @warning ~s|[data-role="language-urls-warning"]|
 

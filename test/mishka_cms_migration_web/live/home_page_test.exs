@@ -915,6 +915,37 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
     end
 
+    test "says in the expanded row that a cancelled run was cancelled, and not for a run that is not",
+         %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+
+      run =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password"
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin)
+      expand!(view, run)
+      refute has_element?(view, ~s|#{@details} [data-role="cancelled-run-notice"]|)
+
+      row_action!(view, "cancel", run)
+      expand!(view, run)
+      expand!(view, run)
+
+      assert has_element?(
+               view,
+               ~s|#{@details} [data-role="cancelled-run-notice"]|,
+               "This run was cancelled."
+             )
+    end
+
     test "queues the job, and once it is done shows what it found, kind by kind, without a reload",
          %{conn: conn, site: site} do
       stub!()
