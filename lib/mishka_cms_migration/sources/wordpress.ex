@@ -69,6 +69,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   (`nil` at the top, where WordPress says `0`); keys are WordPress's own and are never atomized.
   WordPress keeps a slug written in another script percent-encoded (`%d9%88%d8%b1…` for
   `وردپرس`), so the item's `slug` is decoded; one that does not decode to text is kept as it is.
+  WordPress saves a term's, a user's and a commenter's name as HTML, with `&`, `<` and `>` escaped
+  (`Tom &amp; Jerry`), so each such name is read once as text (`Tom & Jerry`): the `name` of a
+  category, a tag, a menu and a user, a user's `first_name`, `last_name` and `nickname`, and a
+  comment's `author_name`, in the item's `title` and `attrs` alike.
 
     * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
       `content` is `content.raw` converted (`MishkaCmsMigration.Sources.WordPress.Content`): its
@@ -304,6 +308,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+  @escaped_names ~w(name first_name last_name nickname author_name)
 
   @settings [
     {"title", "name", "Site Title"},
@@ -475,7 +480,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     twins =
       classic
       |> Enum.sort_by(& &1["id"])
-      |> Enum.reduce(%{}, &Map.put_new(&2, classic_targets(&1["items"]), &1["name"]))
+      |> Enum.reduce(%{}, &Map.put_new(&2, classic_targets(&1["items"]), unescaped(&1["name"])))
 
     for menu <- Navigation.call(navigation, home),
         do: Map.put(menu, "same_as", twins[Navigation.targets(menu["items"])])
@@ -548,9 +553,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: row["author_name"],
+       title: unescaped(row["author_name"]),
        parent: parent(row),
-       attrs: row |> Map.take(@comment_attrs) |> Map.put("post_type", post_type(row)),
+       attrs:
+         row
+         |> Map.take(@comment_attrs)
+         |> unescaped_names()
+         |> Map.put("post_type", post_type(row)),
        extra: Map.drop(row, @comment_read),
        content: [%{html: raw}]
      }}
@@ -573,9 +582,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: name,
+       title: unescaped(name),
        parent: parent(row),
-       attrs: row |> Map.take(attrs) |> decoded_slug() |> Map.merge(edition(row)),
+       attrs:
+         row
+         |> Map.take(attrs)
+         |> unescaped_names()
+         |> decoded_slug()
+         |> Map.merge(edition(row)),
        extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered ++ @edition_fields)
      }}
   end
@@ -609,7 +623,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: name,
+       title: unescaped(name),
        attrs:
          row
          |> Map.take(["slug"])
@@ -678,6 +692,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: html |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim()
 
   defp plain(_none), do: ""
+
+  defp unescaped(text) when is_binary(text), do: plain(text)
+  defp unescaped(none), do: none
+
+  defp unescaped_names(attrs),
+    do:
+      Map.merge(
+        attrs,
+        for(
+          {field, name} <- Map.take(attrs, @escaped_names),
+          into: %{},
+          do: {field, unescaped(name)}
+        )
+      )
 
   defp every(req, route, extra, page, rows) do
     req

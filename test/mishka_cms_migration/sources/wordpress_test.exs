@@ -393,6 +393,40 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert is_nil(tags["17"].parent)
     end
 
+    test "a term's, a user's, a commenter's and a menu's name are plain text, the HTML WordPress saves a name as read once" do
+      saved = fn recording, id, fields ->
+        json(
+          for row <- recorded(recording),
+              do:
+                (row["id"] == id && Map.merge(row, Map.new(fields, &{&1, "Tom &amp; Jerry"}))) ||
+                  row
+        )
+      end
+
+      user_names = ~w(name first_name last_name nickname)
+
+      category =
+        items!("category", %{"/wp-json/wp/v2/categories" => saved.("categories", 2, ["name"])})
+
+      tag = items!("tag", %{"/wp-json/wp/v2/tags" => saved.("tags", 17, ["name"])})
+      user = items!("user", %{"/wp-json/wp/v2/users" => saved.("users", 4, user_names)})
+
+      comment =
+        items!("comment", %{"/wp-json/wp/v2/comments" => saved.("comments", 7, ["author_name"])})
+
+      menu = items!("menu", %{"/wp-json/wp/v2/menus" => saved.("menus", 22, ["name"])})
+
+      assert Enum.uniq([
+               category["2"].title,
+               tag["17"].title,
+               user["4"].title,
+               comment["7"].title,
+               comment["7"].attrs["author_name"],
+               menu["22"].title
+               | Map.values(Map.take(user["4"].attrs, user_names))
+             ]) == ["Tom & Jerry"]
+    end
+
     test "a slug WordPress keeps percent-encoded is decoded, and an ASCII one is kept" do
       [tag] = Enum.filter(recorded("tags"), &(&1["id"] == 20))
       [category] = Enum.filter(recorded("categories"), &(&1["id"] == 9))
@@ -567,13 +601,18 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
         "target" => ""
       }
 
+      menus =
+        for menu <- recorded("menus"),
+            do: (menu["id"] == 23 && %{menu | "name" => "Footer &amp; links"}) || menu
+
       found =
         items!("menu", %{
+          "/wp-json/wp/v2/menus" => json(menus),
           "/wp-json/wp/v2/navigation" => json(navigation),
           "/wp-json/wp/v2/menu-items" => json([footer_item])
         })
 
-      assert found["navigation-105"].attrs["same_as"] == "Footer"
+      assert found["navigation-105"].attrs["same_as"] == "Footer & links"
     end
 
     test "the main menu is the one at the theme's primary location, else one at any location, else the first made" do
