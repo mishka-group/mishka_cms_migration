@@ -100,7 +100,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   JSON.
 
   A row's Dry run this item and Import this item (Gervaz's `:event` row actions, Import once the
-  admin confirms), on an item not left out, run the run's own job for that item alone, and Import
+  admin confirms), on an item not left out of a run that still holds what its source connects with
+  (`MishkaCmsMigration.MigrationRun.connectable?/1`), run the run's own job for that item alone, and Import
   the picked items (Gervaz's `:event` bulk action) for the rows picked with the checkboxes
   (`MishkaCmsMigration.MigrationRun`'s "Picked items"); the page runs them
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
@@ -463,7 +464,10 @@ defmodule MishkaCmsMigration.MigrationItem do
         action :dry_run_item do
           type :event
           event "dry_run_item"
-          visible fn item, _state -> not item.left_out end
+
+          visible fn item, state ->
+            not item.left_out and state.path_params[:connectable] == true
+          end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Dry run this item") end
@@ -482,7 +486,9 @@ defmodule MishkaCmsMigration.MigrationItem do
             )
           end
 
-          visible fn item, _state -> not item.left_out end
+          visible fn item, state ->
+            not item.left_out and state.path_params[:connectable] == true
+          end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Import this item") end
@@ -542,6 +548,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       bulk_actions do
         action :import_items do
           type :event
+          visible fn state -> state.path_params[:connectable] == true end
 
           confirm dgettext_noop(
                     "mishka_gervaz",

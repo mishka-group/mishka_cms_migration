@@ -337,6 +337,36 @@ defmodule MishkaCmsMigration.PickedItemsTest do
     end
   end
 
+  describe "a run whose password an earlier release cleared" do
+    test "takes no Run again and no job of picked items, refused in words, and nothing is queued",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+
+      Repo.query!(
+        "UPDATE mishka_cms_migration_runs SET connection_secret = NULL WHERE id = $1",
+        [Ecto.UUID.dump!(run.id)]
+      )
+
+      run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      refute MigrationRun.connectable?(run)
+      [id] = ids(site, [{"tag", "13"}])
+
+      for step <- [
+            &MishkaCmsMigration.start_dry_run(run, actor: admin, tenant: &1),
+            &MishkaCmsMigration.dry_run_items(run, [id], actor: admin, tenant: &1),
+            &MishkaCmsMigration.import_items(run, [id], actor: admin, tenant: &1)
+          ] do
+        assert {:error, %{errors: [error]}} = step.(site.id)
+
+        assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
+                 "This run no longer holds its WordPress password. Start a New import."
+      end
+
+      assert all_enqueued(queue: :migration) == []
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
+    end
+  end
+
   describe "while another run of the site is running" do
     test "Run again, Dry run this item and Import this item are refused, and nothing changes",
          %{site: site, admin: admin} do

@@ -29,7 +29,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   ## Dry run this item and Import this item
 
   A row's Dry run this item and Import this item (`:event` row actions), Import once the admin
-  confirms, reach this page as `{:row_action, "dry_run_item" | "import_item", %{"id" => id}}`, and
+  confirms, are offered only while the run still holds what its source connects with
+  (`MishkaCmsMigration.MigrationRun.connectable?/1`, handed to the table as the path param
+  `connectable`, as Import the picked items is), and reach this page as
+  `{:row_action, "dry_run_item" | "import_item", %{"id" => id}}`, and
   Import the picked items, for the rows picked with the checkboxes, as
   `{:bulk_action, :import_items, ids}`. The page reads the run again, as the Migration page reads
   it (`MishkaCmsMigration.MigrationRun.fetch/2`), and runs `MishkaCmsMigration.dry_run_items/3` or
@@ -139,7 +142,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     scope = %{
       run: socket.assigns.run.id,
       source_host: socket.assigns.run.source_host,
-      site_id: socket.assigns.run.site_id
+      site_id: socket.assigns.run.site_id,
+      connectable: MigrationRun.connectable?(socket.assigns.run)
     }
 
     url_state = UrlSync.decode(params, uri, MigrationItem)

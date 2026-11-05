@@ -68,7 +68,7 @@ defmodule MishkaCmsMigration.ActivityTest do
 
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
       [job] = assert_triggered(run, :run_dry_run)
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 3)
 
       site
       |> create_run!(admin, %{"redirect" => @rows})
@@ -76,7 +76,10 @@ defmodule MishkaCmsMigration.ActivityTest do
 
       assert [cancelled, _connected, failed | _started] = logs(admin)
       assert {failed.action, failed.severity} == {:dry_run_failed, :error}
-      assert failed.message == "Dry run of old.example.com failed: unauthorized."
+
+      assert failed.message ==
+               "Dry run of old.example.com failed: The source refused the user or the password."
+
       assert failed.user_id == admin.id
       assert {cancelled.action, cancelled.severity} == {:cancelled, :warn}
       assert cancelled.message == "The run of old.example.com was cancelled."

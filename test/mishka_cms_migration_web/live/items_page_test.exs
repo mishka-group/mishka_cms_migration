@@ -619,6 +619,34 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
     end
 
+    test "are not offered on a run whose password an earlier release cleared, and say why when asked",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      MishkaCmsMigration.Repo.query!(
+        "UPDATE mishka_cms_migration_runs SET connection_secret = NULL WHERE id = $1",
+        [Ecto.UUID.dump!(run.id)]
+      )
+
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag"))
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+
+      refute has_element?(view, item_action("dry_run_item", tag))
+      refute has_element?(view, item_action("import_item", tag))
+      assert has_element?(view, row_button("leave_out", tag))
+
+      view
+      |> with_target(@table)
+      |> render_click("custom_event", %{
+        "event" => "dry_run_item",
+        "values" => Jason.encode!(%{"id" => tag.id})
+      })
+
+      assert settled(view) =~
+               "This run no longer holds its WordPress password. Start a New import."
+
+      assert item!(tag) == tag
+    end
+
     test "Import the picked items imports the picked rows in one job", %{
       conn: conn,
       site: site,

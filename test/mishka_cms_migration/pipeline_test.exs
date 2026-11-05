@@ -775,7 +775,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   describe "a source that cannot be read" do
     @tag capture_log: true
-    test "is tried again, and its last attempt fails the run with the reason", %{
+    test "that refuses the password fails the run at once, in words, without raising", %{
       site: site,
       admin: admin
     } do
@@ -790,17 +790,14 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert_raise Ash.Error.Invalid, ~r/unauthorized/, fn ->
-        perform_job(DryRunWorker, job.args, attempt: 1)
-      end
-
-      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
-               :dry_running
-
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 1)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert {run.status, run.reason} == {:failed, "unauthorized"}
+
+      assert MishkaCmsMigration.MigrationRun.reason_label(run.reason) ==
+               "The source refused the user or the password"
+
       assert MishkaCmsMigration.MigrationRun.open_secret(run) == {:ok, "letmein"}
     end
 
@@ -953,7 +950,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
 

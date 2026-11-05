@@ -88,10 +88,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`AshOban.Errors.CancelJob`, reason `:not_running`). Any other error saving the progress or the
   report fails the attempt, as an error of the walk does.
 
-  An error from `connect/2` or `list/3`, a raise outside a single item, a secret that can no longer
-  be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
-  a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
-  kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
+  A source that refuses what the run connects with — the password (`:unauthorized`, WordPress's
+  401), a secret that can no longer be opened (`:unreadable_secret`), a file that is gone or not an
+  export (`:no_file`, `:unreadable_file`) — fails the run at once through its `:fail`, as its
+  `on_error` would, and the job ends without raising: trying again would meet the same refusal and
+  hold the site for nothing. The run reads why in words
+  (`MishkaCmsMigration.MigrationRun.reason_label/1`, its expanded row, the bell). Any other error
+  from `connect/2` or `list/3`, a raise outside a single item, or a source whose cursors never end
+  — `{:cursor_repeated, kind}` when `list/3` answers a cursor it already answered for that kind,
+  `{:too_many_pages, kind}` after 10,000 pages of one kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
   tries it again, and after the last attempt runs the trigger's `on_error`, the run's `:fail`,
   which keeps the reason; the run keeps its secret, so it can run again. A last attempt that never returns — Oban stops it at
   its timeout, or it crashes past every rescue — fails its run through Oban's own telemetry
@@ -115,6 +120,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   @max_pages 10_000
   @picked %{picked_items?: true}
+  @refused [:unauthorized, :unreadable_secret, :no_file, :unreadable_file]
 
   @typedoc "Whether a job only reports, or writes."
   @type mode :: :dry_run | :import
@@ -136,13 +142,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     telemetry = telemetry(run, job.mode)
 
     :telemetry.span([:mishka_cms_migration, :run], telemetry, fn ->
-      answer =
-        run
-        |> walked(job, context, telemetry)
-        |> finished(run, job, context)
-        |> answered()
+      result = run |> walked(job, context, telemetry) |> finished(run, job, context)
 
-      {answer, measured(answer), Map.merge(telemetry, ended(answer))}
+      {answered(result), measured(result), Map.merge(telemetry, ended(result))}
     end)
   end
 
@@ -171,18 +173,32 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     finish(run, job, Report.done(report), %{}, context)
   end
 
+  defp finished({:error, reason}, run, _job, context) when reason in @refused do
+    run
+    |> MishkaCmsMigration.fail_run(reason,
+      scope: context,
+      context: Map.take(context.source_context, [:shared, :ash_oban])
+    )
+    |> failed_at_once(reason)
+  end
+
   defp finished({:error, reason}, _run, _job, _context), do: {:error, reason}
 
+  defp failed_at_once({:ok, run}, reason), do: {:failed, run, reason}
+  defp failed_at_once({:error, _error}, reason), do: {:error, reason}
+
   defp answered({:ok, run}), do: {:ok, run}
+  defp answered({:failed, run, _reason}), do: {:ok, run}
   defp answered({:error, :not_running}), do: {:error, CancelJob.exception(reason: :not_running)}
   defp answered({:error, reason}), do: {:error, Report.reason(reason)}
 
   defp measured({:ok, %{report: %{counts: counts}}}), do: counts
-  defp measured(_answer), do: %{}
+  defp measured(_result), do: %{}
 
   defp ended({:ok, _run}), do: %{result: :finished}
-  defp ended({:error, %CancelJob{}}), do: %{result: :cancelled}
-  defp ended({:error, reason}), do: %{result: :failed, reason: reason}
+  defp ended({:error, :not_running}), do: %{result: :cancelled}
+  defp ended({:failed, _run, reason}), do: %{result: :failed, reason: Report.reason(reason)}
+  defp ended({:error, reason}), do: %{result: :failed, reason: Report.reason(reason)}
 
   defp finish(run, %{picked: nil, mode: :dry_run}, report, extra, context),
     do: run |> MishkaCmsMigration.finish_dry_run(report, extra, scope: context) |> saved()

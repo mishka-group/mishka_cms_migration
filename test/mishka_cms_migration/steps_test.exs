@@ -103,15 +103,14 @@ defmodule MishkaCmsMigration.StepsTest do
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert_raise Ash.Error.Invalid, fn -> perform_job(DryRunWorker, job.args, attempt: 1) end
-      assert feed(admin) == []
-
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 1)
 
       assert [told] = feed(admin)
       assert told.type == "migration:dry_run:failed"
       assert told.severity == :error
-      assert told.body == "Dry run of old.example.com failed: unauthorized."
+
+      assert told.body ==
+               "Dry run of old.example.com failed: The source refused the user or the password."
     end
 
     test "Oban discarded at its timeout tells the admin who pressed Import", %{

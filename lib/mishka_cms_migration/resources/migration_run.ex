@@ -239,7 +239,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     SourceFile
   }
 
-  alias MishkaCmsMigration.Resources.Validations.{SourceInstalled, Status}
+  alias MishkaCmsMigration.Resources.Validations.{Connectable, SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
   alias MishkaGervaz.Table.Web.UrlSync
 
@@ -649,7 +649,11 @@ defmodule MishkaCmsMigration.MigrationRun do
         action :dry_run_again do
           type :event
           event "dry_run"
-          visible fn record, _state -> record.status in [:dry_run, :done, :failed] end
+
+          visible fn record, _state ->
+            record.status in [:dry_run, :done, :failed] and
+              MishkaCmsMigration.MigrationRun.connectable?(record)
+          end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Run again") end
@@ -937,6 +941,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       validate {Status, from: [:pending, :dry_run, :done, :failed]}
+      validate Connectable
 
       change set_attribute(:status, :dry_running)
       change set_attribute(:progress, nil)
@@ -958,6 +963,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       validate {Status, from: [:pending, :dry_run, :done, :failed], as_read: true}
+      validate Connectable
 
       change set_attribute(:status, :dry_running)
       change set_attribute(:progress, nil)
@@ -978,6 +984,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       validate {TenantContext, require_master: false}
       validate {Status, from: [:pending, :dry_run, :done, :failed], as_read: true}
+      validate Connectable
 
       change set_attribute(:status, :importing)
       change set_attribute(:progress, nil)
@@ -1370,6 +1377,32 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
 
   def fetch(_id, _no_user), do: {:ok, nil}
+
+  @doc """
+  Whether `run` still holds what its source connects with, so a job can connect again: the file it
+  was handed, still in its folder, for a source that reads one (`MishkaCmsMigration.Source.file?/1`),
+  and otherwise its sealed secret when its source's form asks for one as required
+  (`MishkaCmsMigration.Source.form_fields/1`). A run an earlier release ended, which cleared its
+  secret and deleted its file, and a cancelled one hold neither: Run again and the jobs of picked
+  items are neither offered nor taken on them
+  (`MishkaCmsMigration.Resources.Validations.Connectable`), and a New import asks for them again.
+  Read from the run alone, with no query; a file is looked for on disk.
+  """
+  @spec connectable?(map()) :: boolean()
+  def connectable?(%{source: source} = run),
+    do: source |> MishkaCmsMigration.Source.file?() |> holds?(run)
+
+  defp holds?(true, %{connection: %{"file" => path}}) when is_binary(path),
+    do: File.regular?(path)
+
+  defp holds?(true, _no_file), do: false
+
+  defp holds?(false, %{source: source, connection_secret: sealed}),
+    do:
+      is_binary(sealed) or
+        not Enum.any?(MishkaCmsMigration.Source.form_fields(source), &required_secret?/1)
+
+  defp required_secret?(field), do: field[:name] == :secret and field[:required] == true
 
   @doc """
   The source's secret `run` keeps, opened: `{:ok, secret}`, `{:ok, nil}` when it keeps none, or

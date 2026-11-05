@@ -594,7 +594,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       [job] = assert_triggered(failed, :run_dry_run)
       File.write!(failed.connection["file"], "Damaged since.")
 
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 3)
 
       assert %{status: :failed, reason: "unreadable_file"} =
                failed = MishkaCmsMigration.get_run!(failed.id, actor: admin, tenant: site.id)

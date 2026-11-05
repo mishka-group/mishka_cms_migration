@@ -624,7 +624,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       File.write!(run.connection["file"], staged |> File.read!() |> binary_part(0, 500))
       run = start_dry_run!(run, admin)
       [job] = assert_triggered(run, :run_dry_run)
-      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      assert {:ok, %{status: :failed}} =
+               perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
 
       view = open!(conn, admin)
       expand!(view, run)
@@ -1342,7 +1344,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       run = start_dry_run!(run, admin)
       [job] = assert_triggered(run, :run_dry_run)
-      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      assert {:ok, %{status: :failed}} =
+               perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
 
       view = open!(conn, admin)
       expand!(view, run)
@@ -1456,6 +1460,32 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
           do: assert(has_element?(view, "#{action("cancel", run)}[data-confirm]"))
 
       refute has_element?(view, action("cancel", cancelled))
+    end
+
+    test "offer no Run again on a run whose password an earlier release cleared, and say why when asked",
+         %{conn: conn, site: site, admin: admin} do
+      register_plugin!(TokenSource, MishkaCmsMigration.Source.event())
+
+      done =
+        %{source: "token", connection: %{"url" => "https://t.example"}, secret: "t0ken"}
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      MishkaCmsMigration.Repo.query!(
+        "UPDATE mishka_cms_migration_runs SET connection_secret = NULL WHERE id = $1",
+        [Ecto.UUID.dump!(done.id)]
+      )
+
+      view = open!(conn, admin)
+
+      refute has_element?(view, action("dry_run", done))
+      assert has_element?(view, "#{action("cancel", done)}[data-confirm]")
+
+      assert crafted!(view, "dry_run", done.id) =~
+               "This run no longer holds its Token password. Start a New import."
+
+      assert status(done) == :done
     end
 
     test "Run again on an imported run dry runs it again, and its Import brings what changed since",

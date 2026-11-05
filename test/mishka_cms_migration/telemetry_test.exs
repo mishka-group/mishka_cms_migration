@@ -109,7 +109,7 @@ defmodule MishkaCmsMigration.TelemetryTest do
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 3)
 
       assert [{%{system_time: _}, refused}] =
                received([:mishka_cms_migration, :connect, :refused])
