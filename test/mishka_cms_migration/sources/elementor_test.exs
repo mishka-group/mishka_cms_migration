@@ -126,6 +126,114 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     end
   end
 
+  describe "a page's heading styling" do
+    defp heading_classes(settings) do
+      [%{"elType" => "section", "settings" => %{}, "elements" => [column(settings)]}]
+      |> laid_out!()
+      |> html()
+      |> classes("h1")
+      |> hd()
+    end
+
+    defp column(settings),
+      do: %{
+        "elType" => "column",
+        "elements" => [
+          widget("heading", Map.merge(%{"title" => "T", "header_size" => "h1"}, settings))
+        ]
+      }
+
+    test "takes the nearest of Tailwind's text sizes, and a left, centre or right alignment" do
+      classes =
+        heading_classes(%{
+          "typography_font_size" => %{"unit" => "px", "size" => 50},
+          "align" => "right"
+        })
+
+      assert MapSet.member?(classes, "text-5xl") and MapSet.member?(classes, "text-right")
+      refute MapSet.member?(classes, "text-4xl")
+      assert MapSet.member?(heading_classes(%{"align" => "left"}), "text-left")
+
+      assert MapSet.member?(
+               heading_classes(%{"typography_font_size" => %{"unit" => "rem", "size" => "3"}}),
+               "text-5xl"
+             )
+    end
+
+    test "keeps the builder's size for a size it cannot read, or a unit it has no step for" do
+      for size <- [%{"unit" => "vw", "size" => 5}, %{"unit" => "px", "size" => ""}, %{}] do
+        assert MapSet.member?(heading_classes(%{"typography_font_size" => size}), "text-4xl")
+      end
+    end
+
+    test "takes a colour only when the theme has a token for it" do
+      assert MapSet.member?(
+               heading_classes(%{"title_color" => "#5B4FE0"}),
+               "dark:text-brand-dark"
+             )
+
+      refute MapSet.member?(heading_classes(%{"title_color" => "#5B4FE0"}), "text-fg")
+
+      classes = heading_classes(%{"title_color" => "#123456"})
+      assert MapSet.member?(classes, "text-fg") and MapSet.member?(classes, "dark:text-fg-dark")
+      refute Enum.any?(classes, &(&1 =~ "123456"))
+    end
+  end
+
+  describe "a section's padding" do
+    defp section_classes(settings) do
+      [%{"elType" => "section", "settings" => settings, "elements" => [column(%{})]}]
+      |> laid_out!()
+      |> html()
+      |> classes("section")
+      |> hd()
+    end
+
+    test "is the nearest of the spacing steps: one for both sides, or one for each" do
+      same = %{
+        "padding" => %{
+          "unit" => "px",
+          "top" => "100",
+          "bottom" => "96",
+          "left" => "0",
+          "right" => "0"
+        }
+      }
+
+      assert MapSet.member?(section_classes(same), "py-24")
+      refute MapSet.member?(section_classes(same), "py-16")
+
+      split = %{"padding" => %{"unit" => "px", "top" => "0", "bottom" => "42"}}
+      classes = section_classes(split)
+      assert MapSet.member?(classes, "pt-0") and MapSet.member?(classes, "pb-10")
+      refute Enum.any?(classes, &String.starts_with?(&1, "py-"))
+    end
+
+    test "is the builder's own when it carries none" do
+      assert drawn_as?(section_classes(%{}), "el-section")
+
+      assert drawn_as?(
+               section_classes(%{"padding" => %{"unit" => "px", "top" => "", "bottom" => ""}}),
+               "el-section"
+             )
+    end
+
+    test "is never an inline style" do
+      html =
+        html(
+          laid_out!([
+            %{
+              "elType" => "section",
+              "settings" => %{"padding" => %{"unit" => "px", "top" => "8", "bottom" => "8"}},
+              "elements" => [column(%{})]
+            }
+          ])
+        )
+
+      assert html |> LazyHTML.query("[style]") |> Enum.empty?()
+    end
+  end
+
   describe "a page laid out with sections" do
     setup do
       %{page: items!("page", "elementor-pages")["elementor-landing"]}

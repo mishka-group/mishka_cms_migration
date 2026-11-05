@@ -56,6 +56,20 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   colours swapped for the site's colour tokens (`text-fg dark:text-fg-dark`, ...): slate does not
   change in the dark theme, and the tokens do.
 
+  ## What of Elementor's styling is carried over
+
+  Only what has a builder class, never an inline `style`:
+
+    * alignment — a heading's and a text editor's left, centre, right or justified text;
+    * a heading's size — its font size (px, em or rem) as the nearest of Tailwind's text sizes;
+    * a section's or a container's top and bottom padding — as the nearest of the spacing steps
+      (`py-N`, or `pt-N` and `pb-N`);
+    * a heading's colour — only when it is exactly the light value of one of the theme's text
+      tokens (fg, dim, subtle, faint, brand); any other colour keeps the theme's default.
+
+  Not carried over: side padding and margins, other colours (text, buttons, backgrounds), fonts,
+  weights and responsive values.
+
   ## A post
 
   A post is the Blog's HTML, as a post written in the block editor is: the same elements without
@@ -90,7 +104,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   @galleries ["image-gallery", "gallery"]
   @headings ~w(h1 h2 h3 h4 h5 h6)
   @rows ["row", "row-reverse"]
-  @aligned %{"center" => "text-center", "right" => "text-right", "justify" => "text-justify"}
+  @aligned %{
+    "left" => "text-left",
+    "center" => "text-center",
+    "right" => "text-right",
+    "justify" => "text-justify"
+  }
   @element_id ~r/\A[\w-]+\z/
   @grid_columns 12
   @dropped_attrs ~w(class style srcset sizes loading decoding fetchpriority)
@@ -109,6 +128,39 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     "bg-slate-900" => "bg-fg dark:bg-fg-dark",
     "text-white" => "text-white dark:text-page-dark"
   }
+
+  # The theme's text colours by the light value Elementor would carry for the same colour.
+  @colors %{
+    "#1a1a1f" => ["text-fg", "dark:text-fg-dark"],
+    "#6b6a72" => ["text-dim", "dark:text-dim-dark"],
+    "#8a8892" => ["text-subtle", "dark:text-subtle-dark"],
+    "#a3a0a9" => ["text-faint", "dark:text-faint-dark"],
+    "#5b4fe0" => ["text-brand", "dark:text-brand-dark"]
+  }
+  @color_classes @colors |> Map.values() |> List.flatten()
+
+  @units %{"px" => 1, "em" => 16, "rem" => 16}
+
+  @text_sizes [
+    {12, "text-xs"},
+    {14, "text-sm"},
+    {16, "text-base"},
+    {18, "text-lg"},
+    {20, "text-xl"},
+    {24, "text-2xl"},
+    {30, "text-3xl"},
+    {36, "text-4xl"},
+    {48, "text-5xl"},
+    {60, "text-6xl"},
+    {72, "text-7xl"},
+    {96, "text-8xl"},
+    {128, "text-9xl"}
+  ]
+  @size_classes Enum.map(@text_sizes, &elem(&1, 1))
+
+  @spacing [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60] ++
+             [64, 72, 80, 96]
+  @section_step 16
 
   @videos %{
     "youtube" => {"youtube_url", "https://www.youtube.com/watch?v=XHOmBV4js_E"},
@@ -317,14 +369,64 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp placed(nodes, %{"isInner" => true}, _ctx), do: nodes
   defp placed([], _element, _ctx), do: []
 
-  defp placed(nodes, element, %{kind: "page"}),
-    do: [built("el-section", [], element |> settings() |> boxed(nodes))]
+  defp placed(nodes, element, %{kind: "page"}) do
+    settings = settings(element)
+    [padded(built("el-section", [], boxed(settings, nodes)), settings["padding"])]
+  end
 
   defp placed(nodes, _element, _post), do: nodes
 
   defp boxed(%{"layout" => "full_width"}, nodes), do: nodes
   defp boxed(%{"content_width" => "full"}, nodes), do: nodes
   defp boxed(_boxed, nodes), do: [built("el-container", [], nodes)]
+
+  defp padded(node, %{"unit" => unit} = padding) do
+    case {step(padding["top"], unit), step(padding["bottom"], unit)} do
+      {nil, nil} -> node
+      {top, bottom} -> spaced(node, top || @section_step, bottom || @section_step)
+    end
+  end
+
+  defp padded(node, _no_padding), do: node
+
+  defp spaced(node, step, step), do: classed_as(node, ["py-#{step}"])
+  defp spaced(node, top, bottom), do: classed_as(node, ["pt-#{top}", "pb-#{bottom}"])
+
+  defp classed_as({tag, attrs, children}, classes),
+    do: {tag, Enum.map(attrs, &replaced(&1, classes)), children}
+
+  defp replaced({"class", class}, classes),
+    do:
+      {"class",
+       class
+       |> String.split()
+       |> Enum.reject(&String.starts_with?(&1, "py-"))
+       |> Kernel.++(classes)
+       |> Enum.join(" ")}
+
+  defp replaced(attr, _classes), do: attr
+
+  defp step(value, unit) do
+    with px when is_number(px) <- pixels(value, unit),
+         do: Enum.min_by(@spacing, &abs(&1 * 4 - px))
+  end
+
+  defp pixels(value, unit) when is_map_key(@units, unit) do
+    with size when is_number(size) <- number(value), do: size * Map.fetch!(@units, unit)
+  end
+
+  defp pixels(_value, _unit), do: nil
+
+  defp number(value) when is_number(value), do: value
+
+  defp number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, ""} -> number
+      _not_a_number -> nil
+    end
+  end
+
+  defp number(_value), do: nil
 
   defp built(id, attributes, children) do
     {tag, own, _placeholder} = Map.fetch!(@elements, id)
@@ -348,18 +450,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
        when is_binary(title) and title != "" do
     tag = heading(settings["header_size"])
 
-    [
-      heading_tag(
-        tag,
-        title |> fragment() |> linked(settings["link"]),
-        aligned(settings["align"]),
-        ctx
-      )
-    ]
+    [heading_tag(tag, title |> fragment() |> linked(settings["link"]), settings, ctx)]
   end
 
-  defp widget("text-editor", %{"editor" => html}, ctx) when is_binary(html),
-    do: html |> Content.nodes(ctx.fetch) |> boxed_text(ctx)
+  defp widget("text-editor", %{"editor" => html} = settings, ctx) when is_binary(html),
+    do: html |> Content.nodes(ctx.fetch) |> boxed_text(aligned(settings["align"]), ctx)
 
   defp widget("image", %{"image" => %{"url" => url} = image} = settings, ctx)
        when is_binary(url) and url != "" do
@@ -414,16 +509,52 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp heading(size) when size in ["div", "span", "p"], do: "p"
   defp heading(_default), do: "h2"
 
-  defp heading_tag(tag, children, classes, %{kind: "page"}),
-    do: {tag, [{"class", Enum.join([Map.fetch!(@styles, tag) | classes], " ")}], children}
+  defp heading_tag(tag, children, settings, %{kind: "page"}) do
+    classes =
+      @styles
+      |> Map.fetch!(tag)
+      |> String.split()
+      |> sized(settings["typography_font_size"])
+      |> colored(settings["title_color"])
+      |> Kernel.++(aligned(settings["align"]))
 
-  defp heading_tag(tag, children, _classes, _post), do: {tag, [], children}
+    {tag, [{"class", Enum.join(classes, " ")}], children}
+  end
+
+  defp heading_tag(tag, children, _settings, _post), do: {tag, [], children}
+
+  defp sized(classes, %{"size" => size, "unit" => unit}) do
+    with px when is_number(px) <- pixels(size, unit),
+         {_px, class} <- Enum.min_by(@text_sizes, fn {step, _class} -> abs(step - px) end) do
+      Enum.map(classes, &resized(&1, class))
+    else
+      _unreadable -> classes
+    end
+  end
+
+  defp sized(classes, _no_size), do: classes
+
+  defp resized(class, size) when class in @size_classes, do: size
+  defp resized(class, _size), do: class
+
+  defp colored(classes, color) when is_binary(color) do
+    case Map.fetch(@colors, String.downcase(color)) do
+      {:ok, tokens} -> Enum.reject(classes, &(&1 in @color_classes)) ++ tokens
+      :error -> classes
+    end
+  end
+
+  defp colored(classes, _no_color), do: classes
 
   defp aligned(align) when is_map_key(@aligned, align), do: [Map.fetch!(@aligned, align)]
   defp aligned(_start), do: []
 
-  defp boxed_text(nodes, %{kind: "page"}), do: [{"div", [], nodes}]
-  defp boxed_text(nodes, _post), do: nodes
+  defp boxed_text(nodes, [], %{kind: "page"}), do: [{"div", [], nodes}]
+
+  defp boxed_text(nodes, classes, %{kind: "page"}),
+    do: [{"div", [{"class", Enum.join(classes, " ")}], nodes}]
+
+  defp boxed_text(nodes, _classes, _post), do: nodes
 
   defp button(href, label, aligned, %{kind: "page"}),
     do: aligned_button({"a", href ++ [{"class", @button}], label}, aligned)
@@ -431,6 +562,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp button(href, label, _aligned, _post), do: [{"p", [], [{"a", href, label}]}]
 
   defp aligned_button(a, []), do: [a]
+  defp aligned_button(a, ["text-left"]), do: [a]
   defp aligned_button(a, classes), do: [{"div", [{"class", Enum.join(classes, " ")}], [a]}]
 
   defp linked(nodes, link), do: link |> link_attributes() |> linked_to(nodes)
