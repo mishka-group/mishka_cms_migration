@@ -1137,6 +1137,7 @@ defmodule MishkaCmsMigration.MigrationRun do
                         ]
                       ]
                     ],
+                    guests: [type: :integer, allow_nil?: true],
                     entries: [
                       type: {:array, :map},
                       allow_nil?: false,
@@ -1937,8 +1938,18 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("mapped_missing"),
     do: dgettext("mishka_gervaz", "The record it was mapped to is gone")
 
-  defp said("guest_comment"),
-    do: dgettext("mishka_gervaz", "A guest's comment, which Blog cannot keep yet (#21)")
+  defp said("guest_comment: " <> name),
+    do: dgettext("mishka_gervaz", "A guest comment by %{name}", name: name)
+
+  defp said("guest_email_dropped"),
+    do: dgettext("mishka_gervaz", "The guest's email is not valid, so it is left out")
+
+  defp said("guest_website_dropped"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The guest's website is not an http or https address, so it is left out"
+      )
 
   defp said("page_comment"),
     do: dgettext("mishka_gervaz", "A comment on a page, which Blog cannot keep")

@@ -312,7 +312,9 @@ defmodule MishkaCmsMigration.Target do
   @doc """
   What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import
   writes it, from what `prepare/3` fetched, such as `%{file_hash: hash}` for a downloaded file (see
-  "What a write needs first"). `use` answers `%{}`.
+  "What a write needs first"). A `:note` in it is not recorded as a field but added to the item's
+  note, for a fact only `prepare/3` found, such as a comment's author being a guest. `use` answers
+  `%{}`.
   """
   @callback recorded(Item.t(), context()) :: map()
 

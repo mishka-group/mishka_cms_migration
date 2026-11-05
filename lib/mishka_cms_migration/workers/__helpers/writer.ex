@@ -36,7 +36,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item the
   target's `prepare/3` finds to be a record the CMS holds (`{:connected, record, reason}`) is
   recorded the same way, as skipped with `reason`. What the target's `recorded/2` answers is
-  recorded on the item of a record written. An item whose
+  recorded on the item of a record written, except its `:note`, which the report says after the
+  target's note. An item whose
   conflict waits for an admin's decision is not written either: it is recorded as `:undecided`,
   with the conflict as its reason, and the next run asks again.
 
@@ -144,13 +145,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
          note = note(target, item, context, kept),
          {:ok, written} <-
            target.prepare(item, context, &transacted(state, {source_item, item}, plan, &1, note)) do
-      {:ok, written, note}
+      {:ok, written, written_note(written, note)}
     end
   rescue
     error -> {:error, error}
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
+
+  defp written_note({:ok, record}, note), do: Ash.Resource.get_metadata(record, :note) || note
+  defp written_note(_written, note), do: note
 
   defp transacted(state, items, {_outcome, target, _record} = plan, context, note),
     do:
@@ -159,10 +163,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
       end)
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
+    {found, added} = item |> target.recorded(context) |> Map.pop(:note)
+    note = noted(Enum.reject([note, found], &is_nil/1))
+
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <-
-           recorded(state, source_item, written, {outcome, note}, target.recorded(item, context)) do
-      {:ok, written}
+         {:ok, _item} <- recorded(state, source_item, written, {outcome, note}, added) do
+      {:ok, Ash.Resource.put_metadata(written, :note, note)}
     end
   end
 

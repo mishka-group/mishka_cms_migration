@@ -10,15 +10,15 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
     the admin who pressed Import: the admin needs the Blog's `admin:dashboard:blog:comment` to write
     them and `admin:dashboard:blog:post` to find the posts and bloggers they belong to, and the
     Blog's own rules decide the rest, such as how a comment's text is cleaned (it is plain text).
-    The Blog's `:create` keeps the author it is given (`author_id`) instead of making the acting
-    admin the author.
+    The Blog's `:create` keeps the author it is given (`author_id`), or a guest's name, instead of
+    making the acting admin the author.
 
     An item's content is the comment's text, with its tags taken out and its entities read
     (`MishkaCmsCore.PlainText.from_html/1`), as the Blog stores a comment. Its `"status"` is the
     comment's: `"approved"` is approved and `"hold"` (held for moderation) is pending. The Blog
     sets when a comment is created, so a comment is dated the day it is imported, not the day it
-    was written. The commenter's address, website, IP address and browser are not copied into the
-    comment; they stay in the item's `extra`.
+    was written. The commenter's IP address and browser are not copied into the comment; they stay
+    in the item's `extra`.
 
     ## Which comments
 
@@ -33,8 +33,6 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
           `"spam_or_trash"`;
         * one on a page (`"post_type"`), which the Blog has no place for — skipped as
           `"page_comment"`;
-        * one by a guest, whose name and email the Blog's comment has no field for yet — skipped as
-          `"guest_comment"`;
         * in an import, one whose post has no Blog post, because it failed, was never written or
           an admin left it out — skipped as `"post_missing"`, as is a reply whose parent comment
           was not written (the walk's `"parent_missing"`) or was left out (`"parent_left_out"`).
@@ -52,9 +50,19 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
         (`MishkaCmsMigration.Targets.BlogBlogger.users/2`), so the admin needs the core's
         `admin:dashboard:user` to find any.
 
-    A comment with neither is a guest's. A dry run, which writes no blogger, plans a comment by a
-    source's user as one to create when the run's `authors` choice is `"create"`, which makes every
-    such user.
+    A comment with neither is a guest's: it is written with the name, email and website the
+    commenter gave (`guest_name`, `guest_email`, `guest_website`) and no author. A guest who gave
+    no name is written as `"Anonymous"`, the name WordPress shows for one. An email the Blog would
+    refuse, or a website that is not an `http` or `https` address, is left out of the comment
+    instead of failing it, and the report says so (`"guest_email_dropped"`,
+    `"guest_website_dropped"`).
+
+    The report says a guest's comment is one (`"guest_comment: <name>"`, which
+    `MishkaCmsMigration.Report` counts as `guests`). An import finds the author once, in
+    `prepare/3`, and `attrs/2` and `recorded/2` read it from the context's `prepared`. A dry run
+    writes no blogger, so it finds the author for its note from the users the site has, and plans a
+    comment by a source's user as a user's when the run's `authors` choice is `"create"`, which
+    makes every such user.
 
     ## Its post and its place in a thread
 
@@ -65,8 +73,7 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
 
     A re-run is held to the rules every target is: a comment WordPress did not change is
     `"unchanged"`, and one an admin edited or moderated in the CMS is kept as the admin left it
-    (`MishkaCmsMigration.Workers.Helpers.Decision`). A comment skipped for having no user is
-    written once the site has the user.
+    (`MishkaCmsMigration.Workers.Helpers.Decision`). 
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
     only then; on a node without the Blog its items wait for it (`"blog_missing"`).
@@ -78,13 +85,16 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       create: :create,
       update: :update
 
-    alias MishkaBlog.{Blogger, BlogPost}
+    alias MishkaBlog.{Blogger, BlogPost, Comment}
     alias MishkaCmsCore.Accounts.User
+    alias MishkaCmsCore.Accounts.Validations.ValidEmail
     alias MishkaCmsCore.PlainText
+    alias MishkaCmsCore.Runtime.OriginValidator
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.BlogBlogger
     alias MishkaCmsMigration.Targets.Helpers.Written
 
+    @anonymous "Anonymous"
     @statuses %{"approved" => :approved, "hold" => :pending}
 
     @impl MishkaCmsMigration.Target
@@ -92,25 +102,54 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       do: Map.new(items, &{&1.source_id, {:skipped, "not_chosen"}})
 
     def existing(items, context) do
-      authors = authors(items, context)
       posts = posts(items, context)
 
-      for item <- items,
-          found = found(item, authors, posts, context),
-          into: %{},
-          do: {item.source_id, found}
+      items
+      |> Map.new(&{&1.source_id, found(&1, posts, context)})
+      |> Map.filter(fn {_id, found} -> found end)
     end
 
     @impl MishkaCmsMigration.Target
-    def attrs(item, %{record: nil} = context) do
-      Map.merge(comment(item), %{
-        post_id: [item] |> posts(context) |> Map.fetch!(post_key(item)) |> Map.fetch!(:id),
-        parent_comment_id: context.parent_id,
-        author_id: [item] |> authors(context) |> Map.get(item.source_id)
-      })
+    def prepare(item, %{record: nil} = context, write) do
+      post = [item] |> posts(context) |> Map.fetch!(post_key(item)) |> Map.fetch!(:id)
+      author = [item] |> authors(context) |> Map.get(item.source_id)
+
+      write.(%{context | prepared: %{post_id: post, author_id: author}})
+    end
+
+    def prepare(_item, context, write), do: write.(context)
+
+    @impl MishkaCmsMigration.Target
+    def attrs(item, %{record: nil, prepared: %{post_id: post, author_id: author}} = context) do
+      item
+      |> comment()
+      |> Map.merge(%{post_id: post, parent_comment_id: context.parent_id})
+      |> Map.merge(writer(item, author))
     end
 
     def attrs(item, _update), do: comment(item)
+
+    @impl MishkaCmsMigration.Target
+    def note(
+          %Item{attrs: %{"author" => author}},
+          %{record: nil, mode: :dry_run, options: %{authors: "create"}}
+        )
+        when is_integer(author) and author > 0,
+        do: nil
+
+    def note(item, %{record: nil, mode: :dry_run} = context),
+      do: noted(item, [item] |> authors(context) |> Map.get(item.source_id))
+
+    def note(_item, %{record: %{guest_name: name}}) when is_binary(name),
+      do: "guest_comment: " <> name
+
+    def note(_item, _context), do: nil
+
+    @impl MishkaCmsMigration.Target
+    def recorded(item, %{prepared: %{author_id: author}}) when is_nil(author),
+      do: %{note: noted(item, nil)}
+
+    def recorded(_item, _context), do: %{}
 
     defp comment(%Item{attrs: %{"status" => status}} = item),
       do: %{
@@ -118,8 +157,8 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
         status: Map.fetch!(@statuses, status)
       }
 
-    defp found(item, authors, posts, context),
-      do: left_out(item) || guest(item, authors, context) || unwritten(item, posts, context)
+    defp found(item, posts, context),
+      do: left_out(item) || unwritten(item, posts, context)
 
     defp left_out(%Item{attrs: %{"type" => type}}) when type != "comment",
       do: {:skipped, "not_a_comment"}
@@ -129,18 +168,6 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
 
     defp left_out(%Item{attrs: %{"post_type" => "page"}}), do: {:skipped, "page_comment"}
     defp left_out(_item), do: nil
-
-    defp guest(%Item{source_id: id}, authors, _context) when is_map_key(authors, id), do: nil
-
-    defp guest(
-           %Item{attrs: %{"author" => author}},
-           _authors,
-           %{mode: :dry_run, options: %{authors: "create"}}
-         )
-         when is_integer(author) and author > 0,
-         do: nil
-
-    defp guest(_item, _authors, _context), do: {:skipped, "guest_comment"}
 
     defp unwritten(_item, _posts, %{mode: :dry_run}), do: nil
 
@@ -172,6 +199,54 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       do: for(%Item{attrs: %{"author" => id}} <- items, is_integer(id) and id > 0, do: id)
 
     defp email(%Item{attrs: attrs}), do: attrs |> address() |> List.wrap()
+
+    defp writer(_item, author) when is_binary(author), do: %{author_id: author}
+    defp writer(item, nil), do: item |> guest() |> Map.fetch!(:attrs)
+
+    defp noted(_item, author) when is_binary(author), do: nil
+
+    defp noted(item, nil) do
+      %{name: name, dropped: dropped} = guest(item)
+      Enum.join(["guest_comment: " <> name | dropped], "; ")
+    end
+
+    # What a guest gave, as the Blog keeps it: an email it would refuse or a website that is not an
+    # http or https address is left out, and `dropped` says so.
+    defp guest(%Item{attrs: attrs}) do
+      name = attrs |> text("author_name") |> Kernel.||(@anonymous) |> String.slice(0, 255)
+      {email, lost_email} = checked(text(attrs, "author_email"), &email?/1, "guest_email_dropped")
+      {site, lost_site} = checked(text(attrs, "author_url"), &website?/1, "guest_website_dropped")
+
+      %{
+        name: name,
+        dropped: lost_email ++ lost_site,
+        attrs:
+          %{guest_name: name, guest_email: email, guest_website: site}
+          |> Map.reject(fn {_field, value} -> is_nil(value) end)
+      }
+    end
+
+    defp text(attrs, key), do: attrs |> Map.get(key) |> trimmed()
+
+    defp trimmed(value) when is_binary(value), do: value |> String.trim() |> filled()
+    defp trimmed(_value), do: nil
+
+    defp filled(""), do: nil
+    defp filled(value), do: value
+
+    defp checked(nil, _valid?, _code), do: {nil, []}
+
+    defp checked(value, valid?, code),
+      do: if(valid?.(value), do: {value, []}, else: {nil, [code]})
+
+    defp email?(email) do
+      Comment
+      |> Ash.Changeset.new()
+      |> Ash.Changeset.force_change_attribute(:guest_email, email)
+      |> ValidEmail.validate([field: :guest_email], %{}) == :ok
+    end
+
+    defp website?(site), do: byte_size(site) <= 500 and OriginValidator.web_url?(site)
 
     defp address(%{"author_email" => email}) when is_binary(email) and email != "",
       do: String.downcase(email)

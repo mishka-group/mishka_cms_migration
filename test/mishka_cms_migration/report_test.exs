@@ -23,7 +23,7 @@ defmodule MishkaCmsMigration.ReportTest do
     assert length(report.entries) == Report.max_entries()
     assert hd(report.entries).source_id == "#{total - Report.max_entries() + 1}"
     assert List.last(report.entries).source_id == "#{total}"
-    assert Map.keys(report) |> Enum.sort() == [:counts, :duplicates, :entries, :kinds]
+    assert Map.keys(report) |> Enum.sort() == [:counts, :duplicates, :entries, :guests, :kinds]
   end
 
   test "lists each kind that had an item, in the order the kinds were met" do
@@ -59,11 +59,12 @@ defmodule MishkaCmsMigration.ReportTest do
         do: refute(MigrationRun.reason_label(code) == code)
   end
 
-  test "a comment left out says why in words, and names the issue that will bring a guest's" do
-    for code <- ~w(guest_comment page_comment not_a_comment spam_or_trash),
+  test "a comment left out, or written as a guest's, says why in words" do
+    for code <-
+          ~w(page_comment not_a_comment spam_or_trash guest_email_dropped guest_website_dropped),
         do: refute(MigrationRun.reason_label(code) == code)
 
-    assert MigrationRun.reason_label("guest_comment") =~ "#21"
+    assert MigrationRun.reason_label("guest_comment: Sara") =~ "Sara"
     assert MigrationRun.kind_label("comment") == "Comments"
   end
 end

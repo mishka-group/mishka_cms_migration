@@ -138,10 +138,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       at the top), and `content` the comment as its author typed it (`content.raw`); `attrs` keeps
       `post` (the id of the post or page it is on), `post_type` (that entry's type, `"post"` or
       `"page"`, from the row's `up` link), `author` (the id of the WordPress user, `0` for a
-      visitor), `author_name`, `author_email`, `status` (`"approved"` or `"hold"`; a spam or
+      visitor), `author_name`, `author_email`, `author_url`, `status` (`"approved"` or `"hold"`; a spam or
       trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
       `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
-      address, website, user agent and the rest are kept in `extra`.
+      address, user agent and the rest are kept in `extra`.
     * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"` or
       `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
       text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
@@ -343,7 +343,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @menu_typed ["post_type", "taxonomy"]
   @main_location "primary"
 
-  @comment_attrs ~w(post author author_name author_email status type date_gmt)
+  @comment_attrs ~w(post author author_name author_email author_url status type date_gmt)
   @comment_read ~w(id content) ++ @comment_attrs ++ @rendered
 
   @impl MishkaCmsMigration.Source
