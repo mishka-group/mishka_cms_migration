@@ -680,7 +680,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       run = imported!(site, admin)
 
-      assert outcomes(run)["22"] == {:failed, "forbidden"}
+      assert outcomes(run)["22"] == {:failed, "forbidden: menu"}
       assert template(site) == layout.template
     end
   end

@@ -38,8 +38,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   asked about.
 
   The CMS records are read through the target resource's primary read as the admin running the
-  job, under the CMS's own policies; a read the CMS refuses fails the attempt, as an error of the
-  walk does (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
+  job, under the CMS's own policies. When the CMS does not let the admin read them, each item that
+  needs its record (one an earlier run wrote, or an admin mapped) fails as
+  `{:failed, "forbidden: <kind>"}`, "You may not change <kinds> on this site", and the walk goes
+  on; any other error of the read fails the attempt, as an error of the walk does
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
 
   An item whose kind has no target (`MishkaCmsMigration.Target`) is `{:skipped, "no_target"}`,
   unless it is a kind the Blog writes (`MishkaCmsMigration.Application.blog_kinds/0`) on a node
@@ -150,15 +153,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp current(refs, state) do
     refs
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-    |> Enum.flat_map(fn {resource, ids} ->
+    |> Enum.reduce_while(%{}, fn {resource, ids}, records ->
       resource
       |> Ash.Query.filter(id in ^ids)
-      |> Ash.read!(actor: state.actor, tenant: state.run.site_id)
+      |> Ash.read(actor: state.actor, tenant: state.run.site_id)
+      |> read_records(records)
     end)
-    |> Map.new(&{&1.id, &1})
   end
 
+  defp read_records({:ok, found}, records),
+    do: {:cont, Enum.into(found, records, &{&1.id, &1})}
+
+  defp read_records({:error, %Ash.Error.Forbidden{}}, _records), do: {:halt, :forbidden}
+  defp read_records({:error, error}, _records), do: raise(error)
+
   defp plan(_target, _item, %{left_out: true}, _records), do: {:skipped, "left_out_by_admin"}
+
+  defp plan(_target, item, known, :forbidden)
+       when is_binary(known.mapped_id) or is_binary(known.target_id),
+       do: {:failed, "forbidden: " <> item.kind}
 
   defp plan(target, _item, %{mapped_id: id}, records) when is_binary(id),
     do: records |> Map.get(id) |> mapped(target)

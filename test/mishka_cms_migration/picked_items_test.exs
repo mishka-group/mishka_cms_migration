@@ -254,6 +254,43 @@ defmodule MishkaCmsMigration.PickedItemsTest do
     end
   end
 
+  describe "an admin the CMS does not let change what the items are written to" do
+    test "is refused Import this item up front, in words, and the run stays as it was",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      migrator = migration_admin!(site, ["admin:dashboard:migration"])
+      [id] = ids(site, [{"tag", "13"}])
+
+      for step <- [&MishkaCmsMigration.import_items/3, &MishkaCmsMigration.dry_run_items/3] do
+        assert {:error, %{errors: [%{field: :items} = error]}} =
+                 step.(run, [id], actor: migrator, tenant: site.id)
+
+        assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
+                 "You may not change tags on this site."
+      end
+
+      assert all_enqueued(queue: :migration) == []
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :dry_run
+    end
+
+    test "fails those items with the reason when it runs the run again, and the run finishes",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+      migrator = migration_admin!(site, ["admin:dashboard:migration"])
+
+      again = MishkaCmsMigration.start_dry_run!(run, actor: migrator, tenant: site.id)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+
+      assert MishkaCmsMigration.get_run!(again.id, actor: admin, tenant: site.id).status ==
+               :dry_run
+
+      assert %{plan: :failed, plan_reason: "forbidden: tag"} = item(site, "tag", "13")
+
+      assert MigrationRun.reason_label("forbidden: tag") ==
+               "You may not change tags on this site"
+    end
+  end
+
   describe "while another run of the site is running" do
     test "Run again, Dry run this item and Import this item are refused, and nothing changes",
          %{site: site, admin: admin} do

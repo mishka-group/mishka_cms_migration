@@ -894,7 +894,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       created = imported!(site, admin, %{authors: "create"})
 
       assert created |> outcomes("user") |> Map.values() |> Enum.uniq() == [
-               {:failed, "forbidden"}
+               {:failed, "forbidden: user"}
              ]
 
       assert Map.keys(accounts(site)) == Map.keys(before)
@@ -2032,7 +2032,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       run = imported!(site, admin, @on)
 
-      assert outcomes(run, "comment")["2"] == {:failed, "forbidden"}
+      assert outcomes(run, "comment")["2"] == {:failed, "forbidden: comment"}
       assert comments(site) == %{}
     end
 

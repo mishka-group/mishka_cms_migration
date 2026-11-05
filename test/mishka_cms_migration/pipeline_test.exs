@@ -535,7 +535,11 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert run.report.counts == %{created: 0, updated: 0, skipped: 0, failed: 3, undecided: 0}
       assert redirects(site) == []
-      assert Enum.all?(items(site), &({&1.outcome, &1.reason} == {:failed, "forbidden"}))
+
+      assert Enum.all?(
+               items(site),
+               &({&1.outcome, &1.reason} == {:failed, "forbidden: redirect"})
+             )
     end
 
     test "a failed item is created on the next run once the CMS accepts it", %{

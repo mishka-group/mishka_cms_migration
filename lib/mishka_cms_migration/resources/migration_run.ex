@@ -2027,10 +2027,12 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
 
   defp said("waits_for: " <> kinds),
-    do:
-      dgettext("mishka_gervaz", "Waits until its %{kinds} are imported",
-        kinds: kinds |> String.split(", ") |> Enum.map(&kind_noun/1) |> Languages.join()
-      )
+    do: dgettext("mishka_gervaz", "Waits until its %{kinds} are imported", kinds: nouns(kinds))
+
+  defp said("forbidden: " <> kinds),
+    do: dgettext("mishka_gervaz", "You may not change %{kinds} on this site", kinds: nouns(kinds))
+
+  defp said("forbidden"), do: dgettext("mishka_gervaz", "You may not change this on this site")
 
   defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
   defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")
@@ -2298,6 +2300,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said(reason), do: reason
 
   defp language_name(code), do: Languages.name(code) || code
+
+  defp nouns(kinds), do: kinds |> String.split(", ") |> Enum.map(&kind_noun/1) |> Languages.join()
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

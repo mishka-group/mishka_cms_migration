@@ -20,6 +20,11 @@ defmodule MishkaCmsMigration.Resources.Changes.PickedItems do
   by `MishkaCmsMigration.Resources.Validations.Status` with `as_read: true`, so a request made with
   a run read before it moved on, such as a second click on a page drawn before the first, is
   refused by the database, queues no job, and the status the run goes back to is the one it held.
+
+  An admin the CMS's own policies do not let read the records a picked kind is written to
+  (`MishkaCmsMigration.Target`'s `resources/0`, asked with `Ash.can?/3` from the admin's
+  permissions, without a query) is refused on `items` too, "You may not change tags on this site.",
+  before anything is queued: the job could only fail those items.
   """
 
   use Ash.Resource.Change
@@ -28,7 +33,7 @@ defmodule MishkaCmsMigration.Resources.Changes.PickedItems do
   require Ash.Query
 
   alias Ash.Error.Changes.InvalidArgument
-  alias MishkaCmsMigration.MigrationItem
+  alias MishkaCmsMigration.{MigrationItem, MigrationRun, Target}
 
   @none dgettext_noop("errors", "Pick items of this run's source.")
 
@@ -46,24 +51,56 @@ defmodule MishkaCmsMigration.Resources.Changes.PickedItems do
     |> Ash.Query.filter(id in ^ids and source_host == ^run.source_host)
     |> Ash.Query.select([:source_kind, :source_id])
     |> Ash.read(actor: context.actor, tenant: run.site_id, authorize?: context.authorize?)
-    |> job(changeset)
+    |> job(changeset, context)
   end
 
-  defp job({:ok, []}, changeset),
+  defp job({:ok, []}, changeset, _context),
     do:
       Ash.Changeset.add_error(
         changeset,
         InvalidArgument.exception(field: :items, message: @none)
       )
 
-  defp job({:ok, items}, %{data: run} = changeset),
-    do:
-      Ash.Changeset.set_context(changeset, %{
-        job_arguments: %{
-          items: Enum.group_by(items, & &1.source_kind, & &1.source_id),
-          back_to: run.status
-        }
-      })
+  defp job({:ok, items}, %{data: run} = changeset, context) do
+    picked = Enum.group_by(items, & &1.source_kind, & &1.source_id)
 
-  defp job({:error, error}, changeset), do: Ash.Changeset.add_error(changeset, error)
+    picked
+    |> Map.keys()
+    |> Enum.reject(&changeable?(&1, run.site_id, context))
+    |> allowed(changeset, %{items: picked, back_to: run.status})
+  end
+
+  defp job({:error, error}, changeset, _context), do: Ash.Changeset.add_error(changeset, error)
+
+  defp allowed([], changeset, arguments),
+    do: Ash.Changeset.set_context(changeset, %{job_arguments: arguments})
+
+  defp allowed(kinds, changeset, _arguments),
+    do:
+      Ash.Changeset.add_error(
+        changeset,
+        InvalidArgument.exception(
+          field: :items,
+          message: MigrationRun.reason_label("forbidden: " <> Enum.join(kinds, ", ")) <> "."
+        )
+      )
+
+  defp changeable?(_kind, _site_id, %{authorize?: false}), do: true
+
+  defp changeable?(kind, site_id, context),
+    do: kind |> Target.fetch() |> readable?(site_id, context.actor)
+
+  defp readable?({:ok, target}, site_id, actor),
+    do:
+      Enum.all?(target.resources(), fn resource ->
+        Ash.can?(
+          {resource, Ash.Resource.Info.primary_action!(resource, :read).name},
+          actor,
+          tenant: site_id,
+          run_queries?: false,
+          maybe_is: true
+        )
+      end)
+
+  defp readable?({:error, :not_installed}, _site_id, _actor), do: true
 end
