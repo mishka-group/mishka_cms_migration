@@ -418,6 +418,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "#migration-run-form-modal",
                "needs the Blog to serve posts there"
              )
+
+      assert has_element?(view, "#migration-run-form-modal", "off by default")
+      assert has_element?(view, "#migration-run-form-modal", "the name and email the guest gave")
+      refute has_element?(view, "#migration-run-form-modal", "a guest's is left out")
     end
 
     test "asks for the pages alone on a node without the Blog", %{conn: conn, site: site} do

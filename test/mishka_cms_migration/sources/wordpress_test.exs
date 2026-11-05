@@ -393,6 +393,40 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert is_nil(tags["17"].parent)
     end
 
+    test "a term's, a user's, a commenter's and a menu's name are plain text, the HTML WordPress saves a name as read once" do
+      saved = fn recording, id, fields ->
+        json(
+          for row <- recorded(recording),
+              do:
+                (row["id"] == id && Map.merge(row, Map.new(fields, &{&1, "Tom &amp; Jerry"}))) ||
+                  row
+        )
+      end
+
+      user_names = ~w(name first_name last_name nickname)
+
+      category =
+        items!("category", %{"/wp-json/wp/v2/categories" => saved.("categories", 2, ["name"])})
+
+      tag = items!("tag", %{"/wp-json/wp/v2/tags" => saved.("tags", 17, ["name"])})
+      user = items!("user", %{"/wp-json/wp/v2/users" => saved.("users", 4, user_names)})
+
+      comment =
+        items!("comment", %{"/wp-json/wp/v2/comments" => saved.("comments", 7, ["author_name"])})
+
+      menu = items!("menu", %{"/wp-json/wp/v2/menus" => saved.("menus", 22, ["name"])})
+
+      assert Enum.uniq([
+               category["2"].title,
+               tag["17"].title,
+               user["4"].title,
+               comment["7"].title,
+               comment["7"].attrs["author_name"],
+               menu["22"].title
+               | Map.values(Map.take(user["4"].attrs, user_names))
+             ]) == ["Tom & Jerry"]
+    end
+
     test "a slug WordPress keeps percent-encoded is decoded, and an ASCII one is kept" do
       [tag] = Enum.filter(recorded("tags"), &(&1["id"] == 20))
       [category] = Enum.filter(recorded("categories"), &(&1["id"] == 9))
@@ -567,13 +601,18 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
         "target" => ""
       }
 
+      menus =
+        for menu <- recorded("menus"),
+            do: (menu["id"] == 23 && %{menu | "name" => "Footer &amp; links"}) || menu
+
       found =
         items!("menu", %{
+          "/wp-json/wp/v2/menus" => json(menus),
           "/wp-json/wp/v2/navigation" => json(navigation),
           "/wp-json/wp/v2/menu-items" => json([footer_item])
         })
 
-      assert found["navigation-105"].attrs["same_as"] == "Footer"
+      assert found["navigation-105"].attrs["same_as"] == "Footer & links"
     end
 
     test "the main menu is the one at the theme's primary location, else one at any location, else the first made" do
@@ -745,6 +784,49 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert seo["twitter_image"] == uploads <> "gallery-1-300x225.jpg"
       assert seo["twitter_image_id"] == 6
       assert seo["twitter_card"] == "summary"
+    end
+
+    test "a post's SEO texts are plain text, each HTML entity WordPress answered read once" do
+      stub!()
+      context = Map.put(@context, :conn, connected!())
+      [row] = recorded("elementor-posts")
+      served = row["yoast_head_json"]["og_description"]
+      shown = String.replace(served, "&#8217;", "’")
+
+      seo = fn row ->
+        assert {:ok, %{attrs: %{"seo" => seo}}} = WordPress.normalize(row, "post", context)
+        seo
+      end
+
+      assert served =~ "Elementor&#8217;s"
+
+      refute is_map_key(seo.(row), "og_description"),
+             "Yoast's Open Graph description is its default, the excerpt WordPress made of the post"
+
+      head =
+        Map.merge(row["yoast_head_json"], %{
+          "title" => "Notes &amp; news &#8211; Mishka Test Blog",
+          "description" => served,
+          "twitter_title" => "Tom &amp;amp; Jerry"
+        })
+
+      meta = %{"_yoast_wpseo_opengraph-title" => "Elementor&#8217;s notes"}
+
+      assert row
+             |> Map.put("yoast_head_json", head)
+             |> Map.update!("meta", &Map.merge(&1, meta))
+             |> seo.()
+             |> Map.take(["title", "description", "og_title", "twitter_title"]) == %{
+               "title" => "Notes & news – Mishka Test Blog",
+               "description" => shown,
+               "og_title" => "Elementor’s notes",
+               "twitter_title" => "Tom &amp; Jerry"
+             }
+
+      for {_id, item} <- Map.merge(items!("post"), items!("page")),
+          {field, value} <- item.attrs["seo"],
+          is_binary(value),
+          do: refute(value =~ ~r/&#?\w+;/, "#{field} #{inspect(value)} holds an HTML entity")
     end
 
     defp media_requests(found) do

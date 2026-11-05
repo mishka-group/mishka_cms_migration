@@ -32,7 +32,8 @@ defmodule MishkaCmsMigration.MigrationRun do
       `true` by default. Either way no "Confirm your email" mail is sent; a user left unconfirmed
       is confirmed later from the Users table's bulk Confirm email.
     * `:comments` — whether comments come too; `false` by default. A comment by a user of the
-      site, or by someone whose email is one, is written on its Blog post; a guest's is left out.
+      site, or by someone whose email is one, is written on its Blog post as theirs, and a
+      guest's with the name and email the guest gave.
 
   The authors and confirm users choices are read by the Blog's author target and the post addresses by the redirect
   target (`MishkaCmsMigration.Targets.PostRedirect`), the pages choice by the page target
@@ -788,7 +789,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live. A comment comes only if its author has a user on the site: a guest's is left out."
+                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live. Comments come only with Bring the comments too, which is off by default: a comment by a user of the site is written as theirs, and a guest's with the name and email the guest gave."
               )
             end
           end

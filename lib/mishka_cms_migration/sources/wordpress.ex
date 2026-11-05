@@ -69,6 +69,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   (`nil` at the top, where WordPress says `0`); keys are WordPress's own and are never atomized.
   WordPress keeps a slug written in another script percent-encoded (`%d9%88%d8%b1…` for
   `وردپرس`), so the item's `slug` is decoded; one that does not decode to text is kept as it is.
+  WordPress saves a term's, a user's and a commenter's name as HTML, with `&`, `<` and `>` escaped
+  (`Tom &amp; Jerry`), so each such name is read once as text (`Tom & Jerry`): the `name` of a
+  category, a tag, a menu and a user, a user's `first_name`, `last_name` and `nickname`, and a
+  comment's `author_name`, in the item's `title` and `attrs` alike.
 
     * page and post — `title` is `title.raw`, `modified_at` is `modified_gmt` as UTC, and
       `content` is `content.raw` converted (`MishkaCmsMigration.Sources.WordPress.Content`): its
@@ -122,7 +126,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       layout draws itself), and its robots only when they say `noindex` or `nofollow`. A variable
       in a title or description is the CMS's own where it has one (`%%title%%` and `%title%` as
       `{{page.title}}`, `sitename` as `{{site.name}}`, `excerpt` as `{{page.description}}`, `sep`
-      as `-` and `page` as nothing), and a value with any other variable is left out.
+      as `-` and `page` as nothing), and a value with any other variable is left out. Each title
+      and description is plain text, what the site showed: Yoast's head and a rendered excerpt
+      hold HTML entities (`Elementor&#8217;s`), and so may a meta field, and each is read once
+      (`Elementor’s`) before it is compared with the title, the description or the excerpt, so
+      the CMS's head escapes it once.
     * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
       `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
       `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
@@ -300,6 +308,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @user_attrs ~w(username email slug name first_name last_name nickname description roles url
                  link avatar_urls)
   @named %{"category" => @term_attrs, "tag" => @term_attrs, "user" => @user_attrs}
+  @escaped_names ~w(name first_name last_name nickname author_name)
 
   @settings [
     {"title", "name", "Site Title"},
@@ -471,7 +480,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     twins =
       classic
       |> Enum.sort_by(& &1["id"])
-      |> Enum.reduce(%{}, &Map.put_new(&2, classic_targets(&1["items"]), &1["name"]))
+      |> Enum.reduce(%{}, &Map.put_new(&2, classic_targets(&1["items"]), unescaped(&1["name"])))
 
     for menu <- Navigation.call(navigation, home),
         do: Map.put(menu, "same_as", twins[Navigation.targets(menu["items"])])
@@ -544,9 +553,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: row["author_name"],
+       title: unescaped(row["author_name"]),
        parent: parent(row),
-       attrs: row |> Map.take(@comment_attrs) |> Map.put("post_type", post_type(row)),
+       attrs:
+         row
+         |> Map.take(@comment_attrs)
+         |> unescaped_names()
+         |> Map.put("post_type", post_type(row)),
        extra: Map.drop(row, @comment_read),
        content: [%{html: raw}]
      }}
@@ -569,9 +582,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: name,
+       title: unescaped(name),
        parent: parent(row),
-       attrs: row |> Map.take(attrs) |> decoded_slug() |> Map.merge(edition(row)),
+       attrs:
+         row
+         |> Map.take(attrs)
+         |> unescaped_names()
+         |> decoded_slug()
+         |> Map.merge(edition(row)),
        extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered ++ @edition_fields)
      }}
   end
@@ -605,7 +623,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {:ok,
      %{
        source_id: id,
-       title: name,
+       title: unescaped(name),
        attrs:
          row
          |> Map.take(["slug"])
@@ -674,6 +692,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: html |> LazyHTML.from_fragment() |> LazyHTML.text() |> String.trim()
 
   defp plain(_none), do: ""
+
+  defp unescaped(text) when is_binary(text), do: plain(text)
+  defp unescaped(none), do: none
+
+  defp unescaped_names(attrs),
+    do:
+      Map.merge(
+        attrs,
+        for(
+          {field, name} <- Map.take(attrs, @escaped_names),
+          into: %{},
+          do: {field, unescaped(name)}
+        )
+      )
 
   defp every(req, route, extra, page, rows) do
     req
@@ -904,7 +936,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     meta = with_map(row["meta"])
     head = with_map(row["yoast_head_json"])
     title = typed(meta, @seo_titles) || served_title(head, row)
-    description = typed(meta, @seo_descriptions) || said(head["description"])
+    description = typed(meta, @seo_descriptions) || shown(head["description"])
 
     %{
       "title" => title,
@@ -928,9 +960,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         (typed(meta, @seo_social_descriptions) || served_description(head["og_description"], row))
         |> differing(description),
       "twitter_title" =>
-        (typed(meta, @seo_twitter_titles) || said(head["twitter_title"])) |> differing(title),
+        (typed(meta, @seo_twitter_titles) || shown(head["twitter_title"])) |> differing(title),
       "twitter_description" =>
-        (typed(meta, @seo_twitter_descriptions) || said(head["twitter_description"]))
+        (typed(meta, @seo_twitter_descriptions) || shown(head["twitter_description"]))
         |> differing(description),
       "twitter_image" => said(meta, @seo_twitter_images) || said(head["twitter_image"]),
       "twitter_card" => meta |> said(@seo_twitter_cards) |> card() || card(head["twitter_card"])
@@ -944,9 +976,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp card(_default_or_other), do: nil
 
   defp served_description(text, %{"excerpt" => %{"rendered" => excerpt}}) when is_binary(excerpt),
-    do: text |> said() |> own_description(excerpt |> LazyHTML.from_fragment() |> LazyHTML.text())
+    do: text |> shown() |> own_description(plain(excerpt))
 
-  defp served_description(text, _row), do: said(text)
+  defp served_description(text, _row), do: shown(text)
 
   defp own_description(nil, _excerpt), do: nil
 
@@ -956,12 +988,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp with_map(%{} = map), do: map
   defp with_map(_none), do: %{}
 
-  defp typed(meta, keys), do: meta |> said(keys) |> variables()
+  defp typed(meta, keys), do: keys |> Enum.find_value(&shown(meta[&1])) |> variables()
 
   defp said(meta, keys), do: Enum.find_value(keys, &said(meta[&1]))
 
   defp said(text) when is_binary(text), do: text |> String.trim() |> filled()
   defp said(_none), do: nil
+
+  defp shown(text) when is_binary(text), do: text |> plain() |> filled()
+  defp shown(_none), do: nil
 
   defp variables(nil), do: nil
 
@@ -981,9 +1016,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp served_title(%{"title" => title, "og_site_name" => site}, %{"title" => %{"raw" => own}})
        when is_binary(title) and is_binary(site) and is_binary(own),
-       do: title |> said() |> own_title(own, site)
+       do: title |> shown() |> own_title(own, plain(site))
 
-  defp served_title(head, _row), do: said(head["title"])
+  defp served_title(head, _row), do: shown(head["title"])
 
   defp own_title(nil, _own, _site), do: nil
   defp own_title(own, own, _site), do: nil
