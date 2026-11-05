@@ -655,6 +655,11 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert item_action!(view, "import_item", tag) =~ "still waiting or running"
       assert item_action!(view, "dry_run_item", tag) =~ "still waiting or running"
+
+      pick!(view, tag)
+      refused = bulk!(view, "import_items")
+      assert refused =~ "Import the picked items failed"
+      refute refused =~ "Import this item failed"
       assert item!(tag) == tag
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
     end

@@ -178,7 +178,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: {:noreply, picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)}
 
   def handle_info({:bulk_action, :import_items, ids}, socket) when is_list(ids),
-    do: {:noreply, picked(socket, ids, &MishkaCmsMigration.import_items/3, :import)}
+    do: {:noreply, picked(socket, ids, &MishkaCmsMigration.import_items/3, :import_picked)}
 
   def handle_info({:bulk_action, :import_items, _every_row}, socket),
     do:
@@ -210,7 +210,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp started(:dry_run, _one), do: gettext("Dry run of the item started.")
 
-  defp started(:import, count),
+  defp started(_import, count),
     do:
       ngettext(
         "Import of the item started.",
@@ -227,6 +227,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp label(:dry_run), do: gettext("Dry run this item")
   defp label(:import), do: gettext("Import this item")
+  defp label(:import_picked), do: gettext("Import the picked items")
 
   defp saved_words(item), do: item |> MigrationItem.conflict() |> saved_words(item)
 

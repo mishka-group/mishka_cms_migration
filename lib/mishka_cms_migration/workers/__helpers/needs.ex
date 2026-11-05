@@ -18,12 +18,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
     * `waits` — by source id, why an item waits, in the words a full import uses where it has them:
       `"parent_missing"` for a parent, `"post_missing"` for a post (as a comment's import says),
       and `"waits_for: <kinds>"` for the other kinds, joined by `"; "`. What it needs waits it when it
-      has no CMS record and an admin has not left it out, and no import skipped it: it was never
-      imported, failed, or waits for a decision. The walk holds back only an item it would create
-      or update; one it leaves as it is, or an admin's choice, stands;
-    * `parents` — the parents the earlier imports recorded, by source id, `true` for one an admin
-      left out, so the walk settles each child at once and skips one under a left-out parent as
-      `"parent_left_out"`, as it does in a full run.
+      has no CMS record, is not left out (by an admin, or under a parent left out, as the last dry
+      run or import said, `"parent_left_out"`), and no import skipped it: it was never imported,
+      failed, or waits for a decision. The walk holds back only an item it would create or update;
+      one it leaves as it is, or an admin's choice, stands;
+    * `parents` — the parents the earlier imports recorded, by source id, `true` for one left out
+      either way: the walk settles each child at once, and skips one under a left-out parent as
+      `"parent_left_out"`, however deep, as it does in a full run.
   """
 
   require Ash.Query
@@ -56,9 +57,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
       parents:
         for(
           %Item{parent: parent} <- items,
-          %{left_out: left_out} <- [found[{kind, parent}]],
+          %MigrationItem{} = found_parent <- [found[{kind, parent}]],
           into: %{},
-          do: {parent, left_out}
+          do: {parent, left_out?(found_parent)}
         )
     }
   end
@@ -106,10 +107,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
     |> reason()
   end
 
-  defp waiting_on?(%MigrationItem{left_out: true}), do: false
   defp waiting_on?(%MigrationItem{target_id: id}) when is_binary(id), do: false
   defp waiting_on?(%MigrationItem{outcome: :skipped}), do: false
-  defp waiting_on?(_never_imported_failed_or_undecided), do: true
+  defp waiting_on?(%MigrationItem{} = item), do: not left_out?(item)
+  defp waiting_on?(nil), do: true
+
+  defp left_out?(%MigrationItem{left_out: true}), do: true
+  defp left_out?(%MigrationItem{reason: "parent_left_out"}), do: true
+  defp left_out?(%MigrationItem{plan_reason: "parent_left_out"}), do: true
+  defp left_out?(_item), do: false
 
   defp parent_missing([]), do: nil
   defp parent_missing(_parent), do: "parent_missing"

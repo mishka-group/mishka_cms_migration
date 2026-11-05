@@ -167,6 +167,27 @@ defmodule MishkaCmsMigration.PickedItemsTest do
     end
   end
 
+  describe "an item under a parent an admin's choice left out" do
+    test "is skipped as its parent being left out, as a whole run says, not as a missing parent",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      site
+      |> item("category", "5")
+      |> MishkaCmsMigration.leave_out_item!(actor: admin, tenant: site.id)
+
+      run = dry_run!(run, admin)
+      assert %{plan: :skipped, plan_reason: "parent_left_out"} = item(site, "category", "7")
+      assert %{plan: :skipped, plan_reason: "parent_left_out"} = item(site, "category", "8")
+
+      run = dry_run_items!(run, admin, [{"category", "8"}])
+      assert %{plan: :skipped, plan_reason: "parent_left_out"} = item(site, "category", "8")
+
+      import_items!(run, admin, [{"category", "8"}])
+      assert %{outcome: :skipped, reason: "parent_left_out"} = item(site, "category", "8")
+    end
+  end
+
   describe "a comment alone" do
     test "waits for its post, and is written on the post an import of picked items wrote",
          %{site: site, admin: admin} do
