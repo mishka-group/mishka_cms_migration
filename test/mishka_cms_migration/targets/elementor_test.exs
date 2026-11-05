@@ -8,7 +8,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
   seeded WordPress answered for them (`elementor-pages`, `elementor-posts`): a page the page
   builder opens, a post in the Blog, and a page with widgets the CMS has no equivalent for waiting
   for an admin's decision, in the dry run too, until the admin imports it with the fallback HTML
-  for those widgets or leaves it out.
+  for those widgets or leaves it out. The site's Elementor colours and fonts (`elementor-globals`)
+  become a theme stylesheet of the site, or wait for an admin's decision where the site has its
+  own of that name.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -16,7 +18,7 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
 
   alias MishkaBlog.BlogPost
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.Page
+  alias MishkaCmsCore.Runtime.{Page, Stylesheet}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.Widgets
@@ -37,6 +39,16 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
   @contact "113"
   @post "115"
   @widgets "unsupported_widgets: form, google_maps, image-carousel, slides"
+  @globals %{
+    "/wp-json/" => "elementor-index",
+    "/wp-json/elementor/v1/globals" => "elementor-globals"
+  }
+
+  # A stylesheet's write runs Tailwind, which a fresh checkout downloads the first time: here, rather
+  # than inside an import's transaction.
+  setup_all do
+    MishkaCmsCore.Runtime.Compilers.TailwindCompiler.ensure_installed()
+  end
 
   setup do
     stub!(@answers)
@@ -73,6 +85,77 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
     do:
       site
       |> item(source_id)
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
+
+  defp stylesheets(site),
+    do:
+      Stylesheet
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.filter(&(&1.site_id == site.id and &1.name == "elementor-globals"))
+
+  defp tokens(css) do
+    assert {:ok, [theme]} = IgniterCss.get_at_rules(css, "theme")
+    Map.new(theme.declarations)
+  end
+
+  describe "Elementor's global colours and fonts" do
+    setup %{site: site} do
+      stub!(Map.merge(@answers, @globals))
+
+      %{
+        admin: migration_admin!(site, @admin ++ ["admin:dashboard:runtime:stylesheet"])
+      }
+    end
+
+    test "an import writes them as a theme stylesheet of the site, which a second run leaves as it is",
+         %{site: site, admin: admin} do
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:created, nil}}
+
+      assert [stylesheet] = stylesheets(site)
+      assert {stylesheet.kind, stylesheet.active} == {:theme, true}
+      assert tokens(stylesheet.content)["--color-el-primary"] == "#1e3a8a"
+      assert tokens(stylesheet.content)["--color-el-primary-dark"] == "#1e3a8a"
+      assert tokens(stylesheet.content)["--font-el-primary"] == ~s("Poppins", sans-serif)
+
+      assert outcomes(imported!(site, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "unchanged"}
+             }
+
+      assert stylesheets(site) == [stylesheet]
+    end
+
+    test "a site with its own stylesheet of that name waits for the admin's decision, and follows it",
+         %{site: site, admin: admin} do
+      own = "@theme {\n  --color-el-primary: #000000;\n}\n"
+
+      Stylesheet
+      |> Ash.Changeset.for_create(
+        :master_create,
+        %{name: "elementor-globals", content: own, kind: :theme, site_id: site.id},
+        authorize?: false
+      )
+      |> Ash.create!()
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:undecided, "site_has_own"}}
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "keep")
+      run = imported!(site, admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:skipped, "site_own_kept"}}
+      assert [%{content: ^own}] = stylesheets(site)
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "import")
+      assert %{"elementor" => {:updated, _}} = outcomes(imported!(site, admin), "stylesheet")
+      assert [stylesheet] = stylesheets(site)
+      assert tokens(stylesheet.content)["--color-el-primary"] == "#1e3a8a"
+    end
+  end
+
+  defp decide_kind!(site, admin, kind, source_id, choice),
+    do:
+      MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == kind and &1.source_id == source_id))
       |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   describe "a dry run" do

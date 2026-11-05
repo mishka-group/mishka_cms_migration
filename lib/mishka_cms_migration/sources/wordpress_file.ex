@@ -42,6 +42,11 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
     * setting — the site's name and tagline, the channel's `title` and `description`, read once
       when the file is opened;
+    * stylesheet — Elementor's global colours and fonts, read once when the file is opened from
+      the settings (`_elementor_page_settings`) of its kit, the `elementor_library` item whose
+      `_elementor_template_type` is `kit`, as the REST API's `/elementor/v1/globals` answers them
+      (`MishkaCmsMigration.Sources.WordPress.ElementorKit.from_settings/1`). An export does not say
+      which kit is active, so of two the one made last is read; an export with none has no row;
     * user — each `wp:author`: its id, login (`username`), display name (`name`), first and last
       name, email, and a `slug` made of the login the way the CMS slugs a name;
     * category and tag — each `wp:category` and `wp:tag`: its id, name, slug, description, how
@@ -117,7 +122,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   alias MishkaCmsMigration.Source
   alias MishkaCmsMigration.Sources.WordPress
-  alias MishkaCmsMigration.Sources.WordPress.Export
+  alias MishkaCmsMigration.Sources.WordPress.{ElementorKit, Export}
 
   import Export, only: [text: 1, text: 2]
 
@@ -161,6 +166,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     terms: %{"category" => %{}, "post_tag" => %{}},
     counts: %{},
     rows: %{},
+    kits: %{},
     editions: @editions
   }
 
@@ -191,7 +197,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   def extra(%{index: index}), do: index
 
   @impl MishkaCmsMigration.Source
-  def list(conn, "setting", cursor), do: WordPress.list(conn, "setting", cursor)
+  def list(conn, kind, cursor) when kind in ["setting", "stylesheet"],
+    do: WordPress.list(conn, kind, cursor)
 
   def list(%{file: path, index: %{"home" => home}}, "menu", _cursor),
     do: path |> Export.fold(%{@menu_found | home: home}, &menu_found/3) |> menus_found()
@@ -267,7 +274,20 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     |> update_in([:editions], &entry_indexed(&1, type, element))
   end
 
+  defp item_indexed("elementor_library", _status, element, found),
+    do: element |> meta("wp:postmeta") |> kit_indexed(element, found)
+
   defp item_indexed(_type, _status, _element, found), do: found
+
+  defp kit_indexed(%{"_elementor_template_type" => "kit"} = meta, element, found),
+    do:
+      put_in(
+        found,
+        [:kits, integer(text(element, "wp:post_id"))],
+        Export.php(meta["_elementor_page_settings"])
+      )
+
+  defp kit_indexed(_meta, _element, found), do: found
 
   defp indexed_row("attachment", element, authors),
     do: element |> media(authors) |> Map.take(@indexed_media)
@@ -367,12 +387,17 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
        terms: found.terms,
        counts: found.counts,
        editions: found.editions,
+       elementor: kit(found.kits),
        under: under(Map.get(rows, "/wp/v2/pages", []), home)
      }}
   end
 
   defp connected({:ok, _not_an_export}, _path), do: {:error, :unreadable_file}
   defp connected(refused, _path), do: refused
+
+  # The kit made last, which an export cannot tell from the active one.
+  defp kit(kits) when map_size(kits) == 0, do: %{}
+  defp kit(kits), do: kits |> Enum.max_by(&elem(&1, 0)) |> elem(1) |> ElementorKit.from_settings()
 
   defp languages(index, nil), do: index
   defp languages(index, plugin), do: Map.put(index, "languages", plugin)

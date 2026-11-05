@@ -34,6 +34,7 @@ defmodule MishkaCmsMigration.Application do
   @core_targets [
     MishkaCmsMigration.Targets.CmsMedia,
     MishkaCmsMigration.Targets.CmsSetting,
+    MishkaCmsMigration.Targets.CmsStylesheet,
     MishkaCmsMigration.Targets.CmsPage,
     MishkaCmsMigration.Targets.CmsLayout
   ]
@@ -69,7 +70,8 @@ defmodule MishkaCmsMigration.Application do
   The targets this extension ships, each a plugin on `"migration:targets"` writing one kind of item
   through an existing CMS action: files into the CMS's media library
   (`MishkaCmsMigration.Targets.CmsMedia`), the site's name and pictures into its settings
-  (`MishkaCmsMigration.Targets.CmsSetting`), pages into the CMS's pages
+  (`MishkaCmsMigration.Targets.CmsSetting`), Elementor's global colours and fonts into a stylesheet
+  of theme tokens (`MishkaCmsMigration.Targets.CmsStylesheet`), pages into the CMS's pages
   (`MishkaCmsMigration.Targets.CmsPage`), the main menu into the links of the site layout's header
   (`MishkaCmsMigration.Targets.CmsLayout`),
   authors, categories, tags, posts and comments into Mishka Blog

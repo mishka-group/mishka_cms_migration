@@ -16,7 +16,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   an upserting create, such as the core Setting's `:set`, is run as that create), and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
-  so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
+  so a retry never meets a CMS record no item remembers. An action's `before_transaction` hook, such
+  as the Tailwind check a stylesheet's write runs, so runs inside that transaction by design, and Ash
+  is told so (`warn_on_transaction_hooks?: false`). An item skipped or failed is recorded with
   its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot be
   recorded, the item's entry says it failed, with why. A dry run writes nothing in the CMS: it
   reports the plan and records it on each item (`:record_plan`, its outcome and reason as the
@@ -225,7 +227,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp create(%{name: name}, resource, attrs, context),
     do: resource |> Ash.Changeset.for_create(name, attrs, as(context)) |> Ash.create()
 
-  defp as(context), do: [actor: context.actor, tenant: context.site_id]
+  defp as(context),
+    do: [
+      actor: context.actor,
+      tenant: context.site_id,
+      context: %{warn_on_transaction_hooks?: false}
+    ]
 
   defp recorded(
          state,

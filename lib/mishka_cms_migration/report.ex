@@ -61,7 +61,8 @@ defmodule MishkaCmsMigration.Report do
   is the conflict:
 
     * `"site_has_own"` — the site already has a value of its own for the setting
-      (`MishkaCmsMigration.Targets.CmsSetting`);
+      (`MishkaCmsMigration.Targets.CmsSetting`), or a stylesheet of its own with the item's name
+      (`MishkaCmsMigration.Targets.CmsStylesheet`);
     * `"menu_goes_to"` — a menu that is not the site's main one waits for the admin to say where
       it goes, `"menu_goes_to: <menu>"` when a block menu has the same links as the classic menu
       `<menu>` (`MishkaCmsMigration.Targets.CmsLayout`);

@@ -11,22 +11,27 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
   them in their place. The entries' links and files are asked of the site's other recordings.
 
   Content is read for what it means, with LazyHTML: which elements hold which text and which
-  addresses, and which of the builder's classes they carry, not its markup as a string.
+  addresses, and which of the builder's classes they carry, not its markup as a string. The
+  stylesheet Elementor's global colours and fonts become (`elementor-globals`, recorded by the same
+  script) is read with the CSS parser, for the tokens it declares and the fonts it loads.
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.{Elements, Tree}
   alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Sources.{WordPress, WordPressFile}
+  alias MishkaCmsMigration.Sources.WordPress.ElementorKit
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
   @export Path.expand("../../fixtures/wordpress/wxr/elementor.xml", __DIR__)
   @unsupported ["form", "google_maps", "image-carousel", "slides"]
   @uploads "http://localhost:8089/wp-content/uploads/2026/11/"
+  @globals_route "/wp-json/elementor/v1/globals"
+  @elementor_site %{"/wp-json/" => "elementor-index", @globals_route => "elementor-globals"}
 
   defp items!(kind, recording) do
     stub!()
@@ -103,6 +108,124 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       "settings" => settings,
       "elements" => []
     }
+
+  defp stylesheet_from_site! do
+    stub!(@elementor_site)
+    {:ok, conn} = WordPress.connect(@connection, "app password")
+    assert {:ok, [row], nil} = WordPress.list(conn, "stylesheet", nil)
+    stylesheet!(row, conn)
+  end
+
+  defp stylesheet!(row, conn) do
+    assert {:ok, attrs} = WordPress.normalize(row, "stylesheet", Map.put(@context, :conn, conn))
+    assert {:ok, item} = attrs |> Map.put(:kind, "stylesheet") |> Item.build()
+    item
+  end
+
+  defp tokens(css) do
+    assert {:ok, [theme]} = IgniterCss.get_at_rules(css, "theme")
+    Map.new(theme.declarations)
+  end
+
+  defp fonts_loaded(css) do
+    assert {:ok, imports} = IgniterCss.get_at_rules(css, "import")
+
+    for %{target: url} <- imports,
+        %URI{host: "fonts.googleapis.com", query: query} = URI.parse(url),
+        family <- query |> URI.decode_query() |> Map.fetch!("family") |> String.split("|"),
+        [name, weights] = String.split(family, ":"),
+        into: %{},
+        do: {name, String.split(weights, ",")}
+  end
+
+  describe "Elementor's global colours and fonts" do
+    test "are read once, as the source connects, and become a stylesheet of theme tokens, each colour with a dark twin" do
+      item = stylesheet_from_site!()
+
+      assert_received {:wordpress_request, %{request_path: @globals_route}}
+      refute_received {:wordpress_request, %{request_path: @globals_route}}
+
+      assert {item.source_id, item.attrs["name"]} == {"elementor", "elementor-globals"}
+      tokens = tokens(item.attrs["content"])
+
+      for {id, %{"value" => value}} <- recorded("elementor-globals")["colors"] do
+        assert tokens["--color-el-#{id}"] == String.downcase(value)
+        assert tokens["--color-el-#{id}-dark"] == String.downcase(value)
+      end
+
+      for {id, %{"value" => %{"typography_font_family" => family}}} <-
+            recorded("elementor-globals")["typography"] do
+        assert tokens["--font-el-#{id}"] == ~s("#{family}", sans-serif)
+      end
+
+      assert fonts_loaded(item.attrs["content"]) == %{
+               "Poppins" => ["400", "700"],
+               "Lora" => ["400", "700"],
+               "Inter" => ["400", "600", "700"]
+             }
+    end
+
+    test "are not asked of a site without Elementor, which has no stylesheet to import" do
+      stub!()
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      assert WordPress.list(conn, "stylesheet", nil) == {:ok, [], nil}
+      refute_received {:wordpress_request, %{request_path: @globals_route}}
+    end
+
+    test "from an export are the same stylesheet, read from the kit it carries" do
+      from_site = stylesheet_from_site!()
+      {:ok, conn} = WordPressFile.connect(%{"file" => @export}, nil)
+
+      assert {:ok, [row], nil} = WordPressFile.list(conn, "stylesheet", nil)
+      assert stylesheet!(row, conn).attrs == from_site.attrs
+    end
+
+    test "of a kit that never saved them are Elementor's own, Roboto and its four colours" do
+      css =
+        %{}
+        |> ElementorKit.from_settings()
+        |> ElementorKit.stylesheet(nil)
+        |> Map.fetch!("content")
+
+      assert %{
+               "--color-el-primary" => "#6ec1e4",
+               "--color-el-accent-dark" => "#61ce70",
+               "--font-el-secondary" => ~s("Roboto Slab", sans-serif)
+             } = tokens(css)
+
+      assert fonts_loaded(css) == %{
+               "Roboto" => ["400", "500", "600", "700"],
+               "Roboto Slab" => ["400", "700"]
+             }
+    end
+
+    test "leave out an id, a colour or a family a stylesheet could not hold as it is" do
+      globals = %{
+        "colors" => %{
+          "good" => %{"value" => "#ABC"},
+          "rgb" => %{"value" => "rgba(0, 0, 0, 0.5)"},
+          "Bad-Id" => %{"value" => "#000000"},
+          "broken" => %{"value" => "red;} body { display: none"},
+          "script" => %{"value" => "url(javascript:alert(1))"}
+        },
+        "typography" => %{
+          "fine" => %{"value" => %{"typography_font_family" => "Open Sans"}},
+          "quoted" => %{"value" => %{"typography_font_family" => ~s(X", serif; } a { color: red)}}
+        }
+      }
+
+      css = globals |> ElementorKit.stylesheet(nil) |> Map.fetch!("content")
+
+      assert tokens(css) |> Map.keys() |> Enum.sort() ==
+               ~w(--color-el-good --color-el-good-dark --color-el-rgb --color-el-rgb-dark
+                  --font-el-fine)
+
+      assert tokens(css)["--color-el-good"] == "#abc"
+      assert {:ok, [_one]} = IgniterCss.get_at_rules(css, "theme")
+      assert fonts_loaded(css) == %{"Open Sans" => ["400", "700"]}
+    end
+  end
 
   describe "a page's colours" do
     test "adapt to the dark theme: the site's tokens, each with its dark twin, not slate" do

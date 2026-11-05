@@ -1574,6 +1574,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon("tag"), do: "hero-tag"
   def kind_icon("media"), do: "hero-photo"
   def kind_icon("setting"), do: "hero-cog-6-tooth"
+  def kind_icon("stylesheet"), do: "hero-swatch"
   def kind_icon("page"), do: "hero-document"
   def kind_icon("post"), do: "hero-document-text"
   def kind_icon("comment"), do: "hero-chat-bubble-left-right"
@@ -1834,6 +1835,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("tag"), do: dgettext("mishka_gervaz", "tags")
   defp kind_noun("media"), do: dgettext("mishka_gervaz", "files")
   defp kind_noun("setting"), do: dgettext("mishka_gervaz", "settings")
+  defp kind_noun("stylesheet"), do: dgettext("mishka_gervaz", "stylesheets")
   defp kind_noun("page"), do: dgettext("mishka_gervaz", "pages")
   defp kind_noun("post"), do: dgettext("mishka_gervaz", "posts")
   defp kind_noun("comment"), do: dgettext("mishka_gervaz", "comments")
@@ -1856,6 +1858,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_label("tag"), do: dgettext("mishka_gervaz", "Tags")
   def kind_label("media"), do: dgettext("mishka_gervaz", "Media")
   def kind_label("setting"), do: dgettext("mishka_gervaz", "Settings")
+  def kind_label("stylesheet"), do: dgettext("mishka_gervaz", "Stylesheets")
   def kind_label("page"), do: dgettext("mishka_gervaz", "Pages")
   def kind_label("post"), do: dgettext("mishka_gervaz", "Posts")
   def kind_label("comment"), do: dgettext("mishka_gervaz", "Comments")
@@ -1914,10 +1917,11 @@ defmodule MishkaCmsMigration.MigrationRun do
   record's list opened on the record, the way the list's own search writes its address
   (`MishkaGervaz.Table.Web.UrlSync`): a post, category, tag or blogger by its slug, a page by its
   path, a file by its name, a redirect by its old address, a comment on the list of its post's
-  comments, a setting on the Settings page's tab of its category, and a menu on the layout it is
-  the header's links of. `public` is the record's page on the site where it is live
-  (`record_address/2`): a published post, an active category, a tag, a blogger's page, an active
-  page and a file; a comment, a redirect, a setting and a menu have none.
+  comments, a setting on the Settings page's tab of its category, a stylesheet on the Stylesheets
+  page, and a menu on the layout it is the header's links of. `public` is the record's page on the
+  site where it is live (`record_address/2`): a published post, an active category, a tag, a
+  blogger's page, an active page and a file; a comment, a redirect, a setting, a stylesheet and a
+  menu have none.
   """
   @spec record_paths(String.t(), struct()) :: %{admin: String.t(), public: String.t() | nil} | nil
   def record_paths("post", post),
@@ -1967,6 +1971,9 @@ defmodule MishkaCmsMigration.MigrationRun do
       admin: "/admin/dashboard/settings?tab=" <> URI.encode_www_form(setting.category),
       public: nil
     }
+
+  def record_paths("stylesheet", _stylesheet),
+    do: %{admin: "/admin/dashboard/runtime/stylesheets", public: nil}
 
   def record_paths("post_redirect", redirect),
     do: %{

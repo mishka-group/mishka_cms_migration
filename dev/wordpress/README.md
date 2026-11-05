@@ -74,18 +74,23 @@ to, and the export's `<link>` is the site's home.
 
 ## Elementor
 
-`seed_elementor.sh` runs after `seed.sh` and adds Elementor (the free plugin) and the entries laid out with it,
-`seed/elementor/*.json` (each one's fields and its elements in the shape Elementor saves them): a page of
-sections, columns and an inner section with every common widget, a page of containers with widgets the CMS has
-no equivalent for (Elementor Pro's form and slides, an image carousel, a map), and a post of containers. Each is
-saved through Elementor's own document API, so `_elementor_data`, its edit mode and the HTML fallback in
-`post_content` are what Elementor writes; the Pro widgets, which Elementor drops on a site without Pro, are put
-back where they were. It touches nothing else, the passwords and `.env.local` included, so it runs on a site
-already in use, and a second run changes nothing but those entries.
+`seed_elementor.sh` runs after `seed.sh` and adds Elementor (the free plugin), the global colours and fonts of its
+active kit (Site Settings, `seed/elementor-kit.json`: the four system colours and fonts changed, two custom colours and a
+custom font in a system family), and the entries laid out with it, `seed/elementor/*.json` (each one's fields and its
+elements in the shape Elementor saves them): a page of sections, columns and an inner section with every common
+widget, some of them coloured and set in the kit's colours and fonts, others in their own, with a column's padding, a
+widget's margin, an image's alignment and width and named column gaps, a page of containers with widgets the CMS has
+no equivalent for (Elementor Pro's form and slides, an image carousel, a map), and a post of containers. The kit and
+each entry are saved through Elementor's own document API, so `_elementor_page_settings`, `_elementor_data`, its edit
+mode and the HTML fallback in `post_content` are what Elementor writes; the Pro widgets, which Elementor drops on a
+site without Pro, are put back where they were. It touches nothing else, the passwords and `.env.local` included, so
+it runs on a site already in use, and a second run changes nothing but the kit and those entries.
 
-`record_elementor.sh` records only these entries, beside what `record.sh` made: `rest/elementor-pages.*`,
-`rest/elementor-posts.*` and `wxr/elementor.xml` (an export of them alone), with its rows in `rest/INDEX.txt`
-and the Elementor version in `VERSIONS.txt`. On a clean site record the curated seed first, then these:
+`record_elementor.sh` records only these entries, beside what `record.sh` made: `rest/elementor-index.*` (the
+REST index's site fields and namespaces, which list Elementor's `elementor/v1`), `rest/elementor-globals.*` (the
+kit's colours and fonts, Elementor's own `/elementor/v1/globals`), `rest/elementor-pages.*`, `rest/elementor-posts.*`
+and `wxr/elementor.xml` (an export of those entries and the active kit alone), with its rows in `rest/INDEX.txt` and
+the Elementor version in `VERSIONS.txt`. On a clean site record the curated seed first, then these:
 
 ```sh
 docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh
