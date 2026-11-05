@@ -418,24 +418,61 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     defp look(html, selector),
       do: html |> attribute(selector, "class") |> hd() |> Styles.from_classes()
 
-    test "name the kit's colour and font through the Inspector and its token classes, a dark twin for the dark theme",
+    test "name the kit's colour and font through the Inspector and its tokens, a dark twin for the dark theme, each falling back to the kit's own value",
          %{page: page} do
       html = html(page)
       {authored, styles} = look(html, "h1")
 
-      assert styles.base["color"] == "var(--color-el-primary)"
+      assert styles.base["color"] == "var(--color-el-primary,#1e3a8a)"
       assert styles.base["font-weight"] == "font-bold"
-      assert "dark:text-el-primary-dark" in authored and "font-el-primary" in authored
+
+      assert "dark:text-[var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))]" in authored
+
+      assert "font-[family-name:var(--font-el-primary,'Poppins',sans-serif)]" in authored
       refute "text-fg" in authored or "dark:text-fg-dark" in authored
 
       {authored, styles} = look(html, "a.inline-block")
-      assert styles.base["background"] == "var(--color-el-accent)"
-      assert "dark:bg-el-accent-dark" in authored
+      assert styles.base["background"] == "var(--color-el-accent,#f59e0b)"
+      assert "dark:bg-[var(--color-el-accent-dark,var(--color-el-accent,#f59e0b))]" in authored
       refute "bg-fg" in authored or "dark:bg-fg-dark" in authored
 
       {authored, styles} = look(html, "section:nth-of-type(2)")
-      assert styles.base["background"] == "var(--color-el-a1b2c3d)"
-      assert "dark:bg-el-a1b2c3d-dark" in authored
+      assert styles.base["background"] == "var(--color-el-a1b2c3d,#e0f2fe)"
+      assert "dark:bg-[var(--color-el-a1b2c3d-dark,var(--color-el-a1b2c3d,#e0f2fe))]" in authored
+    end
+
+    test "write a family with a space, and a colour with spaces, as one class Tailwind reads back" do
+      elements = [
+        %{
+          "elType" => "section",
+          "elements" => [
+            %{
+              "elType" => "column",
+              "elements" => [
+                widget("heading", %{
+                  "title" => "T",
+                  "header_size" => "h2",
+                  "__globals__" => %{
+                    "title_color" => "globals/colors?id=e5f6a7b",
+                    "typography_typography" => "globals/typography?id=secondary"
+                  }
+                })
+              ]
+            }
+          ]
+        }
+      ]
+
+      {authored, styles} = elements |> laid_out!() |> html() |> look("h2")
+
+      assert styles.base["color"] == "var(--color-el-e5f6a7b,#0f766e)"
+      assert "font-[family-name:var(--font-el-secondary,'Lora',sans-serif)]" in authored
+
+      assert ElementorKit.font_class("secondary", "Roboto Slab") ==
+               "font-[family-name:var(--font-el-secondary,'Roboto_Slab',sans-serif)]"
+
+      assert ElementorKit.dark_class("text", "a1", "rgba(0, 0, 0, 0.5)") ==
+               "dark:text-[var(--color-el-a1-dark,var(--color-el-a1,rgba(0,_0,_0,_0.5)))]"
     end
 
     test "give a text editor's box the colour and font its paragraphs then take", %{page: page} do
@@ -446,9 +483,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
         |> LazyHTML.query("div:has(> p strong)")
         |> Enum.map(&(&1 |> LazyHTML.attribute("class") |> hd() |> Styles.from_classes()))
 
-      assert {authored, %{base: %{"color" => "var(--color-el-text)"} = base}} = box
+      assert {authored, %{base: %{"color" => "var(--color-el-text,#334155)"} = base}} = box
       assert base["font-weight"] == "font-normal"
-      assert "font-el-text" in authored and "dark:text-el-text-dark" in authored
+      assert "font-[family-name:var(--font-el-text,'Inter',sans-serif)]" in authored
+      assert "dark:text-[var(--color-el-text-dark,var(--color-el-text,#334155))]" in authored
 
       for paragraph <- classes(html, "div:has(> p strong) > p") do
         refute Enum.any?(paragraph, &String.starts_with?(&1, ["text-dim", "dark:text-dim"]))
@@ -462,7 +500,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
       assert styles.base["color"] == "#0f766e"
       assert styles.base["font-weight"] == "font-medium"
-      assert "font-el-secondary" in authored and "dark:text-fg-dark" in authored
+      assert "font-[family-name:var(--font-el-secondary,'Lora',sans-serif)]" in authored
+      assert "dark:text-fg-dark" in authored
       refute "text-fg" in authored
     end
 
@@ -495,7 +534,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
       assert "text-fg" in authored and "dark:text-fg-dark" in authored
       refute Map.has_key?(styles.base, "color")
-      refute Enum.any?(authored, &String.starts_with?(&1, "font-el-"))
+      refute Enum.any?(authored, &String.starts_with?(&1, "font-["))
       assert look(html, "section") == {["py-16"], %{}}
     end
 

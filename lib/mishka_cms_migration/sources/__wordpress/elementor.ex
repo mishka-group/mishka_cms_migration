@@ -89,13 +89,17 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   A colour or a font a widget names in its `__globals__` is one of the kit's, which the site has as
   theme tokens (`MishkaCmsMigration.Sources.WordPress.ElementorKit`), and the page names the token:
 
-    * a colour is the style setting `var(--color-el-<id>)`, and its dark twin the class
-      `dark:text-el-<id>-dark` (or `dark:bg-…` for a background) in place of the theme's own pair
-      (`text-fg dark:text-fg-dark`, ...): the dark theme shows the twin, which an admin sets once in
-      the stylesheet for every page;
-    * a font is the class of its family, `font-el-<id>`, and its weight, size, line height,
-      letter spacing and case are the style settings above. Elementor applies a global font whole,
-      so the widget's own typography is not read beside it.
+    * a colour is the style setting `var(--color-el-<id>,<value>)`, and its dark twin the class
+      `dark:text-[var(--color-el-<id>-dark,var(--color-el-<id>,<value>))]` (or `dark:bg-…` for a
+      background) in place of the theme's own pair (`text-fg dark:text-fg-dark`, ...): the dark
+      theme shows the twin, which an admin sets once in the stylesheet for every page;
+    * a font is the class of its family,
+      `font-[family-name:var(--font-el-<id>,'<family>',sans-serif)]`, and its weight, size, line
+      height, letter spacing and case are the style settings above. Elementor applies a global font
+      whole, so the widget's own typography is not read beside it.
+
+  Each token has the kit's own colour or family behind it, so a page reads while the stylesheet is
+  missing, not yet active, or archived.
 
   A family a widget sets itself is the class of the kit's font in that family, the one the
   stylesheet loads; any other family is left out, as nothing on the site would load it. A global the
@@ -588,7 +592,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     do: settings |> global(key) |> coloured(settings[key], ctx)
 
   defp coloured({"colors", id}, _value, ctx) when is_map_key(ctx.globals.colours, id),
-    do: {:global, id}
+    do: {:global, id, Map.fetch!(ctx.globals.colours, id)}
 
   defp coloured(nil, value, _ctx), do: value |> ElementorKit.css_colour() |> own_colour()
   defp coloured(_unknown, _value, _ctx), do: nil
@@ -621,11 +625,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   # it reads in the dark theme.
   defp painted(look, _prop, nil), do: look
 
-  defp painted({classes, styles}, prop, {:global, id}) do
+  defp painted({classes, styles}, prop, {:global, id, value}) do
     prefix = Map.fetch!(@paints, prop)
 
-    {unpainted(classes, prefix) ++ [ElementorKit.dark_class(prefix, id)],
-     merge_styles(styles, %{base: %{prop => ElementorKit.colour(id)}})}
+    {unpainted(classes, prefix) ++ [ElementorKit.dark_class(prefix, id, value)],
+     merge_styles(styles, %{base: %{prop => ElementorKit.colour(id, value)}})}
   end
 
   defp painted({classes, styles}, "color", {:raw, value}) when is_map_key(@colors, value),
@@ -658,11 +662,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp typography({"typography", id}, _settings, ctx),
     do: ctx.globals.typography |> Map.get(id) |> global_font(id)
 
-  defp typography(nil, settings, ctx),
-    do:
-      {ctx.globals.families
-       |> Map.get(ElementorKit.family(settings))
-       |> font_class(), type_styles(settings)}
+  defp typography(nil, settings, ctx) do
+    family = ElementorKit.family(settings)
+    {ctx.globals.families |> Map.get(family) |> font_class(family), type_styles(settings)}
+  end
 
   defp typography(_unknown, _settings, _ctx), do: {nil, %{}}
 
@@ -672,10 +675,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     do: {settings |> ElementorKit.family() |> family_class(id), type_styles(settings)}
 
   defp family_class(nil, _id), do: nil
-  defp family_class(_family, id), do: ElementorKit.font_class(id)
+  defp family_class(family, id), do: ElementorKit.font_class(id, family)
 
-  defp font_class(nil), do: nil
-  defp font_class(id), do: ElementorKit.font_class(id)
+  defp font_class(nil, _family), do: nil
+  defp font_class(id, family), do: ElementorKit.font_class(id, family)
 
   defp typeset({nil, more}, look), do: with_styles(look, more)
 

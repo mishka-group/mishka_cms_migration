@@ -33,9 +33,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
       rules Google answers for it (`MishkaCmsMigration.Targets.CmsStylesheet`'s "Google fonts"),
       so the fonts load wherever the site's CSS does, its admin's previews too.
 
-  A page names a colour through the builder's own style setting, `var(--color-el-<id>)`
-  (`colour/1`), and its twin and a font by their token classes (`dark_class/2`, `font_class/1`),
-  so Tailwind keeps only the tokens a page uses. `<id>` is Elementor's own: `primary`,
+  A page names a colour through the builder's own style setting, `var(--color-el-<id>,<value>)`
+  (`colour/2`), and its twin and a font by classes of their own (`dark_class/3`, `font_class/2`),
+  each with the kit's own value behind the token, so a page still reads while the stylesheet is
+  missing, inactive or archived, and Tailwind keeps only the tokens a page uses. `<id>` is Elementor's own: `primary`,
   `secondary`, `text`, `accent`, or the seven characters of a custom one, as in Elementor's
   `--e-global-color-<id>`. An id of anything but lower-case letters and digits, a colour that is
   not a hex, RGB or HSL value, and a family of anything but letters, digits, spaces, `-` and `_`
@@ -180,20 +181,31 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
     end
   end
 
-  @doc "The builder's style value for the colour `id`: `var(--color-el-<id>)`."
-  @spec colour(String.t()) :: String.t()
-  def colour(id), do: "var(--color-el-#{id})"
+  @doc """
+  The builder's style value for the colour `id`, whose kit value is `value` (`css_colour/1`):
+  `var(--color-el-<id>,<value>)`, the kit's own colour where no stylesheet declares the token.
+  """
+  @spec colour(String.t(), String.t()) :: String.t()
+  def colour(id, value), do: "var(--color-el-#{id},#{value})"
 
   @doc """
-  The class of the colour `id`'s dark twin under the Tailwind `prefix` it colours: `"text"` makes
-  `dark:text-el-<id>-dark`, `"bg"` `dark:bg-el-<id>-dark`.
+  The class of the colour `id`'s dark twin under the Tailwind `prefix` it colours, falling back to
+  the colour (`colour/2`): `"text"` makes
+  `dark:text-[var(--color-el-<id>-dark,var(--color-el-<id>,<value>))]`, `"bg"` the same with
+  `dark:bg-`. A space in `value` is written `_`, as Tailwind reads one in a class.
   """
-  @spec dark_class(String.t(), String.t()) :: String.t()
-  def dark_class(prefix, id), do: "dark:#{prefix}-el-#{id}-dark"
+  @spec dark_class(String.t(), String.t(), String.t()) :: String.t()
+  def dark_class(prefix, id, value),
+    do: "dark:#{prefix}-[var(--color-el-#{id}-dark,#{arbitrary(colour(id, value))})]"
 
-  @doc "The class of the font `id`'s family: `font-el-<id>`."
-  @spec font_class(String.t()) :: String.t()
-  def font_class(id), do: "font-el-#{id}"
+  @doc """
+  The class of the font `id`'s family, whose kit family is `family` (`family/1`), falling back to
+  that family where no stylesheet declares the token:
+  `font-[family-name:var(--font-el-<id>,'<family>',sans-serif)]`, a space in it written `_`.
+  """
+  @spec font_class(String.t(), String.t()) :: String.t()
+  def font_class(id, family),
+    do: "font-[family-name:var(--font-el-#{id},'#{arbitrary(family)}',sans-serif)]"
 
   @doc """
   `value` as a colour a stylesheet or a builder's style setting can hold as it is: a hex value,
@@ -215,6 +227,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
   def family(_settings), do: nil
 
   defp listed(settings, key, default), do: settings |> Map.get(key) |> saved(default)
+
+  # As Tailwind reads an arbitrary value: `_` is a space, and `\\_` an underscore.
+  defp arbitrary(value), do: value |> String.replace("_", "\\_") |> String.replace(" ", "_")
 
   defp saved([_ | _] = items, _default), do: Enum.filter(items, &is_map/1)
   defp saved(_none, default), do: default

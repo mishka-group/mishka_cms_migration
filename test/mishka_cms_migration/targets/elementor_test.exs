@@ -20,6 +20,7 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsCore.Runtime.{Page, Stylesheet}
+  alias MishkaCmsCore.Runtime.Compilers.TailwindCompiler
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.Widgets
@@ -212,8 +213,11 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
         |> hd()
         |> Styles.from_classes()
 
-      assert styles.base["color"] == "var(--color-el-primary)"
-      assert "dark:text-el-primary-dark" in authored and "font-el-primary" in authored
+      assert styles.base["color"] == "var(--color-el-primary,#1e3a8a)"
+
+      assert "dark:text-[var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))]" in authored
+
+      assert "font-[family-name:var(--font-el-primary,'Poppins',sans-serif)]" in authored
 
       assert %{
                "--color-el-primary" => _,
@@ -223,6 +227,29 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
                tokens(stylesheet.content)
 
       assert {:ok, %Tree{}} = Tree.parse(landing.template)
+    end
+
+    test "the page reads without the stylesheet: Tailwind builds each token's use with the kit's own value behind it",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+      Ash.destroy!(stylesheet, action: :permanent_destroy, tenant: site.id, authorize?: false)
+      landing = pages(site)["/elementor-landing"]
+
+      assert {:ok, css} =
+               TailwindCompiler.compile_preview(
+                 site.name,
+                 "el_fallback",
+                 "landing",
+                 landing.template
+               )
+
+      refute css =~ "--color-el-accent:"
+      assert css =~ "background-color:var(--color-el-accent,#f59e0b)"
+      assert css =~ "background-color:var(--color-el-accent-dark,var(--color-el-accent,#f59e0b))"
+      assert css =~ "color:var(--color-el-primary,#1e3a8a)"
+      assert css =~ "color:var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))"
+      assert css =~ "font-family:var(--font-el-primary,"
     end
 
     test "an archived stylesheet waits for the admin's decision, Restore it brings it back inactive as the core's Restore does, and one deleted for good is reported deleted, not unchanged",
