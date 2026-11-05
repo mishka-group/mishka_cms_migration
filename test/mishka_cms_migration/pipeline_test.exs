@@ -257,7 +257,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert run.status == :done
       assert run.report.counts == %{created: 3, updated: 0, skipped: 0, failed: 0, undecided: 0}
       assert run.created_count == 3
-      assert is_nil(run.connection_secret)
+      assert MishkaCmsMigration.MigrationRun.open_secret(run) == {:ok, "letmein"}
       assert %DateTime{} = run.finished_at
 
       assert [{"/old-one", "/one"}, {"/old-three", "/three"}, {"/old-two", "/two"}] =
@@ -535,7 +535,11 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert run.report.counts == %{created: 0, updated: 0, skipped: 0, failed: 3, undecided: 0}
       assert redirects(site) == []
-      assert Enum.all?(items(site), &({&1.outcome, &1.reason} == {:failed, "forbidden"}))
+
+      assert Enum.all?(
+               items(site),
+               &({&1.outcome, &1.reason} == {:failed, "forbidden: redirect"})
+             )
     end
 
     test "a failed item is created on the next run once the CMS accepts it", %{
@@ -771,7 +775,7 @@ defmodule MishkaCmsMigration.PipelineTest do
 
   describe "a source that cannot be read" do
     @tag capture_log: true
-    test "is tried again, and its last attempt fails the run with the reason", %{
+    test "that refuses the password fails the run at once, in words, without raising", %{
       site: site,
       admin: admin
     } do
@@ -786,21 +790,18 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert_raise Ash.Error.Invalid, ~r/unauthorized/, fn ->
-        perform_job(DryRunWorker, job.args, attempt: 1)
-      end
-
-      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status ==
-               :dry_running
-
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 1)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert {run.status, run.reason} == {:failed, "unauthorized"}
-      assert is_nil(run.connection_secret)
+
+      assert MishkaCmsMigration.MigrationRun.reason_label(run.reason) ==
+               "The source refused the user or the password"
+
+      assert MishkaCmsMigration.MigrationRun.open_secret(run) == {:ok, "letmein"}
     end
 
-    test "whose last attempt Oban stops at its timeout fails the run and drops the secret", %{
+    test "whose last attempt Oban stops at its timeout fails the run, which keeps its secret", %{
       site: site,
       admin: admin
     } do
@@ -821,7 +822,10 @@ defmodule MishkaCmsMigration.PipelineTest do
       })
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
-      assert {run.status, run.connection_secret} == {:failed, nil}
+
+      assert {run.status, MishkaCmsMigration.MigrationRun.open_secret(run)} ==
+               {:failed, {:ok, "letmein"}}
+
       assert run.reason =~ "timed out"
     end
 
@@ -946,12 +950,12 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
       [job] = assert_triggered(run, :run_dry_run)
 
-      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      assert {:ok, %{status: :failed}} = perform_job(DryRunWorker, job.args, attempt: 3)
 
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
 
       assert {run.status, run.reason, run.connection_secret} ==
-               {:failed, "unreadable_secret", nil}
+               {:failed, "unreadable_secret", rotated}
     end
   end
 
@@ -982,7 +986,7 @@ defmodule MishkaCmsMigration.PipelineTest do
     end
 
     @tag capture_log: true
-    test "outside an item is tried again, and its last attempt fails the run and drops the secret",
+    test "outside an item is tried again, and its last attempt fails the run, which keeps its secret",
          %{
            site: site,
            admin: admin
@@ -1006,7 +1010,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
       assert run.status == :failed
       assert run.reason =~ "the source broke"
-      assert is_nil(run.connection_secret)
+      assert MishkaCmsMigration.MigrationRun.open_secret(run) == {:ok, "letmein"}
     end
   end
 

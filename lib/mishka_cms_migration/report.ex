@@ -97,16 +97,28 @@ defmodule MishkaCmsMigration.Report do
   possibly followed by `"guest_email_dropped"`, the guest's email the Blog would refuse, left out
   of the comment) (`MishkaCmsMigration.Targets.BlogComment`).
 
+  An item a job of picked items met (`MishkaCmsMigration.Workers.Helpers.Pipeline`) waits, in a
+  dry run and in an import, when what it points at has no CMS record yet:
+
+    * `"parent_missing"` — its parent, which the job was not asked for, was never imported;
+    * `"post_missing"` — the post it points at, such as a comment's, was never imported;
+    * `"waits_for: <kinds>"` — an item of another kind it points at, such as a post's category,
+      was never imported, failed or waits for an admin's decision
+      (`MishkaCmsMigration.Target`'s `needs/1`), `<kinds>` naming those kinds, `"category, tag"`.
+
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
   that waits for its parent comes right after it), so a report stays small however large the site:
   the items left out number the sum of `counts` less the length of `entries`, and every item is
   still recorded (`MishkaCmsMigration.MigrationItem`).
+
+  A job of picked items does not replace its run's report: `merge/2` puts what it did in it.
   """
 
   @outcomes [:created, :updated, :skipped, :failed, :undecided]
   @max_entries 1_000
+  @no_duplicates %{found: 0, merged: 0, kept: 0}
 
   @typedoc "What happened, or would happen, to an item."
   @type outcome :: :created | :updated | :skipped | :failed | :undecided
@@ -148,7 +160,7 @@ defmodule MishkaCmsMigration.Report do
       counts: zero(),
       kinds: [],
       entries: [],
-      duplicates: %{found: 0, merged: 0, kept: 0},
+      duplicates: @no_duplicates,
       guests: 0,
       kept: 0
     }
@@ -160,9 +172,9 @@ defmodule MishkaCmsMigration.Report do
 
     %{
       counts: Map.update!(report.counts, outcome, &(&1 + 1)),
-      kinds: count_kind(report.kinds, kind, outcome),
+      kinds: count_kind(report.kinds, kind, outcome, 1),
       entries: entries,
-      duplicates: duplicate(report.duplicates, entry),
+      duplicates: duplicate(report.duplicates, entry, 1),
       guests: report.guests + guest(entry),
       kept: kept
     }
@@ -178,6 +190,44 @@ defmodule MishkaCmsMigration.Report do
       guests: report.guests,
       entries: report.entries |> Enum.take(@max_entries) |> Enum.reverse()
     }
+  end
+
+  @doc """
+  `report`, a run's saved report, with the entries of `picked`, the saved report of a job of the
+  run's picked items, put in, in the order `picked` met them: each one replaces the entry of the
+  same kind and source id, whose outcome it no longer counts, and is counted as `add/2` counts it;
+  one whose item the report does not list among its entries (the report never met it, or it is
+  older than the last `max_entries/0`) is counted as one more. With no report yet, `picked` is the
+  report.
+  """
+  @spec merge(map() | nil, t()) :: map()
+  def merge(nil, picked), do: picked
+
+  def merge(report, %{entries: entries}),
+    do: Enum.reduce(entries, report, &merged(&2, &1))
+
+  defp merged(report, %{kind: kind, source_id: source_id} = entry) do
+    {replaced, kept} =
+      Enum.split_with(
+        report.entries,
+        &(is_binary(source_id) and {&1.kind, &1.source_id} == {kind, source_id})
+      )
+
+    report
+    |> Map.put(:entries, Enum.take(kept ++ [entry], -@max_entries))
+    |> recounted(replaced, -1)
+    |> recounted([entry], 1)
+  end
+
+  defp recounted(report, entries, by) do
+    Enum.reduce(entries, report, fn %{kind: kind, outcome: outcome} = entry, report ->
+      Map.merge(report, %{
+        counts: Map.update(report.counts, outcome, max(by, 0), &(&1 + by)),
+        kinds: count_kind(report.kinds, kind, outcome, by),
+        duplicates: duplicate(report[:duplicates] || @no_duplicates, entry, by),
+        guests: (report[:guests] || 0) + by * guest(entry)
+      })
+    end)
   end
 
   @doc "One item's entry: its kind, source id and title, its outcome and why."
@@ -219,17 +269,21 @@ defmodule MishkaCmsMigration.Report do
 
   defp short(text), do: String.slice(text, 0, 1000)
 
-  defp duplicate(duplicates, %{kind: "media", outcome: :undecided, reason: "same_file: " <> _}),
-    do: %{duplicates | found: duplicates.found + 1}
+  defp duplicate(
+         duplicates,
+         %{kind: "media", outcome: :undecided, reason: "same_file: " <> _},
+         by
+       ),
+       do: %{duplicates | found: duplicates.found + by}
 
-  defp duplicate(duplicates, %{kind: "media", outcome: :skipped, reason: reason})
+  defp duplicate(duplicates, %{kind: "media", outcome: :skipped, reason: reason}, by)
        when reason in ["same_file_used", "same_file_used_no_redirect"],
-       do: %{duplicates | found: duplicates.found + 1, merged: duplicates.merged + 1}
+       do: %{duplicates | found: duplicates.found + by, merged: duplicates.merged + by}
 
-  defp duplicate(duplicates, %{kind: "media", outcome: :created, reason: "same_file_kept"}),
-    do: %{duplicates | found: duplicates.found + 1, kept: duplicates.kept + 1}
+  defp duplicate(duplicates, %{kind: "media", outcome: :created, reason: "same_file_kept"}, by),
+    do: %{duplicates | found: duplicates.found + by, kept: duplicates.kept + by}
 
-  defp duplicate(duplicates, _entry), do: duplicates
+  defp duplicate(duplicates, _entry, _by), do: duplicates
 
   defp guest(%{kind: "comment", outcome: outcome, reason: "guest_comment: " <> _})
        when outcome in [:created, :updated],
@@ -237,14 +291,14 @@ defmodule MishkaCmsMigration.Report do
 
   defp guest(_entry), do: 0
 
-  defp count_kind(kinds, kind, outcome),
-    do: kinds |> Enum.find_index(&(&1.kind == kind)) |> counted(kinds, kind, outcome)
+  defp count_kind(kinds, kind, outcome, by),
+    do: kinds |> Enum.find_index(&(&1.kind == kind)) |> counted(kinds, {kind, outcome}, by)
 
-  defp counted(nil, kinds, kind, outcome),
-    do: kinds ++ [zero() |> Map.put(:kind, kind) |> Map.update!(outcome, &(&1 + 1))]
+  defp counted(nil, kinds, {kind, outcome}, by),
+    do: kinds ++ [zero() |> Map.put(:kind, kind) |> Map.update!(outcome, &(&1 + by))]
 
-  defp counted(index, kinds, _kind, outcome),
-    do: List.update_at(kinds, index, &Map.update!(&1, outcome, fn count -> count + 1 end))
+  defp counted(index, kinds, {_kind, outcome}, by),
+    do: List.update_at(kinds, index, &Map.update!(&1, outcome, fn count -> count + by end))
 
   defp keep(entries, kept) when kept > 2 * @max_entries,
     do: {Enum.take(entries, @max_entries), @max_entries}

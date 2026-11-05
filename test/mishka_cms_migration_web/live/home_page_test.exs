@@ -607,7 +607,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
 
     @tag capture_log: true
-    test "a run whose export was damaged since says in words why it stopped, and keeps no file",
+    test "a run whose export was damaged since says in words why it stopped, and keeps the file until it is cancelled",
          %{conn: conn, site: site} do
       admin = migration_admin!(site)
       staged = Path.join(System.tmp_dir!(), "gervaz_#{System.unique_integer([:positive])}_x.xml")
@@ -624,7 +624,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       File.write!(run.connection["file"], staged |> File.read!() |> binary_part(0, 500))
       run = start_dry_run!(run, admin)
       [job] = assert_triggered(run, :run_dry_run)
-      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      assert {:ok, %{status: :failed}} =
+               perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
 
       view = open!(conn, admin)
       expand!(view, run)
@@ -635,6 +637,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "The file this run was given is not a WordPress export file, or it is damaged."
              )
 
+      assert File.exists?(run.connection["file"])
+      row_action!(view, "cancel", run)
       refute File.exists?(run.connection["file"])
     end
   end
@@ -1340,7 +1344,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       run = start_dry_run!(run, admin)
       [job] = assert_triggered(run, :run_dry_run)
-      assert :ok = perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
+
+      assert {:ok, %{status: :failed}} =
+               perform_job(MishkaCmsMigration.Workers.DryRunWorker, job.args, attempt: 3)
 
       view = open!(conn, admin)
       expand!(view, run)
@@ -1438,19 +1444,65 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       view = open!(conn, admin)
 
       assert has_element?(view, ~s|#{action("dry_run", pending)}[title="Dry run"]|)
-      assert has_element?(view, ~s|#{action("dry_run", ready)}[title="Run again"]|)
+
+      for run <- [ready, done],
+          do: assert(has_element?(view, ~s|#{action("dry_run", run)}[title="Run again"]|))
+
       assert has_element?(view, ~s|#{action("import", ready)}[title="Import"][data-confirm]|)
 
-      for run <- [running, done, cancelled],
+      for run <- [running, cancelled],
           do: refute(has_element?(view, action("dry_run", run)))
 
       for run <- [pending, running, done, cancelled],
           do: refute(has_element?(view, action("import", run)))
 
-      for run <- [pending, ready, running],
+      for run <- [pending, ready, running, done],
           do: assert(has_element?(view, "#{action("cancel", run)}[data-confirm]"))
 
-      for run <- [done, cancelled], do: refute(has_element?(view, action("cancel", run)))
+      refute has_element?(view, action("cancel", cancelled))
+    end
+
+    test "offer no Run again on a run whose password an earlier release cleared, and say why when asked",
+         %{conn: conn, site: site, admin: admin} do
+      register_plugin!(TokenSource, MishkaCmsMigration.Source.event())
+
+      done =
+        %{source: "token", connection: %{"url" => "https://t.example"}, secret: "t0ken"}
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+        |> import!(admin)
+
+      MishkaCmsMigration.Repo.query!(
+        "UPDATE mishka_cms_migration_runs SET connection_secret = NULL WHERE id = $1",
+        [Ecto.UUID.dump!(done.id)]
+      )
+
+      view = open!(conn, admin)
+
+      refute has_element?(view, action("dry_run", done))
+      assert has_element?(view, "#{action("cancel", done)}[data-confirm]")
+
+      assert crafted!(view, "dry_run", done.id) =~
+               "This run no longer holds its Token password. Start a New import."
+
+      assert status(done) == :done
+    end
+
+    test "Run again on an imported run dry runs it again, and its Import brings what changed since",
+         %{conn: conn, site: site, admin: admin} do
+      done = migrate!(site, admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+      view = open!(conn, admin)
+
+      assert row_action!(view, "dry_run", done) =~ "Dry run started."
+      assert status(done) == :dry_running
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
+      assert outcomes(view) == %{"skipped" => 1}
+      assert row_action!(view, "import", done) =~ "Import started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      assert status(done) == :done
     end
 
     test "Run again, clicked the moment a dry run finishes live, starts the next dry run", %{

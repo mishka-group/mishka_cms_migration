@@ -52,7 +52,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   out of its place, and the run that writes the parent writes it too.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
-  written fails that item alone, with the exception's message as its reason.
+  written fails that item alone, with the exception's message as its reason. One the CMS's policies
+  refuse the admin fails as `"forbidden: <kind>"`, "You may not change <kinds> on this site".
   """
 
   alias Ash.Resource.Info
@@ -138,6 +139,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp settled({:undecided, conflict}, state, item, _outcome),
     do: entry(state, item, :undecided, conflict)
+
+  defp settled({:error, %Ash.Error.Forbidden{}}, state, item, _outcome),
+    do: entry(state, item, :failed, "forbidden: " <> item.kind)
 
   defp settled({:error, error}, state, item, _outcome),
     do: entry(state, item, :failed, Report.reason(error))

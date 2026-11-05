@@ -691,7 +691,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert %{created: 0, updated: 0} = counts(run)
 
       assert run |> outcomes() |> Map.values() |> Enum.uniq() |> Enum.sort() ==
-               [{:failed, "forbidden"}, {:skipped, "parent_missing"}]
+               [{:failed, "forbidden: page"}, {:skipped, "parent_missing"}]
 
       assert pages(site) == %{}
     end

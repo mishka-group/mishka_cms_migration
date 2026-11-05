@@ -37,6 +37,36 @@ defmodule MishkaCmsMigration.ReportTest do
     assert [%{kind: "user", created: 2, failed: 1}, %{kind: "post", skipped: 1}] = report.kinds
   end
 
+  test "a job of picked items puts its entries in the run's report, each counted once" do
+    report =
+      Report.new()
+      |> add_many("tag", 1..2, :created)
+      |> Report.add(Report.entry("menu", "23", "Footer", :undecided, "menu_goes_to"))
+      |> Report.done()
+
+    picked =
+      Report.new()
+      |> Report.add(Report.entry("menu", "23", "Footer", :created, nil))
+      |> Report.add(Report.entry("post", "9", "New", :skipped, "waits_for: category"))
+      |> Report.done()
+
+    merged = Report.merge(report, picked)
+
+    assert merged.counts == %{created: 3, updated: 0, skipped: 1, failed: 0, undecided: 0}
+
+    assert [
+             %{kind: "tag", created: 2},
+             %{kind: "menu", created: 1, undecided: 0},
+             %{kind: "post"}
+           ] =
+             merged.kinds
+
+    assert Enum.map(merged.entries, &{&1.source_id, &1.outcome}) ==
+             [{"1", :created}, {"2", :created}, {"23", :created}, {"9", :skipped}]
+
+    assert Report.merge(nil, picked) == picked
+  end
+
   test "an entry's reason reads in words, each of its parts, and a reason of the CMS as it is" do
     assert MigrationRun.reason_label("draft_from_pending; unconverted: acme/callout, gallery") ==
              "Pending review at the source, so a draft; Kept as text: acme/callout, gallery"

@@ -16,7 +16,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
   kind that does not nest, such as the tags, is a flat list, and an item in a loop of parents is
   drawn once. Each row shows its checkbox, title and source id, its Plan
   (`MishkaCmsMigration.MigrationItem.plan_cell/1`, which names the record an item is mapped to),
-  and its row actions: Map to… for a category or a tag, Leave out and Bring back.
+  and its row actions: Dry run this item and Import this item, Map to… for a category or a tag,
+  Leave out and Bring back.
 
   The tree is drawn from the rows the table has loaded (`keep_loaded_records`), as a LiveView stream
   holds no nesting; Load more adds the next page to it. The filters, the bulk actions, the

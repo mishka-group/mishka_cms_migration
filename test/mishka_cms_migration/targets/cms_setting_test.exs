@@ -202,7 +202,10 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
       run = imported!(site, admin)
 
-      assert %{"title" => {:failed, "forbidden"}, "logo" => {:failed, "forbidden"}} =
+      assert %{
+               "title" => {:failed, "forbidden: setting"},
+               "logo" => {:failed, "forbidden: setting"}
+             } =
                outcomes(run)
 
       assert settings(site) == %{}

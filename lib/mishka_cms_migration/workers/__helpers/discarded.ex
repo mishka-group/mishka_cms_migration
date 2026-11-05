@@ -5,8 +5,8 @@
 defmodule MishkaCmsMigration.Workers.Helpers.Discarded do
   @moduledoc """
   Fails the run of a migration job Oban discarded — its last attempt timed out or crashed past
-  every rescue, so AshOban never ran the trigger's `on_error` — with Oban's reason, which also
-  clears the run's secret (`MishkaCmsMigration.MigrationRun`'s `:fail`). It runs outside any job,
+  every rescue, so AshOban never ran the trigger's `on_error` — with Oban's reason
+  (`MishkaCmsMigration.MigrationRun`'s `:fail`), which an admin can Run again. It runs outside any job,
   so it acts as the system (`authorize?: false`), and hands `:fail` the job as AshOban hands it its
   trigger's `on_error` (`context.ash_oban.job`), so what the run's steps tell says which step failed
   (`MishkaCmsMigration.Resources.Notifiers.Steps`). A run no longer dry running or importing is left

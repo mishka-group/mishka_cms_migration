@@ -49,10 +49,36 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   A dry run decides and reports; it writes nothing in the CMS and fires no event, and records what
   it would do with each item as the item's plan (`MishkaCmsMigration.MigrationItem`'s
-  `:record_plan`), which the Items page shows before anything is imported. An import writes each
-  item as the admin who pressed Import, and once every kind is walked its report and the source's
+  `:record_plan`), which the Items page shows before anything is imported. Once it has walked every
+  kind, it empties, in one update (`:forget_plan`), the plan of each item of the run's source host
+  on its site that it did not meet (one whose plan it did not record since it started), so a first
+  dry run and a Run again alike leave a plan only on the items the source lists now; a dry run that
+  stops halfway leaves every item the plan it had. An import writes each item as the admin who
+  pressed Import, and once every kind is walked its report and the source's
   facts are saved on the run and the report is handed to `migration:import:finished`
   (`MishkaCmsMigration.Events`).
+
+  ## Picked items
+
+  A job of picked items (`MishkaCmsMigration.MigrationRun`'s "Picked items") is handed their source
+  ids by kind (`items`) and the status its run goes back to (`back_to`). It walks only their kinds,
+  in the source's order, so a picked category is settled before a picked post, and reads only
+  their rows (`c:MishkaCmsMigration.Source.rows/3`, or the kind's pages from `list/3` for a source
+  without it), keeping the picked ones once normalized. An item the source no longer answers is
+  left as it is. Each page is decided as a whole run's is, so an admin's choices and the run's
+  options hold, after its needs are read (`MishkaCmsMigration.Workers.Helpers.Needs`): an item the
+  walk would create or update while its parent, or what its record points at, has no CMS record
+  yet is skipped with the reason, and one under a parent an admin left out is skipped as
+  `"parent_left_out"`. It saves no progress, empties no plan, and once walked hands its report to
+  `MishkaCmsMigration.Report.merge/2` and the run to `:finish_items`; an import of picked items
+  hands its own report to `migration:import:finished`. What fails a whole run fails a job of picked
+  items only in part: a kind the source cannot answer, or that raises, fails its picked items
+  alone, each recorded as failed with the reason and with what earlier runs kept of it (its title,
+  slug, parent and CMS record), and the job goes on to the next kind; a source it cannot connect to
+  fails every picked item so. The run then goes back where it was, as after any job of picked
+  items. Every item it records is broadcast on
+  `"migration_item:<site_id>:updated"` (`MishkaCmsMigration.MigrationItem`), which its actions'
+  shared context (`picked_items?`) marks, so the Items page draws those rows again.
 
   ## When the job stops
 
@@ -62,12 +88,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`AshOban.Errors.CancelJob`, reason `:not_running`). Any other error saving the progress or the
   report fails the attempt, as an error of the walk does.
 
-  An error from `connect/2` or `list/3`, a raise outside a single item, a secret that can no longer
-  be opened, or a source whose cursors never end — `{:cursor_repeated, kind}` when `list/3` answers
-  a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
-  kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
+  A source that refuses what the run connects with — the password (`:unauthorized`, WordPress's
+  401), a secret that can no longer be opened (`:unreadable_secret`), a file that is gone or not an
+  export (`:no_file`, `:unreadable_file`) — fails the run at once through its `:fail`, as its
+  `on_error` would, and the job ends without raising: trying again would meet the same refusal and
+  hold the site for nothing. The run reads why in words
+  (`MishkaCmsMigration.MigrationRun.reason_label/1`, its expanded row, the bell). Any other error
+  from `connect/2` or `list/3`, a raise outside a single item, or a source whose cursors never end
+  — `{:cursor_repeated, kind}` when `list/3` answers a cursor it already answered for that kind,
+  `{:too_many_pages, kind}` after 10,000 pages of one kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
   tries it again, and after the last attempt runs the trigger's `on_error`, the run's `:fail`,
-  which keeps the reason and clears the secret. A last attempt that never returns — Oban stops it at
+  which keeps the reason; the run keeps its secret, so it can run again. A last attempt that never returns — Oban stops it at
   its timeout, or it crashes past every rescue — fails its run through Oban's own telemetry
   (`MishkaCmsMigration.Workers.Helpers.Discarded`).
 
@@ -78,14 +109,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   use Ash.Resource.ManualUpdate
 
+  require Ash.Query
+
   alias Ash.Error.Changes.InvalidAttribute
   alias AshOban.Errors.CancelJob
-  alias MishkaCmsMigration.{Events, MigrationRun, Report, Source}
+  alias MishkaCmsMigration.{Events, MigrationItem, MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
-  alias MishkaCmsMigration.Workers.Helpers.{Decision, Writer}
+  alias MishkaCmsMigration.Workers.Helpers.{Decision, Needs, Writer}
 
   @max_pages 10_000
+  @picked %{picked_items?: true}
+  @refused [:unauthorized, :unreadable_secret, :no_file, :unreadable_file]
 
   @typedoc "Whether a job only reports, or writes."
   @type mode :: :dry_run | :import
@@ -96,54 +131,100 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   walk could not go on.
   """
   @impl Ash.Resource.ManualUpdate
-  def update(%Ash.Changeset{data: run}, opts, context) do
-    telemetry = telemetry(run, opts[:mode])
+  def update(%Ash.Changeset{data: run} = changeset, opts, context) do
+    job = %{
+      mode: opts[:mode],
+      picked: Ash.Changeset.get_argument(changeset, :items),
+      back_to: Ash.Changeset.get_argument(changeset, :back_to)
+    }
+
+    context = scope(context, job.picked)
+    telemetry = telemetry(run, job.mode)
 
     :telemetry.span([:mishka_cms_migration, :run], telemetry, fn ->
-      answer =
-        run
-        |> walked(opts[:mode], context, telemetry)
-        |> finished(run, opts[:mode], context)
-        |> answered()
+      result = run |> walked(job, context, telemetry) |> finished(run, job, context)
 
-      {answer, measured(answer), Map.merge(telemetry, ended(answer))}
+      {answered(result), measured(result), Map.merge(telemetry, ended(result))}
     end)
   end
 
-  defp walked(run, mode, context, telemetry) do
-    walk(run, mode, context, telemetry)
+  defp scope(context, nil), do: context
+
+  defp scope(%{source_context: source} = context, _picked),
+    do: %{context | source_context: Map.update(source, :shared, @picked, &Map.merge(&1, @picked))}
+
+  defp walked(run, job, context, telemetry) do
+    walk(run, job, context, telemetry)
   rescue
     error -> {:error, error}
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
 
-  defp finished({:ok, report, extra}, run, mode, context),
-    do: finish(run, mode, Report.done(report), extra, context)
+  defp finished({:ok, report, extra}, run, job, context),
+    do: finish(run, job, Report.done(report), extra, context)
 
-  defp finished({:error, reason}, _run, _mode, _context), do: {:error, reason}
+  defp finished({:error, reason}, run, %{picked: picked} = job, context) when is_map(picked) do
+    state = %{run: run, mode: job.mode, picked: picked, scope: context}
+
+    report =
+      picked |> Map.keys() |> Enum.reduce(Report.new(), &failed(state, &1, reason, &2))
+
+    finish(run, job, Report.done(report), %{}, context)
+  end
+
+  defp finished({:error, reason}, run, _job, context) when reason in @refused do
+    run
+    |> MishkaCmsMigration.fail_run(reason,
+      scope: context,
+      context: Map.take(context.source_context, [:shared, :ash_oban])
+    )
+    |> failed_at_once(reason)
+  end
+
+  defp finished({:error, reason}, _run, _job, _context), do: {:error, reason}
+
+  defp failed_at_once({:ok, run}, reason), do: {:failed, run, reason}
+  defp failed_at_once({:error, _error}, reason), do: {:error, reason}
 
   defp answered({:ok, run}), do: {:ok, run}
+  defp answered({:failed, run, _reason}), do: {:ok, run}
   defp answered({:error, :not_running}), do: {:error, CancelJob.exception(reason: :not_running)}
   defp answered({:error, reason}), do: {:error, Report.reason(reason)}
 
   defp measured({:ok, %{report: %{counts: counts}}}), do: counts
-  defp measured(_answer), do: %{}
+  defp measured(_result), do: %{}
 
   defp ended({:ok, _run}), do: %{result: :finished}
-  defp ended({:error, %CancelJob{}}), do: %{result: :cancelled}
-  defp ended({:error, reason}), do: %{result: :failed, reason: reason}
+  defp ended({:error, :not_running}), do: %{result: :cancelled}
+  defp ended({:failed, _run, reason}), do: %{result: :failed, reason: Report.reason(reason)}
+  defp ended({:error, reason}), do: %{result: :failed, reason: Report.reason(reason)}
 
-  defp finish(run, :dry_run, report, extra, context),
+  defp finish(run, %{picked: nil, mode: :dry_run}, report, extra, context),
     do: run |> MishkaCmsMigration.finish_dry_run(report, extra, scope: context) |> saved()
 
-  defp finish(run, :import, report, extra, context) do
-    with {:ok, run} <-
-           run |> MishkaCmsMigration.finish_import(report, extra, scope: context) |> saved() do
-      Events.finished(report, run, context.actor)
-      {:ok, run}
-    end
+  defp finish(run, %{picked: nil, mode: :import}, report, extra, context),
+    do:
+      run
+      |> MishkaCmsMigration.finish_import(report, extra, scope: context)
+      |> saved()
+      |> told(:import, report, context)
+
+  defp finish(run, %{mode: mode, back_to: back_to}, report, _extra, context),
+    do:
+      run
+      |> MishkaCmsMigration.finish_items(Report.merge(run.report, report), back_to,
+        scope: context
+      )
+      |> saved()
+      |> told(mode, report, context)
+
+  defp told({:ok, run}, :import, report, context) do
+    Events.finished(report, run, context.actor)
+    {:ok, run}
   end
+
+  defp told(answer, _mode, _report, _context), do: answer
 
   defp saved({:ok, run}), do: {:ok, run}
 
@@ -152,16 +233,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp saved({:error, error}), do: {:error, error}
 
-  defp walk(run, mode, context, telemetry) do
+  defp walk(run, %{mode: mode} = job, context, telemetry) do
     with {:ok, options} <- Options.builder(run.options),
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
          extra = source.extra(conn),
+         started = DateTime.utc_now(),
          {:ok, report} <-
            walk_kinds(%{
              run: run,
              mode: mode,
+             picked: job.picked,
              actor: context.actor,
              scope: context,
              source: source,
@@ -169,13 +252,32 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              options: options,
              context: target_context(run, mode, context, options),
              telemetry: telemetry
-           }) do
+           }),
+         :ok <- forget_plans(run, job, started, context) do
       {:ok, report, extra}
     end
   end
 
+  defp forget_plans(run, %{mode: :dry_run, picked: nil}, started, context) do
+    MigrationItem
+    |> Ash.Query.filter(
+      source_host == ^run.source_host and updated_at < ^started and not is_nil(plan)
+    )
+    |> Ash.bulk_update(:forget_plan, %{},
+      scope: context,
+      strategy: :atomic,
+      return_errors?: true
+    )
+    |> forgotten()
+  end
+
+  defp forget_plans(_run, _import_or_picked, _started, _context), do: :ok
+
+  defp forgotten(%Ash.BulkResult{status: :success}), do: :ok
+  defp forgotten(%Ash.BulkResult{errors: errors}), do: {:error, Ash.Error.to_error_class(errors)}
+
   defp walk_kinds(state) do
-    Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->
+    Enum.reduce_while(kinds(state), {:ok, Report.new()}, fn kind, {:ok, report} ->
       walk = %{
         kind: kind,
         cursor: nil,
@@ -188,18 +290,56 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
         listed: 0
       }
 
-      state |> walk_kind(walk, report) |> walked_kind()
+      state |> kind_walked(walk, report) |> walked_kind(state, report)
     end)
   end
 
-  defp walked_kind({:ok, report}), do: {:cont, {:ok, report}}
-  defp walked_kind({:error, reason}), do: {:halt, {:error, reason}}
+  defp kind_walked(%{picked: nil} = state, walk, report), do: walk_kind(state, walk, report)
+
+  defp kind_walked(state, walk, report) do
+    with {:error, reason} <- walk_kind(state, walk, report),
+         do: {:error, {walk.kind, reason}}
+  rescue
+    error -> {:error, {walk.kind, error}}
+  catch
+    :exit, reason -> {:error, {walk.kind, {:exit, reason}}}
+  end
+
+  defp kinds(%{picked: nil, source: source}), do: source.kinds()
+
+  defp kinds(%{picked: picked, source: source}),
+    do: Enum.filter(source.kinds(), &is_map_key(picked, &1))
+
+  defp walked_kind({:ok, report}, _state, _before), do: {:cont, {:ok, report}}
+  defp walked_kind({:error, reason}, %{picked: nil}, _before), do: {:halt, {:error, reason}}
+
+  defp walked_kind({:error, {kind, reason}}, state, report),
+    do: {:cont, {:ok, failed(state, kind, reason, report)}}
+
+  defp failed(state, kind, reason, report) do
+    state.run.source_host
+    |> MishkaCmsMigration.items_by_sources!(kind, Map.fetch!(state.picked, kind),
+      scope: state.scope
+    )
+    |> Enum.reduce(report, fn item, report ->
+      Report.add(report, Writer.call(state, picked_item(item), {:failed, Report.reason(reason)}))
+    end)
+  end
+
+  defp picked_item(%MigrationItem{} = item),
+    do: %Item{
+      kind: item.source_kind,
+      source_id: item.source_id,
+      title: item.title,
+      parent: item.source_parent,
+      attrs: %{"slug" => item.source_slug}
+    }
 
   defp walk_kind(_state, %{pages: @max_pages, kind: kind}, _report),
     do: {:error, {:too_many_pages, kind}}
 
   defp walk_kind(state, walk, report) do
-    with {:ok, rows, next} <- state.source.list(state.conn, walk.kind, walk.cursor),
+    with {:ok, rows, next} <- read_page(state, walk),
          {report, walk} = page(state, walk, rows, report),
          :ok <- progress(state, walk.kind, rows, report.counts) do
       walk_on(
@@ -229,16 +369,54 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     do:
       walk_kind(state, %{walk | cursor: next, cursors: Map.put(walk.cursors, next, true)}, report)
 
+  defp read_page(%{picked: nil} = state, walk),
+    do: state.source.list(state.conn, walk.kind, walk.cursor)
+
+  defp read_page(state, walk),
+    do: state.source |> function_exported?(:rows, 3) |> read_page(state, walk)
+
+  defp read_page(true, state, walk) do
+    with {:ok, rows} <-
+           state.source.rows(state.conn, walk.kind, Map.fetch!(state.picked, walk.kind)),
+         do: {:ok, rows, nil}
+  end
+
+  defp read_page(false, state, walk), do: state.source.list(state.conn, walk.kind, walk.cursor)
+
   defp page(state, walk, rows, report) do
     {built, source_ids} =
       rows
       |> Enum.map(&build(state, walk.kind, &1))
+      |> Enum.filter(&picked?(state, walk.kind, &1))
       |> Enum.map_reduce(walk.source_ids, &once/2)
 
-    plans = Decision.call(state, walk.kind, for({:ok, item} <- built, do: item))
+    items = for {:ok, item} <- built, do: item
+    {waits, walk} = needs(state, walk, items)
+    plans = state |> Decision.call(walk.kind, items) |> Map.merge(waits, &waited/3)
 
     Enum.reduce(built, {report, %{walk | source_ids: source_ids}}, &place(state, plans, &1, &2))
   end
+
+  defp picked?(%{picked: nil}, _kind, _built), do: true
+  defp picked?(state, kind, built), do: elem(built, 1).source_id in state.picked[kind]
+
+  defp needs(%{picked: nil}, walk, _items), do: {%{}, walk}
+
+  defp needs(state, walk, items) do
+    %{waits: waits, parents: parents} = Needs.call(state, walk.kind, items)
+
+    {waits,
+     %{
+       walk
+       | settled: Map.merge(walk.settled, Map.new(parents, fn {id, _left_out} -> {id, true} end)),
+         left_out: Map.merge(walk.left_out, for({id, true} <- parents, into: %{}, do: {id, true}))
+     }}
+  end
+
+  defp waited(_source_id, plan, reason) when elem(plan, 0) in [:created, :updated],
+    do: {:skipped, reason}
+
+  defp waited(_source_id, plan, _reason), do: plan
 
   defp place(state, plans, {:ok, item}, placed),
     do: hold(state, {item, Map.fetch!(plans, item.source_id)}, placed)
@@ -339,6 +517,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     entry
   end
 
+  defp progress(%{picked: picked}, _kind, _rows, _counts) when is_map(picked), do: :ok
   defp progress(_state, _kind, [], _counts), do: :ok
 
   defp progress(state, kind, _rows, counts) do

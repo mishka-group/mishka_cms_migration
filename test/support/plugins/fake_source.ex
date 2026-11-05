@@ -12,7 +12,7 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
         "facts" => %{"version" => "6.5"}}
 
   It signs in only with the secret `"letmein"`, or with none when the connection says
-  `"public" => true`, and never once the connection says `"revoked" => true` (what a test writes
+  `"public" => true`, so its form asks for a secret it does not require (`form_fields/0`), and never once the connection says `"revoked" => true` (what a test writes
   into a saved run's connection to have its source refuse a secret it took when the run was
   created), lists two rows a page, lists `"redirect"`, `"note"`, `"page"` and `"category"`, in
   that order, and says the connection's `"facts"` as its `extra/1`. A row is normalized as:
@@ -38,6 +38,13 @@ defmodule MishkaCmsMigration.Test.Plugins.FakeSource do
 
   @impl MishkaCmsMigration.Source
   def kinds, do: ["redirect", "note", "page", "category"]
+
+  @impl MishkaCmsMigration.Source
+  def form_fields,
+    do: [
+      [name: :url, label: "Address"],
+      [name: :secret, type: :password, label: "Password or key", required: false]
+    ]
 
   @impl MishkaCmsMigration.Source
   def connect(%{"revoked" => true}, _secret), do: {:error, :unauthorized}

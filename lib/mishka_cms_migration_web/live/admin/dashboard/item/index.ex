@@ -26,6 +26,24 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   is broadcast, and this page hands the item's notifications on to the table, which draws the item
   again in its place, in every tab open on it.
 
+  ## Dry run this item and Import this item
+
+  A row's Dry run this item and Import this item (`:event` row actions), Import once the admin
+  confirms, are offered only while the run still holds what its source connects with
+  (`MishkaCmsMigration.MigrationRun.connectable?/1`, handed to the table as the path param
+  `connectable`, as Import the picked items is), and reach this page as
+  `{:row_action, "dry_run_item" | "import_item", %{"id" => id}}`, and
+  Import the picked items, for the rows picked with the checkboxes, as
+  `{:bulk_action, :import_items, ids}`. The page reads the run again, as the Migration page reads
+  it (`MishkaCmsMigration.MigrationRun.fetch/2`), and runs `MishkaCmsMigration.dry_run_items/3` or
+  `MishkaCmsMigration.import_items/3` as the signed-in admin, on the run's site: the run's own job,
+  for those items alone (`MishkaCmsMigration.MigrationRun`'s "Picked items"). It says so in a
+  flash; a step the run refuses, such as one while a run of the site is running, is said in
+  Gervaz's words for a failed action, and nothing changes. Import the picked items takes up to 100
+  rows picked one by one; picking every row picks what the filters find, which it does not take,
+  and the admin is asked to pick the rows. Once the job has settled the items, their rows are drawn
+  again from their broadcasts.
+
   ## Map to… and the Map view
 
   A category's or a tag's Map to…, in the List and in the Map view, shows the page's modal on the
@@ -66,6 +84,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
+  alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
 
   @table_id "migration-items-table"
@@ -123,7 +142,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     scope = %{
       run: socket.assigns.run.id,
       source_host: socket.assigns.run.source_host,
-      site_id: socket.assigns.run.site_id
+      site_id: socket.assigns.run.site_id,
+      connectable: MigrationRun.connectable?(socket.assigns.run)
     }
 
     url_state = UrlSync.decode(params, uri, MigrationItem)
@@ -155,10 +175,63 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     {:noreply, socket}
   end
 
+  def handle_info({:row_action, "dry_run_item", %{"id" => id}}, socket),
+    do: {:noreply, picked(socket, [id], &MishkaCmsMigration.dry_run_items/3, :dry_run)}
+
+  def handle_info({:row_action, "import_item", %{"id" => id}}, socket),
+    do: {:noreply, picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)}
+
+  def handle_info({:bulk_action, :import_items, ids}, socket) when is_list(ids),
+    do: {:noreply, picked(socket, ids, &MishkaCmsMigration.import_items/3, :import_picked)}
+
+  def handle_info({:bulk_action, :import_items, _every_row}, socket),
+    do:
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext(
+           "Import the picked items takes the rows you pick, not every row the filters find."
+         )
+       )}
+
   def handle_info({:put_flash, kind, message}, socket),
     do: {:noreply, put_flash(socket, kind, message)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp picked(socket, ids, action, step) do
+    user = socket.assigns.current_user
+
+    with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(socket.assigns.run.id, user),
+         {:ok, _run} <- action.(run, ids, actor: user, tenant: run.site_id) do
+      put_flash(socket, :info, started(step, length(ids)))
+    else
+      {:ok, nil} -> refused(socket, step, :not_found)
+      {:error, reason} -> refused(socket, step, reason)
+    end
+  end
+
+  defp started(:dry_run, _one), do: gettext("Dry run of the item started.")
+
+  defp started(_import, count),
+    do:
+      ngettext(
+        "Import of the item started.",
+        "Import of %{count} items started.",
+        count
+      )
+
+  defp refused(socket, step, reason) do
+    error =
+      Errors.Action.Failed.exception(resource: MigrationRun, label: label(step), reason: reason)
+
+    put_flash(socket, :error, Errors.format_flash_message(error))
+  end
+
+  defp label(:dry_run), do: gettext("Dry run this item")
+  defp label(:import), do: gettext("Import this item")
+  defp label(:import_picked), do: gettext("Import the picked items")
 
   defp saved_words(item), do: item |> MigrationItem.conflict() |> saved_words(item)
 

@@ -11,7 +11,7 @@ defmodule MishkaCmsMigration.Resources.Notifiers.Steps do
   (created), a dry run or an import started, finished, failed or was cancelled, or the run was
   cancelled while it waited. The entry keeps who took the step, the run's host, a finished step's
   counts and a failed step's reason, and the Migration page's Logs read it in the same sentence
-  the bell says (`sentence/2`).
+  the bell says (`sentence/2`), its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/1`).
 
   When a dry run or an import ends — it finished, its job failed, or an admin cancelled it while it
   ran — the run's user (who created it) and the admin whose job it was (who pressed Dry run or
@@ -144,13 +144,21 @@ defmodule MishkaCmsMigration.Resources.Notifiers.Steps do
     do: gettext("Import of %{host} finished: %{result}.", host: host, result: result(said))
 
   def sentence(:dry_run_failed, %{source_host: host, reason: reason}) when is_binary(reason),
-    do: gettext("Dry run of %{host} failed: %{reason}.", host: host, reason: reason)
+    do:
+      gettext("Dry run of %{host} failed: %{reason}.",
+        host: host,
+        reason: MigrationRun.reason_label(reason)
+      )
 
   def sentence(:dry_run_failed, %{source_host: host}),
     do: gettext("Dry run of %{host} failed.", host: host)
 
   def sentence(:import_failed, %{source_host: host, reason: reason}) when is_binary(reason),
-    do: gettext("Import of %{host} failed: %{reason}.", host: host, reason: reason)
+    do:
+      gettext("Import of %{host} failed: %{reason}.",
+        host: host,
+        reason: MigrationRun.reason_label(reason)
+      )
 
   def sentence(:import_failed, %{source_host: host}),
     do: gettext("Import of %{host} failed.", host: host)

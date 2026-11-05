@@ -14,6 +14,13 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
 
   Run atomically, it is a condition of the update itself, so two requests that both read the run
   before either wrote it cannot both move it.
+
+  With `as_read: true` the run must also still be in the status the caller read it in, so what the
+  action takes from that status, such as the status a job of picked items puts the run back in
+  (`MishkaCmsMigration.Resources.Changes.PickedItems`), is the one the database held. A run read
+  before it moved on is refused with the status it is in now.
+
+      validate {MishkaCmsMigration.Resources.Validations.Status, from: [:done], as_read: true}
   """
 
   use Ash.Resource.Validation
@@ -26,7 +33,7 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
   @message dgettext_noop("errors", "The run cannot do that while it is %{status}.")
 
   @impl true
-  def init(opts), do: opts |> Keyword.get(:from) |> from()
+  def init(opts), do: opts |> Keyword.get(:from) |> from(opts[:as_read] == true)
 
   @impl true
   def supports(_opts), do: [Ash.Changeset]
@@ -35,8 +42,8 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
   def validate(changeset, opts, _context), do: allowed(changeset.data.status, opts[:from])
 
   @impl true
-  def atomic(_changeset, opts, _context) do
-    {:atomic, [:status], expr(status not in ^opts[:from]),
+  def atomic(changeset, opts, _context) do
+    {:atomic, [:status], refused(opts[:from], {opts[:as_read], changeset.data.status}),
      expr(
        error(^InvalidAttribute, %{
          field: :status,
@@ -46,9 +53,12 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
      )}
   end
 
-  defp from([_ | _] = from), do: {:ok, [from: from]}
+  defp refused(from, {true, read}), do: expr(status not in ^from or status != ^read)
+  defp refused(from, _any_status), do: expr(status not in ^from)
 
-  defp from(other),
+  defp from([_ | _] = from, as_read), do: {:ok, [from: from, as_read: as_read]}
+
+  defp from(other, _as_read),
     do: {:error, "expected :from to be a list of statuses, got: #{inspect(other)}"}
 
   defp allowed(status, [status | _from]), do: :ok
