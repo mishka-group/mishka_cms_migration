@@ -53,13 +53,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   failed takes `:start_dry_run` again, Run again: a fresh dry run on the same run and connection,
   then the usual import, which brings what the source changed since and what an admin decided, left
   out or mapped since the last import. It empties how far the last job got (`progress`), when the
-  run ended (`finished_at`) and why it failed (`reason`), and the dry run empties the plan of each
-  item of the run's source host before it records its own
+  run ended (`finished_at`) and why it failed (`reason`), and the dry run, once it has walked the
+  whole source, empties the plan of each item of the run's source host it did not meet
   (`MishkaCmsMigration.Workers.Helpers.Pipeline`); the run's `report` stays until the new dry run
-  replaces it, and the run's log keeps each step's counts. Each request queues the job of one of the run's
-  AshOban triggers, `:run_dry_run` or `:run_import`, on the `migration` queue
-  (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`), as the
-  admin who asked (`MishkaCmsMigration.Resources.Changes.EnqueueJob`). A trigger has no
+  replaces it, and the run's log keeps each step's counts.
+
+  Each request queues the job of one of the run's AshOban triggers, `:run_dry_run` or
+  `:run_import`, on the `migration` queue (`MishkaCmsMigration.Workers.DryRunWorker`,
+  `MishkaCmsMigration.Workers.ImportWorker`), as the admin who asked
+  (`MishkaCmsMigration.Resources.Changes.EnqueueJob`). A trigger has no
   scheduler: its job is queued by the request alone, and runs only while the run is in the status
   the trigger's `where` names. One run of a site is dry running or importing at a time: the
   `:one_active_per_site` identity is a unique index on the site over those two statuses, so the

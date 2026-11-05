@@ -49,10 +49,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   A dry run decides and reports; it writes nothing in the CMS and fires no event, and records what
   it would do with each item as the item's plan (`MishkaCmsMigration.MigrationItem`'s
-  `:record_plan`), which the Items page shows before anything is imported. It first empties the
-  plan of every item of the run's source host on its site, in one update (`:forget_plan`), so a
-  first dry run and a Run again alike leave a plan only on the items the source lists now. An import writes each
-  item as the admin who pressed Import, and once every kind is walked its report and the source's
+  `:record_plan`), which the Items page shows before anything is imported. Once it has walked every
+  kind, it empties, in one update (`:forget_plan`), the plan of each item of the run's source host
+  on its site that it did not meet (one whose plan it did not record since it started), so a first
+  dry run and a Run again alike leave a plan only on the items the source lists now; a dry run that
+  stops halfway leaves every item the plan it had. An import writes each item as the admin who
+  pressed Import, and once every kind is walked its report and the source's
   facts are saved on the run and the report is handed to `migration:import:finished`
   (`MishkaCmsMigration.Events`).
 
@@ -221,7 +223,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
          extra = source.extra(conn),
-         :ok <- forget_plans(run, job, context),
+         started = DateTime.utc_now(),
          {:ok, report} <-
            walk_kinds(%{
              run: run,
@@ -234,14 +236,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              options: options,
              context: target_context(run, mode, context, options),
              telemetry: telemetry
-           }) do
+           }),
+         :ok <- forget_plans(run, job, started, context) do
       {:ok, report, extra}
     end
   end
 
-  defp forget_plans(run, %{mode: :dry_run, picked: nil}, context) do
+  defp forget_plans(run, %{mode: :dry_run, picked: nil}, started, context) do
     MigrationItem
-    |> Ash.Query.filter(source_host == ^run.source_host)
+    |> Ash.Query.filter(
+      source_host == ^run.source_host and updated_at < ^started and not is_nil(plan)
+    )
     |> Ash.bulk_update(:forget_plan, %{},
       scope: context,
       strategy: :atomic,
@@ -250,7 +255,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
     |> forgotten()
   end
 
-  defp forget_plans(_run, _import_or_picked, _context), do: :ok
+  defp forget_plans(_run, _import_or_picked, _started, _context), do: :ok
 
   defp forgotten(%Ash.BulkResult{status: :success}), do: :ok
   defp forgotten(%Ash.BulkResult{errors: errors}), do: {:error, Ash.Error.to_error_class(errors)}

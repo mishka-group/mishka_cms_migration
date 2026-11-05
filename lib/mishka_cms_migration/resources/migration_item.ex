@@ -28,9 +28,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   Written by the jobs alone, which AshOban's context lets through where every actor is refused
   (`AshOban.Checks.AshObanInteraction`), as upserts on that identity: a dry run's `:record_plan`
-  for every item it meets, which sets its title and plan and nothing an import recorded, after the
-  dry run of a whole source emptied the plan of each of its items (`:forget_plan`), so an item the
-  source no longer lists has none; an import's `:record` after its CMS record was written, and
+  for every item it meets, which sets its title and plan and nothing an import recorded, and, once a
+  dry run of a whole source has walked it all, `:forget_plan` on each item it did not meet, so an
+  item the source no longer lists has no plan; an import's `:record` after its CMS record was written, and
   `:record_outcome` after an item was skipped or failed, which keeps what the last write recorded.
   No import write touches the plan,
   so an item shows what the last dry run would do beside what the last import did, and none of them
@@ -957,7 +957,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       change set_attribute(:plan, nil)
       change set_attribute(:plan_reason, nil)
 
-      description "System-internal: empties the item's plan before a dry run of its whole source records its own"
+      description "System-internal: empties the plan of an item a dry run of its whole source did not meet"
     end
   end
 
