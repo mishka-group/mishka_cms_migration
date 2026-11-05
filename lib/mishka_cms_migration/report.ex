@@ -9,6 +9,7 @@ defmodule MishkaCmsMigration.Report do
 
       %{
         counts: %{created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0},
+        guests: 0,
         kinds: [%{kind: "post", created: 2, updated: 1, skipped: 1, failed: 0, undecided: 0}],
         entries: [
           %{kind: "post", source_id: "12", title: "Hello", outcome: :skipped, reason: "unchanged"},
@@ -92,6 +93,10 @@ defmodule MishkaCmsMigration.Report do
   (`"same_file: <title of the original>"`, an `:undecided` item). A dry run downloads nothing and
   counts none.
 
+  `guests` counts the comments written, or planned, as a guest's (`"guest_comment: <name>"`,
+  possibly followed by `"guest_email_dropped"`, the guest's email the Blog would refuse, left out
+  of the comment) (`MishkaCmsMigration.Targets.BlogComment`).
+
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
   `entries` are the last 1,000 items met (`max_entries/0`), in the order they were settled (an item
@@ -119,6 +124,7 @@ defmodule MishkaCmsMigration.Report do
           required(:counts) => %{outcome() => non_neg_integer()},
           required(:kinds) => [map()],
           required(:entries) => [entry()],
+          required(:guests) => non_neg_integer(),
           required(:duplicates) => %{
             found: non_neg_integer(),
             merged: non_neg_integer(),
@@ -143,6 +149,7 @@ defmodule MishkaCmsMigration.Report do
       kinds: [],
       entries: [],
       duplicates: %{found: 0, merged: 0, kept: 0},
+      guests: 0,
       kept: 0
     }
 
@@ -156,6 +163,7 @@ defmodule MishkaCmsMigration.Report do
       kinds: count_kind(report.kinds, kind, outcome),
       entries: entries,
       duplicates: duplicate(report.duplicates, entry),
+      guests: report.guests + guest(entry),
       kept: kept
     }
   end
@@ -167,6 +175,7 @@ defmodule MishkaCmsMigration.Report do
       counts: report.counts,
       kinds: report.kinds,
       duplicates: report.duplicates,
+      guests: report.guests,
       entries: report.entries |> Enum.take(@max_entries) |> Enum.reverse()
     }
   end
@@ -221,6 +230,12 @@ defmodule MishkaCmsMigration.Report do
     do: %{duplicates | found: duplicates.found + 1, kept: duplicates.kept + 1}
 
   defp duplicate(duplicates, _entry), do: duplicates
+
+  defp guest(%{kind: "comment", outcome: outcome, reason: "guest_comment: " <> _})
+       when outcome in [:created, :updated],
+       do: 1
+
+  defp guest(_entry), do: 0
 
   defp count_kind(kinds, kind, outcome),
     do: kinds |> Enum.find_index(&(&1.kind == kind)) |> counted(kinds, kind, outcome)

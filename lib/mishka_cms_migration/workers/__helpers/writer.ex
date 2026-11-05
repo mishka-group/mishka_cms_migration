@@ -41,7 +41,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   with the conflict as its reason, and the next run asks again.
 
   The target is handed the item's decisions (`MishkaCmsMigration.Target`'s context, `decisions`),
-  so what an admin decided on a conflict holds for its note and its write.
+  so what an admin decided on a conflict holds for its note and its write, and what its
+  `existing/2` found for the item's write in its read of the page (`prepared`), so its note and its
+  write need not read it again.
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
@@ -63,7 +65,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     * `{:created, target, nil, decisions}` or `{:updated, target, record, decisions}` — written
       in an import, reported and recorded as the item's plan in a dry run, with its target's note
       and the pieces of its content left unconverted as its reason, or as what its target's
-      `waiting/2` answers instead;
+      `waiting/2` answers instead; `{:created, target, nil, decisions, prepared}` is settled the
+      same way, with `prepared`, what the target's `existing/2` found for the write, as its
+      context's `prepared`;
     * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
       in an import, never written, and reported as skipped, `"connected"`;
     * `{:skipped, reason}`, `{:failed, reason}` or `{:undecided, conflict}` — recorded with its
@@ -92,15 +96,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> entered(item, :skipped, "connected")
   end
 
-  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record, decisions}) do
-    context = item_context(state, item, record, decisions)
+  def call(state, %Item{} = item, {outcome, target, record, decisions}),
+    do: call(state, item, {outcome, target, record, decisions, nil})
+
+  def call(
+        %{mode: :dry_run} = state,
+        %Item{} = item,
+        {outcome, target, record, decisions, prepared}
+      ) do
+    context = item_context(state, item, record, decisions, prepared)
     item |> target.waiting(context) |> planned(state, item, {outcome, target, context})
   end
 
-  def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record, decisions}) do
-    state
-    |> written(item, {outcome, target, record}, item_context(state, item, record, decisions))
-    |> settled(state, item, outcome)
+  def call(
+        %{mode: :import} = state,
+        %Item{} = item,
+        {outcome, target, record, decisions, prepared}
+      ) do
+    context = item_context(state, item, record, decisions, prepared)
+    state |> written(item, {outcome, target, record}, context) |> settled(state, item, outcome)
   end
 
   defp planned(nil, state, item, {outcome, target, context}),
@@ -335,6 +349,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp item_context(state, item, record, decisions),
-    do: %{state.context | record: record, decisions: %{item.source_id => decisions}}
+  defp item_context(state, item, record, decisions, prepared),
+    do: %{
+      state.context
+      | record: record,
+        prepared: prepared,
+        decisions: %{item.source_id => decisions}
+    }
 end
