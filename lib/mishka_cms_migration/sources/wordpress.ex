@@ -37,13 +37,17 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   ## What it reads
 
-  `kinds/0` is `["user", "category", "tag", "media", "setting", "page", "post", "comment",
-  "post_redirect", "menu"]`: authors, terms and files before the site's settings, pages and posts
-  that point at them, the comments after the posts they are on, each post's old address after its
-  post, and the menus after everything their links point at.
+  `kinds/0` is `["user", "category", "tag", "media", "setting", "stylesheet", "page", "post",
+  "comment", "post_redirect", "menu"]`: authors, terms and files before the site's settings, its
+  Elementor colours and fonts, and the pages and posts that point at them, the comments after the
+  posts they are on, each post's old address after its post, and the menus after everything their
+  links point at.
   `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
   site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
-  when the site has it. `list/3` reads each other kind from its REST route (`/wp/v2/users`,
+  when the site has it. `"stylesheet"` is the Elementor globals `connect/2` read, with no request of
+  its own: when the REST index lists Elementor's `elementor/v1`, `connect/2` asks
+  `/elementor/v1/globals` once, and a site that answers none has no row
+  (`MishkaCmsMigration.Sources.WordPress.ElementorKit`). `list/3` reads each other kind from its REST route (`/wp/v2/users`,
   `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`,
   `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress answers the raw fields
   an editor sees, 100 rows a page; `rows/3` asks the same route for the rows of picked items alone,
@@ -155,6 +159,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
       text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
       `&amp;`), and the media id of the logo and the icon.
+    * stylesheet — Elementor's global colours and fonts, one row: its `source_id` is
+      `"elementor"`, `title` `"Elementor global colours and fonts"`, and `attrs` the stylesheet of
+      theme tokens they become, its `"name"` (`elementor-globals`), `"description"` and `"content"`
+      (`MishkaCmsMigration.Sources.WordPress.ElementorKit.stylesheet/2`).
     * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
@@ -213,7 +221,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   posts. A site without WPML is read as before, with no extra request.
 
   Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
-  name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
+  name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), its Elementor
+  colours and fonts to a stylesheet of its own (`MishkaCmsMigration.Targets.CmsStylesheet`), pages
+  as the CMS's
   own pages (`MishkaCmsMigration.Targets.CmsPage`), the main menu as the links of the site layout's
   header (`MishkaCmsMigration.Targets.CmsLayout`), and users,
   categories, tags and posts into Mishka Blog where it runs: users as bloggers of the site's
@@ -236,7 +246,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   alias MishkaCmsCore.Runtime.Redirects
   alias MishkaCmsMigration.Source
-  alias MishkaCmsMigration.Sources.WordPress.{Content, Elementor, Export, Navigation}
+
+  alias MishkaCmsMigration.Sources.WordPress.{
+    Content,
+    Elementor,
+    ElementorKit,
+    Export,
+    Navigation
+  }
 
   @kinds [
     "user",
@@ -244,6 +261,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "tag",
     "media",
     "setting",
+    "stylesheet",
     "page",
     "post",
     "comment",
@@ -320,6 +338,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {"icon", "site_icon", "Site Icon"}
   ]
   @texts ["title", "tagline"]
+  @kit "elementor"
   @language_plugins %{"pll/v1" => "polylang", "wpml/v1" => "wpml"}
 
   @seo_titles ["rank_math_title", "_yoast_wpseo_title"]
@@ -378,10 +397,24 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          index: index,
          user: user,
          languages: wpml_languages(req, index["namespaces"]),
+         elementor: elementor_globals(req, index["namespaces"]),
          read: &read(req, &1, &2)
        }}
     end
   end
+
+  defp elementor_globals(req, namespaces) when is_list(namespaces),
+    do: elementor_asked(req, "elementor/v1" in namespaces)
+
+  defp elementor_globals(_req, _namespaces), do: %{}
+
+  defp elementor_asked(req, true),
+    do: req |> Req.get(url: "/elementor/v1/globals") |> elementor_answer()
+
+  defp elementor_asked(_req, false), do: %{}
+
+  defp elementor_answer({:ok, %Req.Response{status: 200, body: %{} = globals}}), do: globals
+  defp elementor_answer(_unreadable), do: %{}
 
   defp wpml_languages(req, namespaces) when is_list(namespaces),
     do: req |> wpml_asked("wpml/v1" in namespaces) |> Enum.uniq()
@@ -444,6 +477,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          value = setting(id, index[field]),
          do: %{"id" => id, "label" => label, "value" => value}
        ), nil}
+
+  def list(%{elementor: globals}, "stylesheet", _cursor) when map_size(globals) > 0,
+    do: {:ok, [Map.put(globals, "id", @kit)], nil}
+
+  def list(_conn, "stylesheet", _cursor), do: {:ok, [], nil}
 
   def list(%{req: req, index: index}, "menu", _cursor) do
     with {:ok, menus} <- every(req, "/wp/v2/menus", [], 1, []),
@@ -546,7 +584,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       )
       when kind in @entries do
     fetch = fetch(context)
-    {content, html, laid_out} = row |> Elementor.call(kind, fetch) |> body(html, fetch)
+
+    {content, html, laid_out} =
+      row |> Elementor.call(kind, fetch, elementor(context)) |> body(html, fetch)
+
     {media, seo} = media(html, content, seo(row, context), context)
 
     {:ok,
@@ -641,6 +682,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   def normalize(%{"id" => id, "label" => label, "value" => value}, "setting", _context),
     do: {:ok, %{source_id: id, title: label, attrs: %{"value" => value}}}
+
+  def normalize(%{"id" => @kit} = globals, "stylesheet", context),
+    do: globals |> ElementorKit.stylesheet(context[:source_host]) |> stylesheet()
 
   def normalize(
         %{"id" => id, "name" => name, "block" => true, "items" => items} = row,
@@ -833,6 +877,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
+
+  defp elementor(%{conn: %{elementor: globals}}), do: globals
+  defp elementor(_context), do: %{}
+
+  defp stylesheet(nil), do: {:error, :unreadable}
+
+  defp stylesheet(attrs),
+    do: {:ok, %{source_id: @kit, title: "Elementor global colours and fonts", attrs: attrs}}
 
   defp body({:ok, content, unsupported, no_fallback}, _raw, _fetch),
     do:

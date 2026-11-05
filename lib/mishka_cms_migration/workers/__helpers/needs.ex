@@ -25,6 +25,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
     * `parents` — the parents the earlier imports recorded, by source id, `true` for one left out
       either way: the walk settles each child at once, and skips one under a left-out parent as
       `"parent_left_out"`, however deep, as it does in a full run.
+
+  A full run (`picked` is `nil`) asks too, in the same one query for the page, only for what waits
+  for an admin's decision on its archived record (`"archived_in_cms"`,
+  `MishkaCmsMigration.Workers.Helpers.Decision`), as this run's dry run planned it or its import
+  left it, the walk having settled that kind first: an item it would write pointing at that record
+  is refused by the CMS, such as a post's archived tag, so it waits as `"waits_for: <kinds>"` until
+  the admin restores the record or leaves it out. Nothing else holds it, and it has no `parents`.
+  An item that waits on that decision holds a job of picked items too, whatever record it has.
   """
 
   require Ash.Query
@@ -33,6 +41,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   alias MishkaCmsMigration.Source.Item
 
   @missing %{"post" => "post_missing"}
+  @archived "archived_in_cms"
 
   @doc "What the picked `items`, a page of `kind`, need, for the walk of `state`."
   @spec call(map(), String.t(), [Item.t()]) :: %{
@@ -50,22 +59,36 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
       waits:
         for(
           {id, refs} <- needed,
-          reason = waits(kind, refs, found),
+          reason = waits(kind, refs, found, state),
           into: %{},
           do: {id, reason}
         ),
-      parents:
-        for(
-          %Item{parent: parent} <- items,
-          %MigrationItem{} = found_parent <- [found[{kind, parent}]],
-          into: %{},
-          do: {parent, left_out?(found_parent)}
-        )
+      parents: parents(state, kind, items, found)
     }
   end
 
+  defp parents(%{picked: nil}, _kind, _items, _found), do: %{}
+
+  defp parents(_state, kind, items, found),
+    do:
+      for(
+        %Item{parent: parent} <- items,
+        %MigrationItem{} = found_parent <- [found[{kind, parent}]],
+        into: %{},
+        do: {parent, left_out?(found_parent)}
+      )
+
   defp needs_of({:ok, target}), do: &target.needs/1
   defp needs_of({:error, :not_installed}), do: fn _item -> %{} end
+
+  defp needed(%{picked: nil}, _kind, needs, item),
+    do:
+      for(
+        {needed_kind, ids} <- needs.(item),
+        id <- ids,
+        uniq: true,
+        do: {needed_kind, to_string(id)}
+      )
 
   defp needed(state, kind, needs, item) do
     refs =
@@ -92,10 +115,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
     |> Map.new(&{{&1.source_kind, &1.source_id}, &1})
   end
 
-  defp waits(kind, refs, found) do
+  defp waits(kind, refs, found, state) do
     {parent, others} =
       refs
-      |> Enum.filter(&waiting_on?(found[&1]))
+      |> Enum.filter(&waiting_on?(found[&1], state))
       |> Enum.split_with(&(elem(&1, 0) == kind))
 
     {missing, others} = Enum.split_with(others, &is_map_key(@missing, elem(&1, 0)))
@@ -107,10 +130,27 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
     |> reason()
   end
 
-  defp waiting_on?(%MigrationItem{target_id: id}) when is_binary(id), do: false
-  defp waiting_on?(%MigrationItem{outcome: :skipped}), do: false
-  defp waiting_on?(%MigrationItem{} = item), do: not left_out?(item)
-  defp waiting_on?(nil), do: true
+  defp waiting_on?(item, %{mode: mode, picked: picked}),
+    do: archived?(item, mode) or (is_map(picked) and missing?(item))
+
+  defp archived?(
+         %MigrationItem{left_out: false, outcome: :undecided, reason: @archived},
+         :import
+       ),
+       do: true
+
+  defp archived?(
+         %MigrationItem{left_out: false, plan: :undecided, plan_reason: @archived},
+         :dry_run
+       ),
+       do: true
+
+  defp archived?(_item, _mode), do: false
+
+  defp missing?(%MigrationItem{target_id: id}) when is_binary(id), do: false
+  defp missing?(%MigrationItem{outcome: :skipped}), do: false
+  defp missing?(%MigrationItem{} = item), do: not left_out?(item)
+  defp missing?(nil), do: true
 
   defp left_out?(%MigrationItem{left_out: true}), do: true
   defp left_out?(%MigrationItem{reason: "parent_left_out"}), do: true

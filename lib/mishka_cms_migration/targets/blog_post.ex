@@ -49,7 +49,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     `MishkaCmsMigration.Targets.BlogTag`), read from the items they were recorded as; one that was
     never written is left out, and the post is still written. So is one an admin left out on the
     Items page (`MishkaCmsMigration.MigrationItem`'s `left_out`): the post is written without it,
-    and so without an author an admin left out.
+    and so without an author an admin left out. One whose record an admin archived in the CMS, which
+    the Blog would refuse to link, holds the post (`"waits_for: <kinds>"`) until the admin decides
+    on it (`"archived_in_cms"`, `MishkaCmsMigration.Workers.Helpers.Decision`): Restore it, and the
+    post is written with it, or Leave it archived, and the post is written without it.
 
     Its author, categories, tags, featured file and the files of its content are what it needs
     (`needs/1`): Import this item writes a post alone only once each of them has a CMS record, or

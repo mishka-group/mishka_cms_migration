@@ -14,25 +14,47 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     * the admin mapped it to a CMS record (`mapped_id`) — `{:mapped, target, record}`, the record,
       which the import connects it to and never writes, whatever the source changed, what an
       earlier run wrote for it and what the target's `existing/2` would find; when that record is
-      gone, `{:skipped, "mapped_missing"}`.
+      gone, `{:skipped, "mapped_missing"}`, and when an admin archived it, as below.
 
   Then, what earlier runs recorded:
 
+    * the CMS record it was written or mapped to is archived (see "An archived record") — it waits
+      for the admin's decision, `{:undecided, "archived_in_cms"}`, whatever the source changed;
     * none, or one never written — `{:created, target, nil, decisions}`, unless the target finds
       it in the CMS already (`MishkaCmsMigration.Target`'s `existing/2`):
       `{:connected, target, record}`, the CMS record it is, `{:updated, target, record, decisions}`,
       the CMS record it is written over, `{:created, target, nil, decisions, prepared}`, created
       with what the target found for its write, `{:skipped, reason}`, why it is left out, or
       `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
+    * the CMS record it was written to is gone, deleted for good — `{:skipped, "target_missing"}`,
+      whether or not the source changed it, and it is not written again;
     * its `MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2` is the one recorded —
       `{:skipped, "unchanged"}`: an item that writes links is changed, to be written again, when
       the site's language address mode changed since it was written;
-    * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
       record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
       it in the CMS — `{:skipped, "edited_in_cms"}`;
     * otherwise — `{:updated, target, record, decisions}`, the CMS record to write over.
+
+  ## An archived record
+
+  A resource with `AshArchival.Resource` hides a record an admin archived from its reads, so an
+  item's record that is not read is looked for among the archived ones
+  (`MishkaCmsMigration.Workers.Helpers.Archived`), in one more query for the page and only when one
+  is not read. Writing over an archived record, or pointing another at it, such as a post's tag,
+  is refused, so the item waits for the admin's decision on `"archived_in_cms"`, in a dry run and in
+  an import, and what points at it waits for that decision too
+  (`MishkaCmsMigration.Workers.Helpers.Needs`). Leave it archived (`"leave_out"`) leaves the item
+  out, as `"left_out_by_admin"`, and what points at it is written without it. Restore it
+  (`"import"`) is `{:restored, target, record, decisions, then}`: the import restores the record as
+  the admin and goes on as it would have, had it never been archived (`then`):
+
+    * `:written` — the source changed it and no admin did, so it is written over;
+    * `:unchanged` — the source did not change it, so it is kept as it is, and recorded as the
+      import's own again;
+    * `:kept` — an admin changed it before archiving it, or it is a record the CMS already held or
+      the admin mapped the item to, so it is kept as the admin left it.
 
   `decisions` are the admin's answers to the conflicts the item met
   (`MishkaCmsMigration.MigrationItem`'s `decisions`), which the target is handed with the item
@@ -60,8 +82,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   never meet: the same id from two hosts is two items, each with its own CMS record.
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
-  CMS records they were written to; and its items no run has written are handed to the target's
-  `existing/2` together, once.
+  CMS records they were written to, and a third time when one of those records is not read, for
+  the archived ones; and its items no run has written are handed to the target's `existing/2`
+  together, once.
   """
 
   require Ash.Query
@@ -69,21 +92,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
+  alias MishkaCmsMigration.Workers.Helpers.Archived
 
   @blog_kinds MishkaCmsMigration.Application.blog_kinds()
+  @archived "archived_in_cms"
 
   @typedoc "An admin's answers to the conflicts an item met, by conflict."
   @type decisions :: %{String.t() => String.t()}
 
   @typedoc """
   What to do with an item: write a new record, with what the target found for its write when it
-  found anything, write over `record`, record it against `record` the CMS already held, leave it,
-  and why, or wait for an admin's decision on a conflict.
+  found anything, write over `record`, restore `record` an admin archived and go on as `then` says
+  (see "An archived record"), record it against `record` the CMS already held, leave it, and why,
+  or wait for an admin's decision on a conflict.
   """
   @type plan ::
           {:created, module(), nil, decisions()}
           | {:created, module(), nil, decisions(), term()}
           | {:updated, module(), struct(), decisions()}
+          | {:restored, module(), struct(), decisions(), :written | :unchanged | :kept}
           | {:connected, module(), struct()}
           | {:mapped, module(), struct()}
           | {:skipped, String.t()}
@@ -162,15 +189,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       resource
       |> Ash.Query.filter(id in ^ids)
       |> Ash.read(actor: state.actor, tenant: state.run.site_id)
-      |> read_records(records)
+      |> read_records(records, {resource, Enum.uniq(ids)}, state)
     end)
   end
 
-  defp read_records({:ok, found}, records),
-    do: {:cont, Enum.into(found, records, &{&1.id, &1})}
+  defp read_records({:ok, found}, records, {resource, ids}, state) do
+    archived =
+      Archived.call(resource, ids -- Enum.map(found, & &1.id), %{
+        actor: state.actor,
+        site_id: state.run.site_id
+      })
 
-  defp read_records({:error, %Ash.Error.Forbidden{}}, _records), do: {:halt, :forbidden}
-  defp read_records({:error, error}, _records), do: raise(error)
+    records = Enum.into(found, records, &{&1.id, &1})
+    {:cont, Enum.into(archived, records, &{&1.id, {:archived, &1}})}
+  end
+
+  defp read_records({:error, %Ash.Error.Forbidden{}}, _records, _ids, _state),
+    do: {:halt, :forbidden}
+
+  defp read_records({:error, error}, _records, _ids, _state), do: raise(error)
 
   defp plan(_target, _item, %{left_out: true}, _records, _site),
     do: {:skipped, "left_out_by_admin"}
@@ -179,8 +216,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
        when is_binary(known.mapped_id) or is_binary(known.target_id),
        do: {:failed, "forbidden: " <> item.kind}
 
-  defp plan(target, _item, %{mapped_id: id}, records, _site) when is_binary(id),
-    do: records |> Map.get(id) |> mapped(target)
+  defp plan(target, _item, %{mapped_id: id} = known, records, _site) when is_binary(id),
+    do: records |> Map.get(id) |> mapped(target, known)
 
   defp plan(target, _item, nil, _records, _site), do: {:created, target, nil, %{}}
 
@@ -190,8 +227,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp plan(target, item, known, records, site_id),
     do: decide(target, known, LanguageUrls.hash(item, site_id), Map.get(records, known.target_id))
 
-  defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
+  defp decide(target, known, hash, {:archived, record}),
+    do: archived(target, known, record, restoring(known, hash, record))
+
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+  defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
   defp decide(target, known, _hash, record),
@@ -217,8 +257,26 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp chosen?(%{post_address: "blog_without_redirects"}, "post_redirect"), do: false
   defp chosen?(_options, _kind), do: true
 
-  defp mapped(nil, _target), do: {:skipped, "mapped_missing"}
-  defp mapped(record, target), do: {:mapped, target, record}
+  defp mapped(nil, _target, _known), do: {:skipped, "mapped_missing"}
+
+  defp mapped({:archived, record}, target, known),
+    do: archived(target, known, record, :kept)
+
+  defp mapped(record, target, _known), do: {:mapped, target, record}
+
+  defp archived(target, %{decisions: %{@archived => "import"} = decided}, record, then),
+    do: {:restored, target, record, decided, then}
+
+  defp archived(_target, _known, _record, _then), do: {:undecided, @archived}
+
+  defp restoring(%{target_updated_at: nil}, _hash, _record), do: :kept
+
+  defp restoring(known, hash, record),
+    do: record |> edited?(known) |> then_restored(known.content_hash == hash)
+
+  defp then_restored(true, _unchanged), do: :kept
+  defp then_restored(false, true), do: :unchanged
+  defp then_restored(false, false), do: :written
 
   defp record_refs(item, target) do
     for {id, resource} <- [

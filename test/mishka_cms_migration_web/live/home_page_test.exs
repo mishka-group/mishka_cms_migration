@@ -968,7 +968,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert has_element?(view, ~s|[data-role="run-details-empty"]|, "No dry run yet")
 
       assert detailed(view, "run-details-reads", "data-kind") ==
-               ~w(user category tag media setting page post comment post_redirect menu)
+               ~w(user category tag media setting stylesheet page post comment post_redirect menu)
 
       assert outcomes(view) == %{}
 

@@ -16,7 +16,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   an upserting create, such as the core Setting's `:set`, is run as that create), and is recorded
   (`MishkaCmsMigration.MigrationItem`'s `:record`) with the CMS record it was written to, in one
   transaction (`Ash.transact/3`): either the CMS record and its item are both there, or neither is,
-  so a retry never meets a CMS record no item remembers. An item skipped or failed is recorded with
+  so a retry never meets a CMS record no item remembers. An action's `before_transaction` hook, such
+  as the Tailwind check a stylesheet's write runs, so runs inside that transaction by design, and Ash
+  is told so (`warn_on_transaction_hooks?: false`). An item skipped or failed is recorded with
   its reason (`:record_outcome`), which keeps what the last write recorded; when even that cannot be
   recorded, the item's entry says it failed, with why. A dry run writes nothing in the CMS: it
   reports the plan and records it on each item (`:record_plan`, its outcome and reason as the
@@ -30,6 +32,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   converted, kept as escaped text, joined by `"; "`, as in
   `"draft_from_pending; unconverted: acme/callout, gallery"`. A dry run asks no plugin, so it names
   every piece the source left to convert.
+
+  An item whose CMS record an admin archived, and decided to restore
+  (`MishkaCmsMigration.Workers.Helpers.Decision`'s `{:restored, …}`), is reported and recorded as
+  updated, its note led by `"restored"`. In an import the record is restored as the admin
+  (`MishkaCmsMigration.Workers.Helpers.Archived.restore/2`) in the item's own transaction: before
+  the write, for an item the source changed, or alone, recording the restored record's
+  `updated_at` for an item it did not, so the restore is not mistaken for an admin's edit, and
+  keeping the one it had for a record an admin changed before archiving it, or one the CMS already
+  held.
 
   An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
   or mapped to one by an admin, is not written: in an import it is recorded against that record,
@@ -60,6 +71,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
+  alias MishkaCmsMigration.Workers.Helpers.Archived
+
+  @restored "restored"
 
   @doc """
   Settles `item` by `plan` and answers its entry in the report:
@@ -70,6 +84,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
       `waiting/2` answers instead; `{:created, target, nil, decisions, prepared}` is settled the
       same way, with `prepared`, what the target's `existing/2` found for the write, as its
       context's `prepared`;
+    * `{:restored, target, record, decisions, then}` — `record` restored and the item settled as
+      `then` says, reported and recorded as updated, with `"restored"` leading its note;
     * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
       in an import, never written, and reported as skipped, `"connected"`;
     * `{:skipped, reason}`, `{:failed, reason}` or `{:undecided, conflict}` — recorded with its
@@ -104,6 +120,40 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   def call(
         %{mode: :dry_run} = state,
         %Item{} = item,
+        {:restored, target, record, decisions, :written}
+      ) do
+    context = item_context(state, item, record, decisions, nil)
+    item |> target.waiting(context) |> planned(state, item, {:restored, target, context})
+  end
+
+  def call(
+        %{mode: :dry_run} = state,
+        %Item{} = item,
+        {:restored, _target, _record, _decided, _then}
+      ),
+      do: entry(state, item, :updated, @restored)
+
+  def call(
+        %{mode: :import} = state,
+        %Item{} = item,
+        {:restored, target, record, decisions, :written}
+      ) do
+    context = item_context(state, item, record, decisions, nil)
+    state |> written(item, {:restored, target, record}, context) |> settled(state, item, :updated)
+  end
+
+  def call(%{mode: :import} = state, %Item{} = item, {:restored, target, record, _decided, then}) do
+    Ash.transact(target.resources() ++ [MigrationItem], fn ->
+      with {:ok, restored} <- Archived.restore(record, state.context),
+           do: restored_as(then, state, item, restored)
+    end)
+    |> stored()
+    |> entered(item, :updated, @restored)
+  end
+
+  def call(
+        %{mode: :dry_run} = state,
+        %Item{} = item,
         {outcome, target, record, decisions, prepared}
       ) do
     context = item_context(state, item, record, decisions, prepared)
@@ -120,7 +170,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   end
 
   defp planned(nil, state, item, {outcome, target, context}),
-    do: entry(state, item, outcome, note(target, item, context, to_convert(item)))
+    do:
+      entry(
+        state,
+        item,
+        reported(outcome),
+        note(target, item, context, to_convert(item), outcome)
+      )
 
   defp planned({waiting, reason}, state, item, _write) when waiting in [:skipped, :undecided],
     do: entry(state, item, waiting, reason)
@@ -159,8 +215,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp written(state, source_item, {outcome, target, _record} = plan, context) do
     with {:ok, context} <- parented(state, source_item, context),
          {:ok, item, kept} <- convert(state, source_item),
-         {:ok, item} <- Events.before_import(item, outcome, state.run, state.actor),
-         note = note(target, item, context, kept),
+         {:ok, item} <- Events.before_import(item, reported(outcome), state.run, state.actor),
+         note = note(target, item, context, kept, outcome),
          {:ok, written} <-
            target.prepare(item, context, &transacted(state, {source_item, item}, plan, &1, note)) do
       {:ok, written, note}
@@ -177,6 +233,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
         store(state, items, plan, context, note)
       end)
 
+  defp store(state, items, {:restored, target, record}, context, note) do
+    with {:ok, restored} <- Archived.restore(record, context),
+         do:
+           store(
+             state,
+             items,
+             {:updated, target, restored},
+             Map.put(context, :record, restored),
+             note
+           )
+  end
+
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
     with {:ok, written} <- write(target, item, record, context),
          {:ok, _item} <-
@@ -187,6 +255,18 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   defp stored({:ok, _item}), do: :ok
   defp stored({:error, error}), do: {:error, error}
+
+  defp restored_as(:unchanged, state, item, restored),
+    do: recorded(state, item, restored, {:updated, @restored}, %{})
+
+  defp restored_as(:kept, state, item, _restored),
+    do: state |> noted(item, :updated, @restored) |> kept_noted()
+
+  defp kept_noted(:ok), do: {:ok, nil}
+  defp kept_noted(error), do: error
+
+  defp reported(:restored), do: :updated
+  defp reported(outcome), do: outcome
 
   defp parented(_state, %Item{parent: nil}, context), do: {:ok, context}
 
@@ -225,7 +305,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp create(%{name: name}, resource, attrs, context),
     do: resource |> Ash.Changeset.for_create(name, attrs, as(context)) |> Ash.create()
 
-  defp as(context), do: [actor: context.actor, tenant: context.site_id]
+  defp as(context),
+    do: [
+      actor: context.actor,
+      tenant: context.site_id,
+      context: %{warn_on_transaction_hooks?: false}
+    ]
 
   defp recorded(
          state,
@@ -337,11 +422,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp to_convert(%Item{content: content}),
     do: for(%{html: nil, name: name} <- content || [], do: name)
 
-  defp note(target, item, context, unconverted),
+  defp note(target, item, context, unconverted, outcome),
     do:
-      [target.note(item, context), unconverted(unconverted)]
+      [restored_note(outcome), target.note(item, context), unconverted(unconverted)]
       |> Enum.reject(&is_nil/1)
       |> noted()
+
+  defp restored_note(:restored), do: @restored
+  defp restored_note(_outcome), do: nil
 
   defp noted([]), do: nil
   defp noted(notes), do: notes |> Enum.join("; ") |> Report.reason()

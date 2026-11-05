@@ -8,7 +8,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
   seeded WordPress answered for them (`elementor-pages`, `elementor-posts`): a page the page
   builder opens, a post in the Blog, and a page with widgets the CMS has no equivalent for waiting
   for an admin's decision, in the dry run too, until the admin imports it with the fallback HTML
-  for those widgets or leaves it out.
+  for those widgets or leaves it out. The site's Elementor colours and fonts (`elementor-globals`)
+  become a theme stylesheet of the site, or wait for an admin's decision where the site has its
+  own of that name.
   """
   use MishkaCmsMigration.DataCase, async: false
 
@@ -16,7 +18,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
 
   alias MishkaBlog.BlogPost
   alias MishkaCmsCore.Runtime.Authoring.Tree
-  alias MishkaCmsCore.Runtime.Page
+  alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
+  alias MishkaCmsCore.Runtime.Compilers.TailwindCompiler
+  alias MishkaCmsCore.Runtime.{Page, Stylesheet}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.Widgets
@@ -37,6 +41,19 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
   @contact "113"
   @post "115"
   @widgets "unsupported_widgets: form, google_maps, image-carousel, slides"
+  @globals %{
+    "/wp-json/" => "elementor-index",
+    "/wp-json/elementor/v1/globals" => "elementor-globals"
+  }
+  @google_fonts Path.expand("../../fixtures/google_fonts/elementor-globals.css", __DIR__)
+  @fonts %{"/css" => {"text/css; charset=utf-8", File.read!(@google_fonts)}}
+  @external_resource @google_fonts
+
+  # A stylesheet's write runs Tailwind, which a fresh checkout downloads the first time: here, rather
+  # than inside an import's transaction.
+  setup_all do
+    MishkaCmsCore.Runtime.Compilers.TailwindCompiler.ensure_installed()
+  end
 
   setup do
     stub!(@answers)
@@ -73,6 +90,230 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
     do:
       site
       |> item(source_id)
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
+
+  defp stylesheets(site),
+    do:
+      Stylesheet
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.filter(&(&1.site_id == site.id and &1.name == "elementor-globals"))
+
+  defp tokens(css) do
+    assert {:ok, [theme]} = IgniterCss.get_at_rules(css, "theme")
+    Map.new(theme.declarations)
+  end
+
+  defp at_rules(css, name) do
+    assert {:ok, rules} = IgniterCss.get_at_rules(css, name)
+    rules
+  end
+
+  defp font_requests(count \\ 0) do
+    receive do
+      {:wordpress_request, %{host: "fonts.googleapis.com"}} -> font_requests(count + 1)
+    after
+      0 -> count
+    end
+  end
+
+  describe "Elementor's global colours and fonts" do
+    setup %{site: site} do
+      stub!(@answers |> Map.merge(@globals) |> Map.merge(@fonts))
+
+      %{
+        admin: migration_admin!(site, @admin ++ ["admin:dashboard:runtime:stylesheet"])
+      }
+    end
+
+    test "an import writes them as a theme stylesheet of the site, which a second run leaves as it is",
+         %{site: site, admin: admin} do
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:created, nil}}
+
+      assert [stylesheet] = stylesheets(site)
+      assert {stylesheet.kind, stylesheet.active} == {:theme, true}
+      assert tokens(stylesheet.content)["--color-el-primary"] == "#1e3a8a"
+      assert tokens(stylesheet.content)["--color-el-primary-dark"] == "#1e3a8a"
+      assert tokens(stylesheet.content)["--font-el-primary"] == ~s("Poppins", sans-serif)
+
+      assert outcomes(imported!(site, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "unchanged"}
+             }
+
+      assert stylesheets(site) == [stylesheet]
+    end
+
+    test "an import writes the @font-face rules Google Fonts answers for the kit's fonts in place of its @import, asked once, and a second run asks nothing",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert font_requests() == 0
+
+      import!(run, admin)
+
+      assert_received {:wordpress_request,
+                       %{host: "fonts.googleapis.com", request_path: "/css"} = asked}
+
+      assert asked.query_params["family"] == "Poppins:400,700|Lora:400,700|Inter:400,600,700"
+      assert ["Mozilla/5.0 " <> _browser] = Plug.Conn.get_req_header(asked, "user-agent")
+      assert font_requests() == 0
+
+      [stylesheet] = stylesheets(site)
+      assert at_rules(stylesheet.content, "import") == []
+
+      assert stylesheet.content |> at_rules("font-face") |> Enum.map(& &1.declarations) ==
+               @google_fonts
+               |> File.read!()
+               |> at_rules("font-face")
+               |> Enum.map(& &1.declarations)
+
+      for %{declarations: declarations} <- at_rules(stylesheet.content, "font-face") do
+        assert "url(https://fonts.gstatic.com/" <> _file = Map.new(declarations)["src"]
+      end
+
+      assert tokens(stylesheet.content)["--font-el-primary"] == ~s("Poppins", sans-serif)
+
+      assert outcomes(imported!(site, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "unchanged"}
+             }
+
+      assert font_requests() == 0
+    end
+
+    test "with Google Fonts out of reach the stylesheet keeps the kit's @import, and a second run asks again",
+         %{site: site, admin: admin} do
+      stub!(@answers |> Map.merge(@globals) |> Map.put("/css", :unreachable))
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:created, nil}}
+
+      [stylesheet] = stylesheets(site)
+
+      assert [%{target: "https://fonts.googleapis.com/css?" <> _fonts}] =
+               at_rules(stylesheet.content, "import")
+
+      assert at_rules(stylesheet.content, "font-face") == []
+
+      stub!(@answers |> Map.merge(@globals) |> Map.merge(@fonts))
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:updated, nil}}
+
+      assert [%{id: id, content: content}] = stylesheets(site)
+      assert id == stylesheet.id
+      assert at_rules(content, "import") == []
+      assert at_rules(content, "font-face") != []
+    end
+
+    test "the imported page names the tokens the stylesheet declares, through the builder's style settings",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+      landing = pages(site)["/elementor-landing"]
+
+      {authored, styles} =
+        landing.template
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("h1")
+        |> LazyHTML.attribute("class")
+        |> hd()
+        |> Styles.from_classes()
+
+      assert styles.base["color"] == "var(--color-el-primary,#1e3a8a)"
+
+      assert "dark:text-[var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))]" in authored
+
+      assert "font-[family-name:var(--font-el-primary,'Poppins',sans-serif)]" in authored
+
+      assert %{
+               "--color-el-primary" => _,
+               "--color-el-primary-dark" => _,
+               "--font-el-primary" => _
+             } =
+               tokens(stylesheet.content)
+
+      assert {:ok, %Tree{}} = Tree.parse(landing.template)
+    end
+
+    test "the page reads without the stylesheet: Tailwind builds each token's use with the kit's own value behind it",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+      Ash.destroy!(stylesheet, action: :permanent_destroy, tenant: site.id, authorize?: false)
+      landing = pages(site)["/elementor-landing"]
+
+      assert {:ok, css} =
+               TailwindCompiler.compile_preview(
+                 site.name,
+                 "el_fallback",
+                 "landing",
+                 landing.template
+               )
+
+      refute css =~ "--color-el-accent:"
+      assert css =~ "background-color:var(--color-el-accent,#f59e0b)"
+      assert css =~ "background-color:var(--color-el-accent-dark,var(--color-el-accent,#f59e0b))"
+      assert css =~ "color:var(--color-el-primary,#1e3a8a)"
+      assert css =~ "color:var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))"
+      assert css =~ "font-family:var(--font-el-primary,"
+    end
+
+    test "an archived stylesheet waits for the admin's decision, Restore it brings it back inactive as the core's Restore does, and one deleted for good is reported deleted, not unchanged",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+
+      Ash.destroy!(stylesheet, tenant: site.id, authorize?: false)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:undecided, "archived_in_cms"}}
+      assert stylesheets(site) == []
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "import")
+
+      assert outcomes(import!(run, admin), "stylesheet") == %{
+               "elementor" => {:updated, "restored"}
+             }
+
+      assert [%{id: id, active: false}] = stylesheets(site)
+      assert id == stylesheet.id
+
+      Ash.destroy!(stylesheet, action: :permanent_destroy, tenant: site.id, authorize?: false)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:skipped, "target_missing"}}
+
+      assert outcomes(import!(run, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "target_missing"}
+             }
+
+      assert stylesheets(site) == []
+    end
+
+    test "a site with its own stylesheet of that name waits for the admin's decision, and follows it",
+         %{site: site, admin: admin} do
+      own = "@theme {\n  --color-el-primary: #000000;\n}\n"
+
+      Stylesheet
+      |> Ash.Changeset.for_create(
+        :master_create,
+        %{name: "elementor-globals", content: own, kind: :theme, site_id: site.id},
+        authorize?: false
+      )
+      |> Ash.create!()
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:undecided, "site_has_own"}}
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "keep")
+      run = imported!(site, admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:skipped, "site_own_kept"}}
+      assert [%{content: ^own}] = stylesheets(site)
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "import")
+      assert %{"elementor" => {:updated, _}} = outcomes(imported!(site, admin), "stylesheet")
+      assert [stylesheet] = stylesheets(site)
+      assert tokens(stylesheet.content)["--color-el-primary"] == "#1e3a8a"
+    end
+  end
+
+  defp decide_kind!(site, admin, kind, source_id, choice),
+    do:
+      MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == kind and &1.source_id == source_id))
       |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
   describe "a dry run" do

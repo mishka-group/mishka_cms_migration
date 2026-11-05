@@ -591,6 +591,71 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     end
   end
 
+  describe "a record an admin archived in the CMS" do
+    @gutenberg "18"
+    @every_block "33"
+
+    setup %{site: site, admin: admin} do
+      imported!(site, admin)
+      gutenberg = blog(Tag, site)["Gutenberg"]
+      Ash.destroy!(gutenberg, actor: admin, tenant: site.id)
+      change_in_wordpress!("post")
+      %{gutenberg: gutenberg}
+    end
+
+    defp named_by(site, title),
+      do: posts(site)[title].tenant_tags |> Enum.map(& &1.name) |> Enum.sort()
+
+    test "waits for the admin's decision on a second run, and a post that names it waits for that decision instead of failing, in the dry run too",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:undecided, "archived_in_cms"}
+      assert outcomes(run, "post")[@every_block] == {:skipped, "waits_for: tag"}
+
+      run = import!(run, admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:undecided, "archived_in_cms"}
+      assert outcomes(run, "post")[@every_block] == {:skipped, "waits_for: tag"}
+      assert counts(run, "post").failed == 0
+      assert {:updated, _note} = outcomes(run, "post")["43"]
+
+      item = item!(site, "tag", @gutenberg)
+      assert MigrationItem.conflict(item) == "archived_in_cms"
+
+      assert MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: item}}) == [
+               {"Restore it from the archive", "import"},
+               {"Leave it archived, and import what names it without it", "leave_out"}
+             ]
+
+      refute is_map_key(blog(Tag, site), "Gutenberg")
+    end
+
+    test "Restore it brings the tag back as the admin left it, and the posts that name it are written with it",
+         %{site: site, admin: admin, gutenberg: gutenberg} do
+      imported!(site, admin)
+      decide!(site, admin, [{"tag", @gutenberg}], "import")
+
+      run = imported!(site, admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:updated, "restored"}
+      assert {:updated, _note} = outcomes(run, "post")[@every_block]
+      assert blog(Tag, site)["Gutenberg"].id == gutenberg.id
+      assert named_by(site, "Every core block in one post") == ["Gutenberg", "WordPress"]
+
+      assert outcomes(imported!(site, admin), "tag")[@gutenberg] == {:skipped, "unchanged"}
+    end
+
+    test "Leave it archived keeps the tag archived, and the posts that name it are written without it",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      decide!(site, admin, [{"tag", @gutenberg}], "leave_out")
+
+      run = imported!(site, admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:skipped, "left_out_by_admin"}
+      assert {:updated, _note} = outcomes(run, "post")[@every_block]
+      refute is_map_key(blog(Tag, site), "Gutenberg")
+      assert named_by(site, "Every core block in one post") == ["WordPress"]
+    end
+  end
+
   defp flush_emails do
     receive do
       {:email, _email} -> flush_emails()

@@ -1,0 +1,37 @@
+{
+  "system_colors": [
+    { "_id": "primary", "title": "Primary", "color": "#1E3A8A" },
+    { "_id": "secondary", "title": "Secondary", "color": "#475569" },
+    { "_id": "text", "title": "Text", "color": "#334155" },
+    { "_id": "accent", "title": "Accent", "color": "#F59E0B" }
+  ],
+  "custom_colors": [
+    { "_id": "a1b2c3d", "title": "Soft sky", "color": "#E0F2FE" },
+    { "_id": "e5f6a7b", "title": "Deep teal", "color": "#0F766E" }
+  ],
+  "system_typography": [
+    { "_id": "primary", "title": "Primary", "typography_typography": "custom", "typography_font_family": "Poppins", "typography_font_weight": "700" },
+    { "_id": "secondary", "title": "Secondary", "typography_typography": "custom", "typography_font_family": "Lora", "typography_font_weight": "400" },
+    { "_id": "text", "title": "Text", "typography_typography": "custom", "typography_font_family": "Inter", "typography_font_weight": "400" },
+    {
+      "_id": "accent",
+      "title": "Accent",
+      "typography_typography": "custom",
+      "typography_font_family": "Inter",
+      "typography_font_weight": "600",
+      "typography_text_transform": "uppercase",
+      "typography_letter_spacing": { "unit": "px", "size": 1, "sizes": [] }
+    }
+  ],
+  "custom_typography": [
+    {
+      "_id": "c3d4e5f",
+      "title": "Fine print",
+      "typography_typography": "custom",
+      "typography_font_family": "Arial",
+      "typography_font_weight": "400",
+      "typography_font_size": { "unit": "px", "size": 13, "sizes": [] },
+      "typography_line_height": { "unit": "em", "size": 1.5, "sizes": [] }
+    }
+  ]
+}

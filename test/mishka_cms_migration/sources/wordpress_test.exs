@@ -201,7 +201,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {:ok, WordPress} = Source.fetch("wordpress")
 
       assert WordPress.kinds() ==
-               ~w(user category tag media setting page post comment post_redirect menu)
+               ~w(user category tag media setting stylesheet page post comment post_redirect menu)
     end
   end
 
@@ -1259,7 +1259,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
         |> dry_run!(admin)
 
       assert run.status == :dry_run
-      assert Enum.map(run.report.kinds, & &1.kind) == WordPress.kinds()
+      # The recorded site runs no Elementor, so it has no stylesheet of Elementor's globals.
+      assert Enum.map(run.report.kinds, & &1.kind) == WordPress.kinds() -- ["stylesheet"]
 
       published = Enum.count(recorded("posts"), &(&1["status"] == "publish"))
 

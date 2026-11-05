@@ -131,6 +131,9 @@ defmodule MishkaCmsMigration.Sources.LanguagesTest do
           Languages.wpml_index()
         )
 
+    defp wpml_answer(%{request_path: "/wp-json/elementor/v1/globals"} = conn),
+      do: Req.Test.json(conn, %{})
+
     defp wpml_answer(%{request_path: "/wp-json/wp/v2/users/me"} = conn),
       do: Req.Test.json(conn, %{"id" => 1, "username" => "admin"})
 

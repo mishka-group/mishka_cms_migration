@@ -23,7 +23,12 @@
               "id": "5a1e003",
               "elType": "widget",
               "widgetType": "heading",
-              "settings": { "title": "Move your WordPress site to Mishka CMS", "header_size": "h1", "align": "center" },
+              "settings": {
+                "title": "Move your WordPress site to Mishka CMS",
+                "header_size": "h1",
+                "align": "center",
+                "__globals__": { "title_color": "globals/colors?id=primary", "typography_typography": "globals/typography?id=primary" }
+              },
               "elements": []
             },
             {
@@ -31,7 +36,8 @@
               "elType": "widget",
               "widgetType": "text-editor",
               "settings": {
-                "editor": "<p>Every part of this page was laid out with Elementor. Read <a href=\"{{link:about}}\">about the team</a>, or start with the <a href=\"{{link:welcome-to-the-mishka-test-blog}}\">welcome post</a>.</p>\n<p>A second paragraph, with <strong>bold</strong> and <em>italic</em> words.</p>"
+                "editor": "<p>Every part of this page was laid out with Elementor. Read <a href=\"{{link:about}}\">about the team</a>, or start with the <a href=\"{{link:welcome-to-the-mishka-test-blog}}\">welcome post</a>.</p>\n<p>A second paragraph, with <strong>bold</strong> and <em>italic</em> words.</p>",
+                "__globals__": { "text_color": "globals/colors?id=text", "typography_typography": "globals/typography?id=text" }
               },
               "elements": []
             },
@@ -43,7 +49,10 @@
                 "text": "Contact us",
                 "link": { "url": "{{link:contact}}", "is_external": "", "nofollow": "", "custom_attributes": "" },
                 "align": "center",
-                "size": "md"
+                "size": "md",
+                "background_background": "classic",
+                "_margin": { "unit": "px", "top": "24", "right": "0", "bottom": "0", "left": "0", "isLinked": false },
+                "__globals__": { "background_color": "globals/colors?id=accent" }
               },
               "elements": []
             }
@@ -55,7 +64,12 @@
       "id": "5a1e010",
       "elType": "section",
       "isInner": false,
-      "settings": { "structure": "20" },
+      "settings": {
+        "structure": "20",
+        "gap": "wide",
+        "background_background": "classic",
+        "__globals__": { "background_color": "globals/colors?id=a1b2c3d" }
+      },
       "elements": [
         {
           "id": "5a1e011",
@@ -82,13 +96,23 @@
           "id": "5a1e013",
           "elType": "column",
           "isInner": false,
-          "settings": { "_column_size": 50 },
+          "settings": {
+            "_column_size": 50,
+            "padding": { "unit": "px", "top": "30", "right": "30", "bottom": "30", "left": "30", "isLinked": true }
+          },
           "elements": [
             {
               "id": "5a1e014",
               "elType": "widget",
               "widgetType": "heading",
-              "settings": { "title": "What comes across", "header_size": "h2" },
+              "settings": {
+                "title": "What comes across",
+                "header_size": "h2",
+                "title_color": "#0F766E",
+                "typography_typography": "custom",
+                "typography_font_family": "Lora",
+                "typography_font_weight": "500"
+              },
               "elements": []
             },
             {
@@ -111,7 +135,9 @@
               "settings": {
                 "image": { "url": "{{url:diagram}}", "id": "{{id:diagram}}", "size": "", "alt": "WordPress, Normalize and Mishka CMS boxes joined by arrows", "source": "library" },
                 "image_size": "medium",
-                "link_to": "none"
+                "link_to": "none",
+                "align": "left",
+                "width": { "unit": "%", "size": 60, "sizes": [] }
               },
               "elements": []
             }
@@ -144,7 +170,7 @@
               "id": "5a1e025",
               "elType": "section",
               "isInner": true,
-              "settings": { "structure": "20" },
+              "settings": { "structure": "20", "gap": "no" },
               "elements": [
                 {
                   "id": "5a1e026",

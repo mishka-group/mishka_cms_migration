@@ -73,8 +73,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     Enum.reject(rows, &(&1["id"] in @unexported_settings))
   end
 
-  defp rest_rows(conn, "menu") do
-    {:ok, rows, nil} = WordPress.list(conn, "menu", nil)
+  defp rest_rows(conn, kind) when kind in ["menu", "stylesheet"] do
+    {:ok, rows, nil} = WordPress.list(conn, kind, nil)
     rows
   end
 
@@ -388,7 +388,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert {file.status, file.source_host, file.extra["name"]} ==
                {:dry_run, rest.source_host, rest.extra["name"]}
 
-      assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds()
+      assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds() -- ["stylesheet"]
 
       assert counts(file) ==
                counts(rest)

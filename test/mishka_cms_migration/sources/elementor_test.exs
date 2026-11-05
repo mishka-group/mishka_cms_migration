@@ -11,25 +11,30 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
   them in their place. The entries' links and files are asked of the site's other recordings.
 
   Content is read for what it means, with LazyHTML: which elements hold which text and which
-  addresses, and which of the builder's classes they carry, not its markup as a string.
+  addresses, and which of the builder's classes they carry, not its markup as a string. The
+  stylesheet Elementor's global colours and fonts become (`elementor-globals`, recorded by the same
+  script) is read with the CSS parser, for the tokens it declares and the fonts it loads.
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, recorded: 1]
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1, recorded: 1]
 
   alias MishkaCmsCore.Runtime.Authoring.{Elements, Tree}
   alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Sources.{WordPress, WordPressFile}
+  alias MishkaCmsMigration.Sources.WordPress.ElementorKit
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @context %{site_id: nil, run_id: nil, source_host: "localhost:8089", options: %{}}
   @export Path.expand("../../fixtures/wordpress/wxr/elementor.xml", __DIR__)
   @unsupported ["form", "google_maps", "image-carousel", "slides"]
   @uploads "http://localhost:8089/wp-content/uploads/2026/11/"
+  @globals_route "/wp-json/elementor/v1/globals"
+  @elementor_site %{"/wp-json/" => "elementor-index", @globals_route => "elementor-globals"}
 
   defp items!(kind, recording) do
-    stub!()
+    stub!(@elementor_site)
     {:ok, conn} = WordPress.connect(@connection, "app password")
     recording |> recorded() |> normalized(kind, conn)
   end
@@ -82,7 +87,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
   defp laid_out!(elements, kind \\ "page") do
     [row] = Enum.filter(recorded("elementor-pages"), &(&1["slug"] == "elementor-landing"))
-    stub!()
+    stub!(@elementor_site)
     {:ok, conn} = WordPress.connect(@connection, "app password")
 
     assert {:ok, item} =
@@ -103,6 +108,124 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       "settings" => settings,
       "elements" => []
     }
+
+  defp stylesheet_from_site! do
+    stub!(@elementor_site)
+    {:ok, conn} = WordPress.connect(@connection, "app password")
+    assert {:ok, [row], nil} = WordPress.list(conn, "stylesheet", nil)
+    stylesheet!(row, conn)
+  end
+
+  defp stylesheet!(row, conn) do
+    assert {:ok, attrs} = WordPress.normalize(row, "stylesheet", Map.put(@context, :conn, conn))
+    assert {:ok, item} = attrs |> Map.put(:kind, "stylesheet") |> Item.build()
+    item
+  end
+
+  defp tokens(css) do
+    assert {:ok, [theme]} = IgniterCss.get_at_rules(css, "theme")
+    Map.new(theme.declarations)
+  end
+
+  defp fonts_loaded(css) do
+    assert {:ok, imports} = IgniterCss.get_at_rules(css, "import")
+
+    for %{target: url} <- imports,
+        %URI{host: "fonts.googleapis.com", query: query} = URI.parse(url),
+        family <- query |> URI.decode_query() |> Map.fetch!("family") |> String.split("|"),
+        [name, weights] = String.split(family, ":"),
+        into: %{},
+        do: {name, String.split(weights, ",")}
+  end
+
+  describe "Elementor's global colours and fonts" do
+    test "are read once, as the source connects, and become a stylesheet of theme tokens, each colour with a dark twin" do
+      item = stylesheet_from_site!()
+
+      assert_received {:wordpress_request, %{request_path: @globals_route}}
+      refute_received {:wordpress_request, %{request_path: @globals_route}}
+
+      assert {item.source_id, item.attrs["name"]} == {"elementor", "elementor-globals"}
+      tokens = tokens(item.attrs["content"])
+
+      for {id, %{"value" => value}} <- recorded("elementor-globals")["colors"] do
+        assert tokens["--color-el-#{id}"] == String.downcase(value)
+        assert tokens["--color-el-#{id}-dark"] == String.downcase(value)
+      end
+
+      for {id, %{"value" => %{"typography_font_family" => family}}} <-
+            recorded("elementor-globals")["typography"] do
+        assert tokens["--font-el-#{id}"] == ~s("#{family}", sans-serif)
+      end
+
+      assert fonts_loaded(item.attrs["content"]) == %{
+               "Poppins" => ["400", "700"],
+               "Lora" => ["400", "700"],
+               "Inter" => ["400", "600", "700"]
+             }
+    end
+
+    test "are not asked of a site without Elementor, which has no stylesheet to import" do
+      stub!()
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      assert WordPress.list(conn, "stylesheet", nil) == {:ok, [], nil}
+      refute_received {:wordpress_request, %{request_path: @globals_route}}
+    end
+
+    test "from an export are the same stylesheet, read from the kit it carries" do
+      from_site = stylesheet_from_site!()
+      {:ok, conn} = WordPressFile.connect(%{"file" => @export}, nil)
+
+      assert {:ok, [row], nil} = WordPressFile.list(conn, "stylesheet", nil)
+      assert stylesheet!(row, conn).attrs == from_site.attrs
+    end
+
+    test "of a kit that never saved them are Elementor's own, Roboto and its four colours" do
+      css =
+        %{}
+        |> ElementorKit.from_settings()
+        |> ElementorKit.stylesheet(nil)
+        |> Map.fetch!("content")
+
+      assert %{
+               "--color-el-primary" => "#6ec1e4",
+               "--color-el-accent-dark" => "#61ce70",
+               "--font-el-secondary" => ~s("Roboto Slab", sans-serif)
+             } = tokens(css)
+
+      assert fonts_loaded(css) == %{
+               "Roboto" => ["400", "500", "600", "700"],
+               "Roboto Slab" => ["400", "700"]
+             }
+    end
+
+    test "leave out an id, a colour or a family a stylesheet could not hold as it is" do
+      globals = %{
+        "colors" => %{
+          "good" => %{"value" => "#ABC"},
+          "rgb" => %{"value" => "rgba(0, 0, 0, 0.5)"},
+          "Bad-Id" => %{"value" => "#000000"},
+          "broken" => %{"value" => "red;} body { display: none"},
+          "script" => %{"value" => "url(javascript:alert(1))"}
+        },
+        "typography" => %{
+          "fine" => %{"value" => %{"typography_font_family" => "Open Sans"}},
+          "quoted" => %{"value" => %{"typography_font_family" => ~s(X", serif; } a { color: red)}}
+        }
+      }
+
+      css = globals |> ElementorKit.stylesheet(nil) |> Map.fetch!("content")
+
+      assert tokens(css) |> Map.keys() |> Enum.sort() ==
+               ~w(--color-el-good --color-el-good-dark --color-el-rgb --color-el-rgb-dark
+                  --font-el-fine)
+
+      assert tokens(css)["--color-el-good"] == "#abc"
+      assert {:ok, [_one]} = IgniterCss.get_at_rules(css, "theme")
+      assert fonts_loaded(css) == %{"Open Sans" => ["400", "700"]}
+    end
+  end
 
   describe "a page's colours" do
     test "adapt to the dark theme: the site's tokens, each with its dark twin, not slate" do
@@ -187,17 +310,20 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       end
     end
 
-    test "gives a heading a colour only when the theme has a token for it" do
-      {authored, _styles} =
+    test "gives a heading the theme's token for a colour the theme has, and any other through the Inspector, keeping the theme's dark twin" do
+      {authored, styles} =
         styled(section(%{}, [column(%{"title_color" => "#5B4FE0"})]), "h1")
 
       assert "text-brand" in authored and "dark:text-brand-dark" in authored
       refute "text-fg" in authored
+      assert styles == %{}
 
-      {authored, _styles} =
+      {authored, styles} =
         styled(section(%{}, [column(%{"title_color" => "#123456"})]), "h1")
 
-      assert "text-fg" in authored and "dark:text-fg-dark" in authored
+      assert styles == %{base: %{"color" => "#123456"}}
+      refute "text-fg" in authored
+      assert "dark:text-fg-dark" in authored
     end
 
     test "gives a section its padding and margin by side, in the unit Elementor has, at each width" do
@@ -281,6 +407,384 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       item = laid_out!(elements)
       assert item |> html() |> LazyHTML.query("[style]") |> Enum.empty?()
       assert {:ok, %Tree{}} = item |> Item.html() |> Tree.parse()
+    end
+  end
+
+  describe "a page's Elementor colours and fonts" do
+    setup do
+      %{page: items!("page", "elementor-pages")["elementor-landing"]}
+    end
+
+    defp look(html, selector),
+      do: html |> attribute(selector, "class") |> hd() |> Styles.from_classes()
+
+    test "name the kit's colour and font through the Inspector and its tokens, a dark twin for the dark theme, each falling back to the kit's own value",
+         %{page: page} do
+      html = html(page)
+      {authored, styles} = look(html, "h1")
+
+      assert styles.base["color"] == "var(--color-el-primary,#1e3a8a)"
+      assert styles.base["font-weight"] == "font-bold"
+
+      assert "dark:text-[var(--color-el-primary-dark,var(--color-el-primary,#1e3a8a))]" in authored
+
+      assert "font-[family-name:var(--font-el-primary,'Poppins',sans-serif)]" in authored
+      refute "text-fg" in authored or "dark:text-fg-dark" in authored
+
+      {authored, styles} = look(html, "a.inline-block")
+      assert styles.base["background"] == "var(--color-el-accent,#f59e0b)"
+      assert "dark:bg-[var(--color-el-accent-dark,var(--color-el-accent,#f59e0b))]" in authored
+      refute "bg-fg" in authored or "dark:bg-fg-dark" in authored
+
+      {authored, styles} = look(html, "section:nth-of-type(2)")
+      assert styles.base["background"] == "var(--color-el-a1b2c3d,#e0f2fe)"
+      assert "dark:bg-[var(--color-el-a1b2c3d-dark,var(--color-el-a1b2c3d,#e0f2fe))]" in authored
+    end
+
+    test "write a family with a space, and a colour with spaces, as one class Tailwind reads back" do
+      elements = [
+        %{
+          "elType" => "section",
+          "elements" => [
+            %{
+              "elType" => "column",
+              "elements" => [
+                widget("heading", %{
+                  "title" => "T",
+                  "header_size" => "h2",
+                  "__globals__" => %{
+                    "title_color" => "globals/colors?id=e5f6a7b",
+                    "typography_typography" => "globals/typography?id=secondary"
+                  }
+                })
+              ]
+            }
+          ]
+        }
+      ]
+
+      {authored, styles} = elements |> laid_out!() |> html() |> look("h2")
+
+      assert styles.base["color"] == "var(--color-el-e5f6a7b,#0f766e)"
+      assert "font-[family-name:var(--font-el-secondary,'Lora',sans-serif)]" in authored
+
+      assert ElementorKit.font_class("secondary", "Roboto Slab") ==
+               "font-[family-name:var(--font-el-secondary,'Roboto_Slab',sans-serif)]"
+
+      assert ElementorKit.dark_class("text", "a1", "rgba(0, 0, 0, 0.5)") ==
+               "dark:text-[var(--color-el-a1-dark,var(--color-el-a1,rgba(0,_0,_0,_0.5)))]"
+    end
+
+    test "give a text editor's box the colour and font its paragraphs then take", %{page: page} do
+      html = html(page)
+
+      [box] =
+        html
+        |> LazyHTML.query("div:has(> p strong)")
+        |> Enum.map(&(&1 |> LazyHTML.attribute("class") |> hd() |> Styles.from_classes()))
+
+      assert {authored, %{base: %{"color" => "var(--color-el-text,#334155)"} = base}} = box
+      assert base["font-weight"] == "font-normal"
+      assert "font-[family-name:var(--font-el-text,'Inter',sans-serif)]" in authored
+      assert "dark:text-[var(--color-el-text-dark,var(--color-el-text,#334155))]" in authored
+
+      for paragraph <- classes(html, "div:has(> p strong) > p") do
+        refute Enum.any?(paragraph, &String.starts_with?(&1, ["text-dim", "dark:text-dim"]))
+        assert MapSet.subset?(MapSet.new(~w(text-base leading-relaxed)), paragraph)
+      end
+    end
+
+    test "give a colour and a font of the widget's own as the Inspector's, a family the kit loads as its token",
+         %{page: page} do
+      {authored, styles} = page |> html() |> look("h2")
+
+      assert styles.base["color"] == "#0f766e"
+      assert styles.base["font-weight"] == "font-medium"
+      assert "font-[family-name:var(--font-el-secondary,'Lora',sans-serif)]" in authored
+      assert "dark:text-fg-dark" in authored
+      refute "text-fg" in authored
+    end
+
+    test "leave the theme's own where the kit has no such colour, a family it does not load, or a gradient" do
+      elements = [
+        %{
+          "elType" => "section",
+          "settings" => %{
+            "background_background" => "gradient",
+            "background_color" => "#000000"
+          },
+          "elements" => [
+            %{
+              "elType" => "column",
+              "elements" => [
+                widget("heading", %{
+                  "title" => "T",
+                  "header_size" => "h1",
+                  "typography_font_family" => "Comic Neue",
+                  "__globals__" => %{"title_color" => "globals/colors?id=gone"}
+                })
+              ]
+            }
+          ]
+        }
+      ]
+
+      html = elements |> laid_out!() |> html()
+      {authored, styles} = look(html, "h1")
+
+      assert "text-fg" in authored and "dark:text-fg-dark" in authored
+      refute Map.has_key?(styles.base, "color")
+      refute Enum.any?(authored, &String.starts_with?(&1, "font-["))
+      assert look(html, "section") == {["py-16"], %{}}
+    end
+
+    test "give a section's colour of its own the page's colour in the dark theme" do
+      elements = [
+        %{
+          "elType" => "section",
+          "settings" => %{"background_background" => "classic", "background_color" => "#F5F5F5"},
+          "elements" => [%{"elType" => "column", "elements" => [widget("spacer", %{})]}]
+        }
+      ]
+
+      assert {authored, %{base: %{"background" => "#f5f5f5"}}} =
+               elements |> laid_out!() |> html() |> look("section")
+
+      assert "dark:bg-page-dark" in authored
+    end
+
+    test "give a font's weight, size, line height, letter spacing and case at each width" do
+      settings = %{
+        "title" => "T",
+        "header_size" => "h2",
+        "typography_typography" => "custom",
+        "typography_font_weight" => "300",
+        "typography_font_size_mobile" => %{"unit" => "px", "size" => 20},
+        "typography_line_height" => %{"unit" => "em", "size" => 1.2},
+        "typography_letter_spacing_tablet" => %{"unit" => "px", "size" => 2},
+        "typography_text_transform" => "uppercase"
+      }
+
+      assert {_authored, styles} =
+               [widget("heading", settings)] |> laid_out!() |> html() |> look("h2")
+
+      assert styles == %{
+               base: %{
+                 "font-weight" => "font-light",
+                 "line-height" => "1.2em",
+                 "text-transform" => "uppercase"
+               },
+               tablet: %{"letter-spacing" => "2px"},
+               mobile: %{"font-size" => "20px"}
+             }
+    end
+
+    test "give a text editor's own size and line height to its box, its paragraphs taking them" do
+      html =
+        [
+          widget("text-editor", %{
+            "editor" => "<p>One</p><p>Two</p>",
+            "typography_font_size" => %{"unit" => "px", "size" => 18},
+            "typography_line_height" => %{"unit" => "em", "size" => 1.8}
+          })
+        ]
+        |> laid_out!()
+        |> html()
+
+      assert {[], %{base: %{"font-size" => "18px", "line-height" => "1.8em"}}} =
+               look(html, "div:has(> p)")
+
+      for paragraph <- classes(html, "div > p") do
+        refute MapSet.member?(paragraph, "text-base") or
+                 MapSet.member?(paragraph, "leading-relaxed")
+
+        assert MapSet.member?(paragraph, "text-dim")
+      end
+    end
+
+    test "are not in a post, which is the Blog's HTML" do
+      heading =
+        widget("heading", %{
+          "title" => "T",
+          "__globals__" => %{
+            "title_color" => "globals/colors?id=primary",
+            "typography_typography" => "globals/typography?id=primary"
+          }
+        })
+
+      assert [heading] |> laid_out!("post") |> html() |> attribute("[class]", "class") == []
+    end
+  end
+
+  describe "a page's Elementor columns, widgets and images, as the builder's own style settings" do
+    defp laid_looks(elements, selector) do
+      elements
+      |> laid_out!()
+      |> html()
+      |> attribute(selector, "class")
+      |> Enum.map(&Styles.from_classes/1)
+    end
+
+    defp columns(section_settings, column_settings),
+      do: [
+        %{
+          "elType" => "section",
+          "settings" => section_settings,
+          "elements" =>
+            for(
+              settings <- column_settings,
+              do: %{
+                "elType" => "column",
+                "settings" => settings,
+                "elements" => [widget("heading", %{"title" => "T"})]
+              }
+            )
+        }
+      ]
+
+    test "give a column its padding, margin and background on the Stack it is drawn as, at each width" do
+      column = %{
+        "padding" => box("30", "30"),
+        "padding_mobile" => box("10", "10"),
+        "margin" => box("", "20"),
+        "background_background" => "classic",
+        "background_color" => "#FAFAFA"
+      }
+
+      assert [{authored, styles}] =
+               laid_looks(columns(%{}, [column, %{}]), "[class*=grid-cols] > div")
+
+      assert %{
+               base: %{"py" => "30px", "mb" => "20px", "background" => "#fafafa"},
+               mobile: %{"py" => "10px"}
+             } = styles
+
+      assert {styles.base["display"], styles.base["direction"]} == {"flex", "flex-col"}
+      assert "dark:bg-page-dark" in authored
+
+      assert [{_authored, %{base: %{"py" => "30px", "display" => "flex"}}}] =
+               laid_looks(columns(%{}, [column]), "section > div > div")
+    end
+
+    test "give an inner section its own padding and margin, on the grid it is drawn as" do
+      inner = %{
+        "elType" => "section",
+        "isInner" => true,
+        "settings" => %{"padding" => box("12", "12"), "margin" => box("8", "")},
+        "elements" => columns(%{}, [%{}, %{}]) |> hd() |> Map.fetch!("elements")
+      }
+
+      outer = [
+        %{
+          "elType" => "section",
+          "settings" => %{},
+          "elements" => [%{"elType" => "column", "elements" => [inner]}]
+        }
+      ]
+
+      assert [{_authored, %{base: %{"py" => "12px", "mt" => "8px"}}}] =
+               laid_looks(outer, "[class*=grid-cols]")
+    end
+
+    test "give a section's columns the gap Elementor names, in the pixels it documents, and a stack none" do
+      for {gap, pixels} <- [{"no", "0px"}, {"narrow", "5px"}, {"wide", "20px"}, {"wider", "30px"}] do
+        assert [{authored, %{base: %{"gap" => ^pixels}}}] =
+                 laid_looks(columns(%{"gap" => gap}, [%{}, %{}]), "[class*=grid-cols]")
+
+        refute "gap-6" in authored
+      end
+
+      custom = %{
+        "gap" => "custom",
+        "gap_columns_custom" => %{"unit" => "px", "size" => 12},
+        "gap_columns_custom_mobile" => %{"unit" => "px", "size" => 4}
+      }
+
+      assert [{_authored, %{base: %{"gap" => "12px"}, mobile: %{"gap" => "4px"}}}] =
+               laid_looks(columns(custom, [%{}, %{}]), "[class*=grid-cols]")
+
+      assert [{_authored, styles}] =
+               laid_looks(columns(%{"gap" => "wide"}, [%{}]), "section > div > div")
+
+      refute Map.has_key?(styles.base, "gap")
+    end
+
+    test "give a widget its own padding and margin, on a box around it when it is a link or draws more than one" do
+      margin = %{"_margin" => box("24", ""), "_padding_tablet" => box("6", "6")}
+
+      assert [{_authored, %{base: %{"mt" => "24px"}, tablet: %{"py" => "6px"}}}] =
+               laid_looks([widget("heading", Map.put(margin, "title", "T"))], "h2")
+
+      html = widget("html", Map.put(margin, "html", "<p>One</p><p>Two</p>"))
+      assert [{[], %{base: %{"mt" => "24px"}}} | _] = laid_looks([html], "div:has(> p)")
+
+      image =
+        widget(
+          "image",
+          Map.merge(margin, %{"image" => %{"url" => @uploads <> "hero.jpg"}, "link_to" => "file"})
+        )
+
+      assert [{[], %{base: %{"mt" => "24px"}}}] = laid_looks([image], "div:has(> a)")
+    end
+
+    test "give a button its own padding in place of the builder's" do
+      button = widget("button", %{"text" => "Go", "text_padding" => box("14", "14")})
+
+      assert [{authored, %{base: %{"py" => "14px"}}}] = laid_looks([button], "a")
+      refute "py-2.5" in authored
+      assert "px-5" in authored
+    end
+
+    test "draw an image at its own size, or the width Elementor gives it, centred unless it is aligned otherwise" do
+      url = %{"url" => @uploads <> "hero.jpg"}
+
+      assert [{authored, %{base: %{"width" => "auto", "mx" => "auto"}}}] =
+               laid_looks([widget("image", %{"image" => url})], "img")
+
+      refute "w-full" in authored
+
+      settings = %{
+        "image" => url,
+        "align" => "right",
+        "align_mobile" => "center",
+        "width" => %{"unit" => "%", "size" => 50},
+        "width_mobile" => %{"unit" => "px", "size" => 200}
+      }
+
+      assert [{_authored, styles}] = laid_looks([widget("image", settings)], "img")
+
+      assert styles == %{
+               base: %{"width" => "50%", "ml" => "auto", "mr" => "0px"},
+               mobile: %{"width" => "200px", "mx" => "auto"}
+             }
+    end
+
+    test "are as the seeded page has them: a column's padding, a widget's margin, an image's alignment and named gaps" do
+      html = html(items!("page", "elementor-pages")["elementor-landing"])
+
+      seeded = fn selector ->
+        html |> attribute(selector, "class") |> Enum.map(&Styles.from_classes/1)
+      end
+
+      assert [{_, %{base: %{"gap" => "20px"}}}, {_, %{base: %{"gap" => "0px"}}}] =
+               seeded.("[class*=grid-cols]")
+
+      assert [_figure, {_, %{base: %{"px" => "30px", "py" => "30px"}}}] =
+               seeded.("section:nth-of-type(2) [class*=grid-cols] > *")
+
+      assert [_hero, {_, %{base: %{"width" => "60%", "mx" => "0px"}}}] = seeded.("img")
+      assert [{_, %{base: %{"mt" => "24px"}}}] = seeded.("div:has(> a.inline-block)")
+    end
+
+    test "are not in a post, which is the Blog's HTML" do
+      elements =
+        columns(%{"gap" => "wide"}, [%{"padding" => box("30", "30")}]) ++
+          [
+            widget("image", %{"image" => %{"url" => @uploads <> "hero.jpg"}, "align" => "left"}),
+            widget("heading", %{"title" => "T", "_margin" => box("24", "")})
+          ]
+
+      assert elements |> laid_out!("post") |> html() |> attribute("[class]", "class") == []
     end
   end
 
@@ -623,6 +1127,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
       assert texts(html(exported!("post")["elementor-release-notes"]), ".md\\:grid-cols-3 h3") ==
                ["Faster", "Safer", "Easier"]
+
+      assert classes(html(pages["elementor-landing"]), "[class]") ==
+               classes(html(from_site["elementor-landing"]), "[class]")
     end
   end
 end

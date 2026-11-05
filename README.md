@@ -13,7 +13,7 @@
 
 ## 📖 What is Mishka CMS Migration?
 
-`mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects and site settings. Every record is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
+`mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects, site settings, and the global colours and fonts of a site built with Elementor, as theme tokens in a stylesheet of its own that the imported pages use, with a twin of each colour for the dark theme. Every record is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
 
 - [ ] WordPress
 - [ ] Joomla

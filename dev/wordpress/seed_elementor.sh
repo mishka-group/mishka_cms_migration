@@ -3,9 +3,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Adds Elementor (the free plugin) to the test WordPress, on top of seed.sh, and the pages and the post laid
-# out with it: seed/elementor/*.json, each the entry's fields and its elements in the shape Elementor saves
-# them. WP-CLI only. It changes nothing seed.sh made, and never the passwords or .env.local, so it runs on a
+# Adds Elementor (the free plugin) to the test WordPress, on top of seed.sh, the global colours and fonts of
+# its active kit (Site Settings): seed/elementor-kit.json, and the pages and the post laid out with it:
+# seed/elementor/*.json, each the entry's fields and its elements in the shape Elementor saves them. WP-CLI
+# only. It changes nothing seed.sh made, and never the passwords or .env.local, so it runs on a
 # site someone is already testing against.
 #
 # Each entry is saved through Elementor's own document API, which writes `_elementor_data`, its edit mode,
@@ -27,6 +28,20 @@ say "Elementor"
 wpu plugin is-installed elementor || wpu plugin install elementor
 wpu plugin is-active elementor || wpu plugin activate elementor
 wpu eval 'echo "Elementor " . ELEMENTOR_VERSION . "\n";'
+
+say "Elementor's global colours and fonts"
+cat > /tmp/seed-elementor-kit.php <<'PHP'
+<?php
+use Elementor\Plugin;
+
+// The active kit's Site Settings, its global colours and fonts, laid over what it already keeps.
+$kit      = Plugin::$instance->kits_manager->get_active_kit();
+$settings = get_post_meta( $kit->get_id(), '_elementor_page_settings', true );
+$seed     = json_decode( file_get_contents( '/seed/seed/elementor-kit.json' ), true );
+$kit->save( array( 'settings' => array_merge( is_array( $settings ) ? $settings : array(), $seed ) ) );
+echo "  kit #{$kit->get_id()}\n";
+PHP
+wpu eval-file /tmp/seed-elementor-kit.php
 
 say "Elementor pages and post"
 cat > /tmp/seed-elementor.php <<'PHP'

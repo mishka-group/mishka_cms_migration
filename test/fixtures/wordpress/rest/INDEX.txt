@@ -38,10 +38,12 @@ unauthorized-users-me.json	GET	/wp-json/wp/v2/users/me?context=edit [none]	401
 unauthorized-users-me-wrong-password.json	GET	/wp-json/wp/v2/users/me?context=edit [wrong]	401
 unauthorized-users-me-unknown-user.json	GET	/wp-json/wp/v2/users/me?context=edit [baduser]	401
 media-upload-svg-refused.json	POST	/wp-json/wp/v2/media (an SVG upload) [app]	500
-elementor-pages.json	GET	/wp-json/wp/v2/pages?context=edit&per_page=100&status=any&slug=elementor-landing,elementor-contact [app]	200
-elementor-posts.json	GET	/wp-json/wp/v2/posts?context=edit&per_page=100&status=any&slug=elementor-release-notes [app]	200
 polylang-index.json	GET	/wp-json/ [none]	200
 polylang-posts.json	GET	/wp-json/wp/v2/posts?context=edit&per_page=100&status=any&slug=a-weekend-in-isfahan,%d8%a2%d8%ae%d8%b1-%d9%87%d9%81%d8%aa%d9%87-%d8%af%d8%b1-%d8%a7%d8%b5%d9%81%d9%87%d8%a7%d9%86,packing-light,%db%8c%d8%a7%d8%af%d8%af%d8%a7%d8%b4%d8%aa-%d8%b3%d9%81%d8%b1 [app]	200
 polylang-pages.json	GET	/wp-json/wp/v2/pages?context=edit&per_page=100&status=any&slug=our-story,%d8%af%d8%a7%d8%b3%d8%aa%d8%a7%d9%86-%d9%85%d8%a7,our-crew,%d9%87%d9%85%d8%b3%d9%81%d8%b1%d8%a7%d9%86-%d9%85%d8%a7 [app]	200
 polylang-categories.json	GET	/wp-json/wp/v2/categories?context=edit&per_page=100&slug=travel,%d8%b3%d9%81%d8%b1 [app]	200
 polylang-tags.json	GET	/wp-json/wp/v2/tags?context=edit&per_page=100&slug=coffee,%d9%82%d9%87%d9%88%d9%87 [app]	200
+elementor-index.json	GET	/wp-json/?_fields=name,description,url,home,gmt_offset,timezone_string,namespaces,site_logo,site_icon,site_icon_url [app]	200
+elementor-globals.json	GET	/wp-json/elementor/v1/globals [app]	200
+elementor-pages.json	GET	/wp-json/wp/v2/pages?context=edit&per_page=100&status=any&slug=elementor-landing,elementor-contact [app]	200
+elementor-posts.json	GET	/wp-json/wp/v2/posts?context=edit&per_page=100&status=any&slug=elementor-release-notes [app]	200
