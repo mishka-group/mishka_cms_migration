@@ -8,8 +8,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab do
   import button for each installed source (`MishkaCmsMigration.Source.all/0`), and under them the
   admin's latest runs as the migration page's own Gervaz table (`MishkaCmsMigration.MigrationRun`),
   without writing its filters and page into the Settings address (`url_sync: false`) and without the
-  row's expand action, whose details the migration page draws and the Settings page cannot
-  (`MishkaCmsMigration.MigrationRun`'s `:expand`, hidden for this table's id).
+  row's expand control, whose details the migration page draws and the Settings page cannot
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab.RunsTemplate`).
 
   A button links to the migration page with `?new_import=<source>`, where the page opens the same
   New import form as its own button does (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`).
@@ -23,6 +23,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab do
   import MishkaCmsCore.CoreComponents, only: [icon: 1]
 
   alias MishkaCmsMigration.{MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab.RunsTemplate
 
   @page "/admin/dashboard/migration"
 
@@ -60,6 +61,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab do
         resource={MigrationRun}
         current_user={@current_user}
         url_sync={false}
+        template={RunsTemplate}
       />
     </div>
     """

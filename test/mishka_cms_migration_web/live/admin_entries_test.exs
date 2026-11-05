@@ -11,11 +11,11 @@ defmodule MishkaCmsMigrationWeb.Live.AdminEntriesTest do
   use MishkaCmsMigration.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import MishkaCmsMigration.DataCase, only: [register_plugin!: 2]
 
   alias MishkaBlog.Dashboard.Actions
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsCoreWeb.Live.Admin.Components.SettingsPanels
-  alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab
 
@@ -61,13 +61,41 @@ defmodule MishkaCmsMigrationWeb.Live.AdminEntriesTest do
   end
 
   describe "the runs table in the Settings tab" do
-    test "has no expand control, which only the migration page can answer" do
-      %{visible: visible} = MishkaGervaz.Resource.Info.Table.row_action(MigrationRun, :expand)
-      settings = %{static: %{id: "migration-settings-runs"}}
-      page = %{static: %{id: "migration-runs-table"}}
+    @expand ~s|[phx-click="expand_row"]|
 
-      refute visible.(%MigrationRun{}, settings)
-      assert visible.(%MigrationRun{}, page)
+    test "has no expand control, which only the migration page can answer", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site, ["admin:dashboard:migration"])
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      create_run!(site, admin, %{})
+
+      {:ok, view, _html} =
+        conn |> signed_in(admin) |> live("/admin/dashboard/settings?tab=migration")
+
+      html = render_async(view)
+
+      assert html =~ "migration-settings-runs"
+      assert html =~ ~s|data-role="migration-settings-tab"|
+
+      assert has_element?(
+               view,
+               "#migration-settings-runs [phx-click=\"dry_run\"], #migration-settings-runs a"
+             )
+
+      refute has_element?(view, "#migration-settings-runs #{@expand}")
+    end
+
+    test "is still expandable on the migration page", %{conn: conn, site: site} do
+      admin = migration_admin!(site, ["admin:dashboard:migration"])
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      create_run!(site, admin, %{})
+
+      {:ok, view, _html} = conn |> signed_in(admin) |> live("/admin/dashboard/migration")
+      render_async(view)
+
+      assert has_element?(view, "#migration-runs-table #{@expand}")
     end
   end
 
