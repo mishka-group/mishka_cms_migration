@@ -52,7 +52,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     * a shortcode — its shortcodes, converted as classic content's are.
 
   The paragraphs, lists, quotes, links, images, figures and rules of these take the classes of the
-  builder's element of the same tag (Paragraph, Bulleted list, Link, ...).
+  builder's element of the same tag (Paragraph, Bulleted list, Link, ...), with the builder's slate
+  colours swapped for the site's colour tokens (`text-fg dark:text-fg-dark`, ...): slate does not
+  change in the dark theme, and the tokens do.
 
   ## A post
 
@@ -94,6 +96,20 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   @dropped_attrs ~w(class style srcset sizes loading decoding fetchpriority)
   @not_kept ["script", "style", "noscript"]
 
+  # The builder's elements are written in Tailwind's slate, which stays dark on a dark page. The
+  # site's own colour tokens (`MishkaCmsCore.Install.StarterContent.theme_css/0`) each have a
+  # `-dark` twin, so a page is drawn with them, as the starter's own pages are.
+  @themed %{
+    "text-slate-900" => "text-fg dark:text-fg-dark",
+    "text-slate-700" => "text-dim dark:text-dim-dark",
+    "text-slate-600" => "text-dim dark:text-dim-dark",
+    "text-slate-500" => "text-subtle dark:text-subtle-dark",
+    "border-slate-300" => "border-edge dark:border-edge-dark",
+    "border-slate-200" => "border-edge dark:border-edge-dark",
+    "bg-slate-900" => "bg-fg dark:bg-fg-dark",
+    "text-white" => "text-white dark:text-page-dark"
+  }
+
   @videos %{
     "youtube" => {"youtube_url", "https://www.youtube.com/watch?v=XHOmBV4js_E"},
     "vimeo" => {"vimeo_url", "https://vimeo.com/235215203"},
@@ -121,8 +137,15 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
             {tag, attrs, _children} = node, styles ->
               {node,
                Enum.reduce(attrs, styles, fn
-                 {"class", class}, styles -> Map.put_new(styles, tag, class)
-                 _attr, styles -> styles
+                 {"class", class}, styles ->
+                   Map.put_new(
+                     styles,
+                     tag,
+                     class |> String.split() |> Enum.map_join(" ", &Map.get(@themed, &1, &1))
+                   )
+
+                 _attr, styles ->
+                   styles
                end)}
 
             node, styles ->
@@ -135,7 +158,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
              |> Map.fetch!("el-submit")
              |> elem(1)
              |> List.keyfind("class", 0)
-             |> elem(1))
+             |> elem(1)
+             |> String.split()
+             |> Enum.map_join(" ", &Map.get(@themed, &1, &1)))
 
   @doc """
   The content pieces of `row`, an entry Elementor laid out, made as a `kind` (`"page"` or

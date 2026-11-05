@@ -69,7 +69,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       |> LazyHTML.from_fragment()
       |> LazyHTML.to_tree()
 
-    attrs |> List.keyfind("class", 0) |> elem(1) |> String.split() |> MapSet.new()
+    attrs
+    |> List.keyfind("class", 0)
+    |> elem(1)
+    |> String.split()
+    |> Enum.reject(&(&1 =~ "slate"))
+    |> MapSet.new()
   end
 
   defp drawn_as?(classes, id), do: MapSet.subset?(builder(id), classes)
@@ -97,6 +102,29 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       "settings" => settings,
       "elements" => []
     }
+
+  describe "a page's colours" do
+    test "adapt to the dark theme: the site's tokens, each with its dark twin, not slate" do
+      html = html(items!("page", "elementor-pages")["elementor-landing"])
+      classes = html |> attribute("[class]", "class") |> Enum.flat_map(&String.split/1)
+
+      refute Enum.any?(classes, &(&1 =~ "slate"))
+      assert "text-fg" in classes and "dark:text-fg-dark" in classes
+      assert "text-dim" in classes and "dark:text-dim-dark" in classes
+
+      for class <- classes, String.starts_with?(class, ["text-fg", "text-dim", "text-subtle"]) do
+        assert ("dark:" <> class <> "-dark") in classes
+      end
+    end
+
+    test "are tokens the starter's theme defines, light and dark" do
+      theme = MishkaCmsCore.Install.StarterContent.theme_css()
+
+      for token <- ~w(fg dim subtle faint brand edge page) do
+        assert theme =~ "--color-#{token}-dark:"
+      end
+    end
+  end
 
   describe "a page laid out with sections" do
     setup do
