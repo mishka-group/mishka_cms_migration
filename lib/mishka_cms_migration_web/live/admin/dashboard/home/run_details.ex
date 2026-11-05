@@ -28,6 +28,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), under the head, and,
       when an import created users, the warning that their passwords cannot be carried over
       (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice`).
+    * A cancelled run says so, in the alert the Items page shows
+      (`MishkaCmsMigration.MigrationRun.cancelled_words/1`).
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
       address, which opens in a new tab, its timezone and who signed in) and the admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
@@ -47,6 +49,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   use Gettext, backend: MishkaCmsCore.Gettext
 
   import MishkaCmsCore.CoreComponents, only: [icon: 1]
+  import MishkaGervaz.UIAdapters.Tailwind, only: [alert: 1]
 
   alias MishkaCmsCore.Dashboard.Widget
   alias MishkaCmsCore.Localized
@@ -96,6 +99,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     >
       <.head id={@id} run={@run} report={@report} total={@total} />
       <.stopped :if={@failure} failure={@failure} />
+      <div :if={@run.status == :cancelled} data-role="cancelled-run-notice">
+        <.alert type={:warning} icon="hero-exclamation-triangle">
+          <p class="m-0">
+            {MigrationRun.cancelled_words(Source.file?(@run.source))}
+          </p>
+        </.alert>
+      </div>
       <LanguageNotice.warning run={@run} />
       <PasswordNotice.run count={@created} />
 
