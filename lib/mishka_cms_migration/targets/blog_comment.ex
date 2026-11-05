@@ -50,12 +50,10 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
         (`MishkaCmsMigration.Targets.BlogBlogger.users/2`), so the admin needs the core's
         `admin:dashboard:user` to find any.
 
-    A comment with neither is a guest's: it is written with the name, email and website the
-    commenter gave (`guest_name`, `guest_email`, `guest_website`) and no author. A guest who gave
-    no name is written as `"Anonymous"`, the name WordPress shows for one. An email the Blog would
-    refuse, or a website that is not an `http` or `https` address, is left out of the comment
-    instead of failing it, and the report says so (`"guest_email_dropped"`,
-    `"guest_website_dropped"`).
+    A comment with neither is a guest's: it is written with the name and email the commenter gave
+    (`guest_name`, `guest_email`) and no author. A guest who gave no name is written as
+    `"Anonymous"`, the name WordPress shows for one. An email the Blog would refuse is left out of
+    the comment instead of failing it, and the report says so (`"guest_email_dropped"`).
 
     The report says a guest's comment is one (`"guest_comment: <name>"`, which
     `MishkaCmsMigration.Report` counts as `guests`). The authors of a page's comments, and in an
@@ -91,7 +89,6 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
     alias MishkaCmsCore.Accounts.User
     alias MishkaCmsCore.Accounts.Validations.ValidEmail
     alias MishkaCmsCore.PlainText
-    alias MishkaCmsCore.Runtime.OriginValidator
     alias MishkaCmsMigration.Source.Item
     alias MishkaCmsMigration.Targets.BlogBlogger
     alias MishkaCmsMigration.Targets.Helpers.Written
@@ -196,18 +193,17 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       Enum.join(["guest_comment: " <> name | dropped], "; ")
     end
 
-    # What a guest gave, as the Blog keeps it: an email it would refuse or a website that is not an
-    # http or https address is left out, and `dropped` says so.
+    # What a guest gave, as the Blog keeps it: an email it would refuse is left out, and `dropped`
+    # says so.
     defp guest(%Item{attrs: attrs}) do
       name = attrs |> text("author_name") |> Kernel.||(@anonymous) |> String.slice(0, 255)
       {email, lost_email} = checked(text(attrs, "author_email"), &email?/1, "guest_email_dropped")
-      {site, lost_site} = checked(text(attrs, "author_url"), &website?/1, "guest_website_dropped")
 
       %{
         name: name,
-        dropped: lost_email ++ lost_site,
+        dropped: lost_email,
         attrs:
-          %{guest_name: name, guest_email: email, guest_website: site}
+          %{guest_name: name, guest_email: email}
           |> Map.reject(fn {_field, value} -> is_nil(value) end)
       }
     end
@@ -231,8 +227,6 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       |> Ash.Changeset.force_change_attribute(:guest_email, email)
       |> ValidEmail.validate([field: :guest_email], %{}) == :ok
     end
-
-    defp website?(site), do: byte_size(site) <= 500 and OriginValidator.web_url?(site)
 
     defp address(%{"author_email" => email}) when is_binary(email) and email != "",
       do: String.downcase(email)

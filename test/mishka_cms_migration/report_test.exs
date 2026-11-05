@@ -60,8 +60,7 @@ defmodule MishkaCmsMigration.ReportTest do
   end
 
   test "a comment left out, or written as a guest's, says why in words" do
-    for code <-
-          ~w(page_comment not_a_comment spam_or_trash guest_email_dropped guest_website_dropped),
+    for code <- ~w(page_comment not_a_comment spam_or_trash guest_email_dropped),
         do: refute(MigrationRun.reason_label(code) == code)
 
     assert MigrationRun.reason_label("guest_comment: Sara") =~ "Sara"

@@ -1944,13 +1944,6 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("guest_email_dropped"),
     do: dgettext("mishka_gervaz", "The guest's email is not valid, so it is left out")
 
-  defp said("guest_website_dropped"),
-    do:
-      dgettext(
-        "mishka_gervaz",
-        "The guest's website is not an http or https address, so it is left out"
-      )
-
   defp said("page_comment"),
     do: dgettext("mishka_gervaz", "A comment on a page, which Blog cannot keep")
 

@@ -1885,17 +1885,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert written(comments, 5).author_id == users["nadia.karimi@example.test"].id
     end
 
-    test "a guest's comment is written with the name, email and website the visitor gave and no author, under its parent and with its status",
+    test "a guest's comment is written with the name and email the visitor gave and no author, under its parent and with its status",
          %{site: site, admin: admin} do
-      rows =
-        for row <- recorded("comments"),
-            do:
-              if(row["id"] == 2,
-                do: %{row | "author_url" => "https://reza.example.test/"},
-                else: row
-              )
-
-      stub_comments!(rows)
+      stub_comments!(recorded("comments"))
       run = imported!(site, admin, %{comments: true, authors: "create"})
       comments = comments(site)
 
@@ -1906,12 +1898,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert %{
                guest_name: "Reza Ahmadi",
                guest_email: "reza@example.test",
-               guest_website: "https://reza.example.test/",
                author_id: nil
              } = written(comments, 2)
 
-      assert %{guest_name: "سارا محمدی", guest_website: nil, status: :approved} =
-               written(comments, 8)
+      assert %{guest_name: "سارا محمدی", status: :approved} = written(comments, 8)
 
       assert %{guest_name: "Pending Person", status: :pending} = written(comments, 9)
 
@@ -1922,7 +1912,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert is_nil(written(comments, 4).author_id)
     end
 
-    test "a guest's website or email the Blog would refuse is left out with a note, and a guest with no name is Anonymous",
+    test "a guest's email the Blog would refuse is left out with a note, a website is never read, and a guest with no name is Anonymous",
          %{site: site, admin: admin} do
       rows =
         for row <- recorded("comments") do
@@ -1942,12 +1932,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       for run <- [dry, run] do
         outcomes = outcomes(run, "comment")
-        assert outcomes["8"] == {:created, "guest_comment: سارا محمدی; guest_website_dropped"}
+        assert outcomes["8"] == {:created, "guest_comment: سارا محمدی"}
         assert outcomes["12"] == {:created, "guest_comment: Kaveh Nouri; guest_email_dropped"}
         assert outcomes["14"] == {:created, "guest_comment: Anonymous"}
       end
 
-      assert %{guest_website: nil, guest_email: "sara@example.test"} = written(comments, 8)
+      assert %{guest_name: "سارا محمدی", guest_email: "sara@example.test"} = written(comments, 8)
       assert %{guest_name: "Kaveh Nouri", guest_email: nil} = written(comments, 12)
       assert %{guest_name: "Anonymous", guest_email: "leila@example.test"} = written(comments, 14)
     end

@@ -455,7 +455,6 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                "author" => 4,
                "author_name" => "امید رحیمی",
                "author_email" => "omid.rahimi@example.test",
-               "author_url" => "",
                "status" => "approved",
                "type" => "comment",
                "date_gmt" => "2026-04-12T05:50:00"

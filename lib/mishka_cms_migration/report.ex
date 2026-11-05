@@ -94,8 +94,8 @@ defmodule MishkaCmsMigration.Report do
   counts none.
 
   `guests` counts the comments written, or planned, as a guest's (`"guest_comment: <name>"`,
-  possibly followed by `"guest_email_dropped"` and `"guest_website_dropped"`, the guest's email or
-  website the Blog would refuse, left out of the comment) (`MishkaCmsMigration.Targets.BlogComment`).
+  possibly followed by `"guest_email_dropped"`, the guest's email the Blog would refuse, left out
+  of the comment) (`MishkaCmsMigration.Targets.BlogComment`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.
