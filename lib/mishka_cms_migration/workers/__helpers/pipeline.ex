@@ -69,7 +69,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   yet is skipped with the reason, and one under a parent an admin left out is skipped as
   `"parent_left_out"`. It saves no progress, empties no plan, and once walked hands its report to
   `MishkaCmsMigration.Report.merge/2` and the run to `:finish_items`; an import of picked items
-  hands its own report to `migration:import:finished`. Every item it records is broadcast on
+  hands its own report to `migration:import:finished`. What fails a whole run fails a job of picked
+  items only in part: a kind the source cannot answer, or that raises, fails its picked items
+  alone, each recorded as failed with the reason and with what earlier runs kept of it (its title,
+  slug, parent and CMS record), and the job goes on to the next kind; a source it cannot connect to
+  fails every picked item so. The run then goes back where it was, as after any job of picked
+  items. Every item it records is broadcast on
   `"migration_item:<site_id>:updated"` (`MishkaCmsMigration.MigrationItem`), which its actions'
   shared context (`picked_items?`) marks, so the Items page draws those rows again.
 
@@ -154,6 +159,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   defp finished({:ok, report, extra}, run, job, context),
     do: finish(run, job, Report.done(report), extra, context)
+
+  defp finished({:error, reason}, run, %{picked: picked} = job, context) when is_map(picked) do
+    state = %{run: run, mode: job.mode, picked: picked, scope: context}
+
+    report =
+      picked |> Map.keys() |> Enum.reduce(Report.new(), &failed(state, &1, reason, &2))
+
+    finish(run, job, Report.done(report), %{}, context)
+  end
 
   defp finished({:error, reason}, _run, _job, _context), do: {:error, reason}
 
@@ -255,8 +269,19 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
         listed: 0
       }
 
-      state |> walk_kind(walk, report) |> walked_kind()
+      state |> kind_walked(walk, report) |> walked_kind(state, report)
     end)
+  end
+
+  defp kind_walked(%{picked: nil} = state, walk, report), do: walk_kind(state, walk, report)
+
+  defp kind_walked(state, walk, report) do
+    with {:error, reason} <- walk_kind(state, walk, report),
+         do: {:error, {walk.kind, reason}}
+  rescue
+    error -> {:error, {walk.kind, error}}
+  catch
+    :exit, reason -> {:error, {walk.kind, {:exit, reason}}}
   end
 
   defp kinds(%{picked: nil, source: source}), do: source.kinds()
@@ -264,8 +289,30 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp kinds(%{picked: picked, source: source}),
     do: Enum.filter(source.kinds(), &is_map_key(picked, &1))
 
-  defp walked_kind({:ok, report}), do: {:cont, {:ok, report}}
-  defp walked_kind({:error, reason}), do: {:halt, {:error, reason}}
+  defp walked_kind({:ok, report}, _state, _before), do: {:cont, {:ok, report}}
+  defp walked_kind({:error, reason}, %{picked: nil}, _before), do: {:halt, {:error, reason}}
+
+  defp walked_kind({:error, {kind, reason}}, state, report),
+    do: {:cont, {:ok, failed(state, kind, reason, report)}}
+
+  defp failed(state, kind, reason, report) do
+    state.run.source_host
+    |> MishkaCmsMigration.items_by_sources!(kind, Map.fetch!(state.picked, kind),
+      scope: state.scope
+    )
+    |> Enum.reduce(report, fn item, report ->
+      Report.add(report, Writer.call(state, picked_item(item), {:failed, Report.reason(reason)}))
+    end)
+  end
+
+  defp picked_item(%MigrationItem{} = item),
+    do: %Item{
+      kind: item.source_kind,
+      source_id: item.source_id,
+      title: item.title,
+      parent: item.source_parent,
+      attrs: %{"slug" => item.source_slug}
+    }
 
   defp walk_kind(_state, %{pages: @max_pages, kind: kind}, _report),
     do: {:error, {:too_many_pages, kind}}

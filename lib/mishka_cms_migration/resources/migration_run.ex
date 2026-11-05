@@ -109,7 +109,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers.Helpers.Needs`). It then saves what it did into the run's report
   (`MishkaCmsMigration.Report.merge/2`) and puts the run back in the status it was in
   (`:finish_items`), and the items' rows refresh from their broadcasts. Neither is a step of the
-  run's log; a job of picked items that fails fails its run, as the run's own does.
+  run's log. A source that cannot answer for a picked kind, or cannot be connected to, fails those
+  picked items alone, with the reason, and the run still goes back where it was; only an error
+  saving the run fails a job of picked items, and its run, as the run's own job does.
 
   ## The source's secret
 
@@ -2033,6 +2035,13 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "You may not change %{kinds} on this site", kinds: nouns(kinds))
 
   defp said("forbidden"), do: dgettext("mishka_gervaz", "You may not change this on this site")
+  defp said("unreachable"), do: dgettext("mishka_gervaz", "The source did not answer")
+
+  defp said("no_site"),
+    do: dgettext("mishka_gervaz", "The source answered, but not as the site it was")
+
+  defp said("unauthorized"),
+    do: dgettext("mishka_gervaz", "The source refused the user or the password")
 
   defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
   defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")

@@ -12,7 +12,7 @@ defmodule MishkaCmsMigration.PickedItemsTest do
   """
   use MishkaCmsMigration.DataCase, async: false
 
-  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0]
+  import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaBlog.{BlogPost, Comment, Tag}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
@@ -226,6 +226,31 @@ defmodule MishkaCmsMigration.PickedItemsTest do
       assert touching(job, "mishka_cms_migration_items") == 2
       assert touching(job, "mishka_cms_migration_runs") == 2
       assert length(job) <= 25
+    end
+  end
+
+  describe "a source that cannot answer for a picked kind" do
+    @tag capture_log: true
+    test "fails those items alone with the reason, and the run goes back to where it was",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+      tag = item(site, "tag", "13")
+      stub!(%{"/wp-json/wp/v2/tags" => :no_site})
+
+      run = import_items!(run, admin, [{"category", "1"}, {"tag", "13"}])
+
+      assert run.status == :done
+      assert %{outcome: :failed, reason: "no_site"} = failed = item(site, "tag", "13")
+      assert {failed.target_id, failed.title} == {tag.target_id, tag.title}
+      assert %{outcome: :skipped, reason: "unchanged"} = item(site, "category", "1")
+      assert [%{outcome: :failed, reason: "no_site"}] = entry(run, "tag", "13")
+
+      stub!(%{"/wp-json/" => :no_site})
+      run = dry_run_items!(run, admin, [{"tag", "13"}])
+
+      assert run.status == :done
+      assert %{plan: :failed, plan_reason: "no_site"} = planned = item(site, "tag", "13")
+      assert {planned.title, planned.source_slug} == {tag.title, tag.source_slug}
     end
   end
 
