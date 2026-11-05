@@ -747,6 +747,49 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert seo["twitter_card"] == "summary"
     end
 
+    test "a post's SEO texts are plain text, each HTML entity WordPress answered read once" do
+      stub!()
+      context = Map.put(@context, :conn, connected!())
+      [row] = recorded("elementor-posts")
+      served = row["yoast_head_json"]["og_description"]
+      shown = String.replace(served, "&#8217;", "’")
+
+      seo = fn row ->
+        assert {:ok, %{attrs: %{"seo" => seo}}} = WordPress.normalize(row, "post", context)
+        seo
+      end
+
+      assert served =~ "Elementor&#8217;s"
+
+      refute is_map_key(seo.(row), "og_description"),
+             "Yoast's Open Graph description is its default, the excerpt WordPress made of the post"
+
+      head =
+        Map.merge(row["yoast_head_json"], %{
+          "title" => "Notes &amp; news &#8211; Mishka Test Blog",
+          "description" => served,
+          "twitter_title" => "Tom &amp;amp; Jerry"
+        })
+
+      meta = %{"_yoast_wpseo_opengraph-title" => "Elementor&#8217;s notes"}
+
+      assert row
+             |> Map.put("yoast_head_json", head)
+             |> Map.update!("meta", &Map.merge(&1, meta))
+             |> seo.()
+             |> Map.take(["title", "description", "og_title", "twitter_title"]) == %{
+               "title" => "Notes & news – Mishka Test Blog",
+               "description" => shown,
+               "og_title" => "Elementor’s notes",
+               "twitter_title" => "Tom &amp; Jerry"
+             }
+
+      for {_id, item} <- Map.merge(items!("post"), items!("page")),
+          {field, value} <- item.attrs["seo"],
+          is_binary(value),
+          do: refute(value =~ ~r/&#?\w+;/, "#{field} #{inspect(value)} holds an HTML entity")
+    end
+
     defp media_requests(found) do
       receive do
         {:wordpress_request, %{request_path: "/wp-json/wp/v2/media"} = request} ->

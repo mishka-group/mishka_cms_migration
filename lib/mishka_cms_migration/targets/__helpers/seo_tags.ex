@@ -34,6 +34,10 @@ defmodule MishkaCmsMigration.Targets.Helpers.SeoTags do
   The core's head stacks these over the layout's and a plugin's, a tag by its name and attributes,
   so each one replaces the default for that tag, and none is drawn twice.
 
+  A title and a description are stored as the item carries them, plain text, which the head
+  escapes once: the source has already read the HTML entities its CMS answers
+  (`MishkaCmsMigration.Sources.WordPress`).
+
   An item without `"seo"` has no tags.
   """
 

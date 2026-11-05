@@ -122,7 +122,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       layout draws itself), and its robots only when they say `noindex` or `nofollow`. A variable
       in a title or description is the CMS's own where it has one (`%%title%%` and `%title%` as
       `{{page.title}}`, `sitename` as `{{site.name}}`, `excerpt` as `{{page.description}}`, `sep`
-      as `-` and `page` as nothing), and a value with any other variable is left out.
+      as `-` and `page` as nothing), and a value with any other variable is left out. Each title
+      and description is plain text, what the site showed: Yoast's head and a rendered excerpt
+      hold HTML entities (`Elementor&#8217;s`), and so may a meta field, and each is read once
+      (`Elementor’s`) before it is compared with the title, the description or the excerpt, so
+      the CMS's head escapes it once.
     * media — `title` is `title.raw` and `modified_at` is `modified_gmt` as UTC; `attrs` keeps
       `slug`, `source_url` (where the file is), `filename` (the last segment of its path),
       `mime_type`, `media_type`, `filesize` (the file's bytes, `media_details.filesize` on a
@@ -904,7 +908,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     meta = with_map(row["meta"])
     head = with_map(row["yoast_head_json"])
     title = typed(meta, @seo_titles) || served_title(head, row)
-    description = typed(meta, @seo_descriptions) || said(head["description"])
+    description = typed(meta, @seo_descriptions) || shown(head["description"])
 
     %{
       "title" => title,
@@ -928,9 +932,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
         (typed(meta, @seo_social_descriptions) || served_description(head["og_description"], row))
         |> differing(description),
       "twitter_title" =>
-        (typed(meta, @seo_twitter_titles) || said(head["twitter_title"])) |> differing(title),
+        (typed(meta, @seo_twitter_titles) || shown(head["twitter_title"])) |> differing(title),
       "twitter_description" =>
-        (typed(meta, @seo_twitter_descriptions) || said(head["twitter_description"]))
+        (typed(meta, @seo_twitter_descriptions) || shown(head["twitter_description"]))
         |> differing(description),
       "twitter_image" => said(meta, @seo_twitter_images) || said(head["twitter_image"]),
       "twitter_card" => meta |> said(@seo_twitter_cards) |> card() || card(head["twitter_card"])
@@ -944,9 +948,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp card(_default_or_other), do: nil
 
   defp served_description(text, %{"excerpt" => %{"rendered" => excerpt}}) when is_binary(excerpt),
-    do: text |> said() |> own_description(excerpt |> LazyHTML.from_fragment() |> LazyHTML.text())
+    do: text |> shown() |> own_description(plain(excerpt))
 
-  defp served_description(text, _row), do: said(text)
+  defp served_description(text, _row), do: shown(text)
 
   defp own_description(nil, _excerpt), do: nil
 
@@ -956,12 +960,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp with_map(%{} = map), do: map
   defp with_map(_none), do: %{}
 
-  defp typed(meta, keys), do: meta |> said(keys) |> variables()
+  defp typed(meta, keys), do: keys |> Enum.find_value(&shown(meta[&1])) |> variables()
 
   defp said(meta, keys), do: Enum.find_value(keys, &said(meta[&1]))
 
   defp said(text) when is_binary(text), do: text |> String.trim() |> filled()
   defp said(_none), do: nil
+
+  defp shown(text) when is_binary(text), do: text |> plain() |> filled()
+  defp shown(_none), do: nil
 
   defp variables(nil), do: nil
 
@@ -981,9 +988,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp served_title(%{"title" => title, "og_site_name" => site}, %{"title" => %{"raw" => own}})
        when is_binary(title) and is_binary(site) and is_binary(own),
-       do: title |> said() |> own_title(own, site)
+       do: title |> shown() |> own_title(own, plain(site))
 
-  defp served_title(head, _row), do: said(head["title"])
+  defp served_title(head, _row), do: shown(head["title"])
 
   defp own_title(nil, _own, _site), do: nil
   defp own_title(own, own, _site), do: nil
