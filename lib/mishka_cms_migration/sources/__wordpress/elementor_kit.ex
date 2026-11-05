@@ -194,6 +194,18 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
   @spec font_class(String.t()) :: String.t()
   def font_class(id), do: "font-el-#{id}"
 
+  @doc """
+  `value` as a colour a stylesheet or a builder's style setting can hold as it is: a hex value,
+  lower-cased, or an RGB or HSL one; `nil` for anything else.
+  """
+  @spec css_colour(term()) :: String.t() | nil
+  def css_colour(value) when is_binary(value) do
+    value = String.trim(value)
+    named(String.downcase(value), @hex) || named(value, @functional)
+  end
+
+  def css_colour(_value), do: nil
+
   @doc "The family a font's settings name, when it is one a stylesheet can name; else `nil`."
   @spec family(map()) :: String.t() | nil
   def family(%{"typography_font_family" => family}) when is_binary(family),
@@ -222,7 +234,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
       for(
         {id, %{"value" => value} = colour} <- colours,
         Regex.match?(@id, id),
-        value = colour_value(value),
+        value = css_colour(value),
         do: {id, title(colour), value}
       )
       |> Enum.sort_by(&order/1)
@@ -241,13 +253,6 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
   defp fonts(_globals), do: []
 
   defp order({id, _title, _value}), do: {Enum.find_index(@system, &(&1 == id)) || 4, id}
-
-  defp colour_value(value) when is_binary(value) do
-    value = String.trim(value)
-    named(String.downcase(value), @hex) || named(value, @functional)
-  end
-
-  defp colour_value(_value), do: nil
 
   defp named(value, pattern), do: pattern |> Regex.match?(value) |> matched(value)
 

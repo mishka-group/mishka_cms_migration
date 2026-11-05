@@ -34,7 +34,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
   @elementor_site %{"/wp-json/" => "elementor-index", @globals_route => "elementor-globals"}
 
   defp items!(kind, recording) do
-    stub!()
+    stub!(@elementor_site)
     {:ok, conn} = WordPress.connect(@connection, "app password")
     recording |> recorded() |> normalized(kind, conn)
   end
@@ -87,7 +87,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
   defp laid_out!(elements, kind \\ "page") do
     [row] = Enum.filter(recorded("elementor-pages"), &(&1["slug"] == "elementor-landing"))
-    stub!()
+    stub!(@elementor_site)
     {:ok, conn} = WordPress.connect(@connection, "app password")
 
     assert {:ok, item} =
@@ -310,17 +310,20 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       end
     end
 
-    test "gives a heading a colour only when the theme has a token for it" do
-      {authored, _styles} =
+    test "gives a heading the theme's token for a colour the theme has, and any other through the Inspector, keeping the theme's dark twin" do
+      {authored, styles} =
         styled(section(%{}, [column(%{"title_color" => "#5B4FE0"})]), "h1")
 
       assert "text-brand" in authored and "dark:text-brand-dark" in authored
       refute "text-fg" in authored
+      assert styles == %{}
 
-      {authored, _styles} =
+      {authored, styles} =
         styled(section(%{}, [column(%{"title_color" => "#123456"})]), "h1")
 
-      assert "text-fg" in authored and "dark:text-fg-dark" in authored
+      assert styles == %{base: %{"color" => "#123456"}}
+      refute "text-fg" in authored
+      assert "dark:text-fg-dark" in authored
     end
 
     test "gives a section its padding and margin by side, in the unit Elementor has, at each width" do
@@ -404,6 +407,173 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
       item = laid_out!(elements)
       assert item |> html() |> LazyHTML.query("[style]") |> Enum.empty?()
       assert {:ok, %Tree{}} = item |> Item.html() |> Tree.parse()
+    end
+  end
+
+  describe "a page's Elementor colours and fonts" do
+    setup do
+      %{page: items!("page", "elementor-pages")["elementor-landing"]}
+    end
+
+    defp look(html, selector),
+      do: html |> attribute(selector, "class") |> hd() |> Styles.from_classes()
+
+    test "name the kit's colour and font through the Inspector and its token classes, a dark twin for the dark theme",
+         %{page: page} do
+      html = html(page)
+      {authored, styles} = look(html, "h1")
+
+      assert styles.base["color"] == "var(--color-el-primary)"
+      assert styles.base["font-weight"] == "font-bold"
+      assert "dark:text-el-primary-dark" in authored and "font-el-primary" in authored
+      refute "text-fg" in authored or "dark:text-fg-dark" in authored
+
+      {authored, styles} = look(html, "a.inline-block")
+      assert styles.base["background"] == "var(--color-el-accent)"
+      assert "dark:bg-el-accent-dark" in authored
+      refute "bg-fg" in authored or "dark:bg-fg-dark" in authored
+
+      {authored, styles} = look(html, "section:nth-of-type(2)")
+      assert styles.base["background"] == "var(--color-el-a1b2c3d)"
+      assert "dark:bg-el-a1b2c3d-dark" in authored
+    end
+
+    test "give a text editor's box the colour and font its paragraphs then take", %{page: page} do
+      html = html(page)
+
+      [box] =
+        html
+        |> LazyHTML.query("div:has(> p strong)")
+        |> Enum.map(&(&1 |> LazyHTML.attribute("class") |> hd() |> Styles.from_classes()))
+
+      assert {authored, %{base: %{"color" => "var(--color-el-text)"} = base}} = box
+      assert base["font-weight"] == "font-normal"
+      assert "font-el-text" in authored and "dark:text-el-text-dark" in authored
+
+      for paragraph <- classes(html, "div:has(> p strong) > p") do
+        refute Enum.any?(paragraph, &String.starts_with?(&1, ["text-dim", "dark:text-dim"]))
+        assert MapSet.subset?(MapSet.new(~w(text-base leading-relaxed)), paragraph)
+      end
+    end
+
+    test "give a colour and a font of the widget's own as the Inspector's, a family the kit loads as its token",
+         %{page: page} do
+      {authored, styles} = page |> html() |> look("h2")
+
+      assert styles.base["color"] == "#0f766e"
+      assert styles.base["font-weight"] == "font-medium"
+      assert "font-el-secondary" in authored and "dark:text-fg-dark" in authored
+      refute "text-fg" in authored
+    end
+
+    test "leave the theme's own where the kit has no such colour, a family it does not load, or a gradient" do
+      elements = [
+        %{
+          "elType" => "section",
+          "settings" => %{
+            "background_background" => "gradient",
+            "background_color" => "#000000"
+          },
+          "elements" => [
+            %{
+              "elType" => "column",
+              "elements" => [
+                widget("heading", %{
+                  "title" => "T",
+                  "header_size" => "h1",
+                  "typography_font_family" => "Comic Neue",
+                  "__globals__" => %{"title_color" => "globals/colors?id=gone"}
+                })
+              ]
+            }
+          ]
+        }
+      ]
+
+      html = elements |> laid_out!() |> html()
+      {authored, styles} = look(html, "h1")
+
+      assert "text-fg" in authored and "dark:text-fg-dark" in authored
+      refute Map.has_key?(styles.base, "color")
+      refute Enum.any?(authored, &String.starts_with?(&1, "font-el-"))
+      assert look(html, "section") == {["py-16"], %{}}
+    end
+
+    test "give a section's colour of its own the page's colour in the dark theme" do
+      elements = [
+        %{
+          "elType" => "section",
+          "settings" => %{"background_background" => "classic", "background_color" => "#F5F5F5"},
+          "elements" => [%{"elType" => "column", "elements" => [widget("spacer", %{})]}]
+        }
+      ]
+
+      assert {authored, %{base: %{"background" => "#f5f5f5"}}} =
+               elements |> laid_out!() |> html() |> look("section")
+
+      assert "dark:bg-page-dark" in authored
+    end
+
+    test "give a font's weight, size, line height, letter spacing and case at each width" do
+      settings = %{
+        "title" => "T",
+        "header_size" => "h2",
+        "typography_typography" => "custom",
+        "typography_font_weight" => "300",
+        "typography_font_size_mobile" => %{"unit" => "px", "size" => 20},
+        "typography_line_height" => %{"unit" => "em", "size" => 1.2},
+        "typography_letter_spacing_tablet" => %{"unit" => "px", "size" => 2},
+        "typography_text_transform" => "uppercase"
+      }
+
+      assert {_authored, styles} =
+               [widget("heading", settings)] |> laid_out!() |> html() |> look("h2")
+
+      assert styles == %{
+               base: %{
+                 "font-weight" => "font-light",
+                 "line-height" => "1.2em",
+                 "text-transform" => "uppercase"
+               },
+               tablet: %{"letter-spacing" => "2px"},
+               mobile: %{"font-size" => "20px"}
+             }
+    end
+
+    test "give a text editor's own size and line height to its box, its paragraphs taking them" do
+      html =
+        [
+          widget("text-editor", %{
+            "editor" => "<p>One</p><p>Two</p>",
+            "typography_font_size" => %{"unit" => "px", "size" => 18},
+            "typography_line_height" => %{"unit" => "em", "size" => 1.8}
+          })
+        ]
+        |> laid_out!()
+        |> html()
+
+      assert {[], %{base: %{"font-size" => "18px", "line-height" => "1.8em"}}} =
+               look(html, "div:has(> p)")
+
+      for paragraph <- classes(html, "div > p") do
+        refute MapSet.member?(paragraph, "text-base") or
+                 MapSet.member?(paragraph, "leading-relaxed")
+
+        assert MapSet.member?(paragraph, "text-dim")
+      end
+    end
+
+    test "are not in a post, which is the Blog's HTML" do
+      heading =
+        widget("heading", %{
+          "title" => "T",
+          "__globals__" => %{
+            "title_color" => "globals/colors?id=primary",
+            "typography_typography" => "globals/typography?id=primary"
+          }
+        })
+
+      assert [heading] |> laid_out!("post") |> html() |> attribute("[class]", "class") == []
     end
   end
 
@@ -746,6 +916,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
 
       assert texts(html(exported!("post")["elementor-release-notes"]), ".md\\:grid-cols-3 h3") ==
                ["Faster", "Safer", "Easier"]
+
+      assert classes(html(pages["elementor-landing"]), "[class]") ==
+               classes(html(from_site["elementor-landing"]), "[class]")
     end
   end
 end

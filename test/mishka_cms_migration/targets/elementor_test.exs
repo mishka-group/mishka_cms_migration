@@ -18,6 +18,7 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
 
   alias MishkaBlog.BlogPost
   alias MishkaCmsCore.Runtime.Authoring.Tree
+  alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsCore.Runtime.{Page, Stylesheet}
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
   alias MishkaCmsMigration.Source.Item
@@ -122,6 +123,33 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
              }
 
       assert stylesheets(site) == [stylesheet]
+    end
+
+    test "the imported page names the tokens the stylesheet declares, through the builder's style settings",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+      landing = pages(site)["/elementor-landing"]
+
+      {authored, styles} =
+        landing.template
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("h1")
+        |> LazyHTML.attribute("class")
+        |> hd()
+        |> Styles.from_classes()
+
+      assert styles.base["color"] == "var(--color-el-primary)"
+      assert "dark:text-el-primary-dark" in authored and "font-el-primary" in authored
+
+      assert %{
+               "--color-el-primary" => _,
+               "--color-el-primary-dark" => _,
+               "--font-el-primary" => _
+             } =
+               tokens(stylesheet.content)
+
+      assert {:ok, %Tree{}} = Tree.parse(landing.template)
     end
 
     test "a site with its own stylesheet of that name waits for the admin's decision, and follows it",

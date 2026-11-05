@@ -584,7 +584,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       )
       when kind in @entries do
     fetch = fetch(context)
-    {content, html, laid_out} = row |> Elementor.call(kind, fetch) |> body(html, fetch)
+
+    {content, html, laid_out} =
+      row |> Elementor.call(kind, fetch, elementor(context)) |> body(html, fetch)
+
     {media, seo} = media(html, content, seo(row, context), context)
 
     {:ok,
@@ -874,6 +877,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp fetch(%{conn: %{read: read}}), do: &read.(&1, include: Enum.join(&2, ","))
   defp fetch(_context), do: fn _route, _ids -> %{} end
+
+  defp elementor(%{conn: %{elementor: globals}}), do: globals
+  defp elementor(_context), do: %{}
 
   defp stylesheet(nil), do: {:error, :unreadable}
 

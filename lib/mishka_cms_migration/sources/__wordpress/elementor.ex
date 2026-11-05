@@ -64,19 +64,44 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   to the Tailwind classes the Inspector would have written, after the element's own.
 
     * alignment (`align`) — a heading's, a text editor's and a button's `text-align`;
-    * a heading's font size (`typography_font_size`) — `font-size`, in the unit Elementor has
-      (px, em, rem, %, vw, vh);
     * a section's and a container's `padding` and `margin` — by side (`py`/`px` when both sides
       match, else `pt`, `pb`, `pl`, `pr`), exact, not rounded to a spacing step;
     * a section's `content_width` and a container's `boxed_width` — the Container's `max-width`;
     * a container's `flex_gap` — the `gap` of the grid or stack it becomes;
-    * a heading's colour — only when it is exactly the light value of one of the theme's text
-      tokens (fg, dim, subtle, faint, brand), as that token's classes with their dark twins; any
-      other colour keeps the theme's default.
+    * a heading's, a text editor's and a button's typography — its font's `font-size`, in the unit
+      Elementor has (px, em, rem, %, vw, vh), `font-weight` (300 to 800), `line-height`,
+      `letter-spacing` and `text-transform`, each at the widths Elementor has them;
+    * colours — a heading's (`title_color`), a text editor's (`text_color`) and a button's
+      (`button_text_color`) `color`, and the `background` of a button, a section and a container
+      whose background is a colour (`background_background` `classic`).
 
-  Not carried over: other colours (text, buttons, backgrounds), fonts, weights, borders, shadows,
-  and a column's own padding. Elementor's tablet (1024) and mobile (767) widths become the
-  builder's (900 and 560).
+  ## Elementor's global colours and fonts
+
+  A colour or a font a widget names in its `__globals__` is one of the kit's, which the site has as
+  theme tokens (`MishkaCmsMigration.Sources.WordPress.ElementorKit`), and the page names the token:
+
+    * a colour is the style setting `var(--color-el-<id>)`, and its dark twin the class
+      `dark:text-el-<id>-dark` (or `dark:bg-…` for a background) in place of the theme's own pair
+      (`text-fg dark:text-fg-dark`, ...): the dark theme shows the twin, which an admin sets once in
+      the stylesheet for every page;
+    * a font is the class of its family, `font-el-<id>`, and its weight, size, line height,
+      letter spacing and case are the style settings above. Elementor applies a global font whole,
+      so the widget's own typography is not read beside it.
+
+  A family a widget sets itself is the class of the kit's font in that family, the one the
+  stylesheet loads; any other family is left out, as nothing on the site would load it. A global the
+  kit does not have, such as a custom colour since deleted, draws nothing, as on WordPress.
+
+  A colour of the widget's own is the style setting with its value (`text-[#0f766e]`), in place of
+  the theme's light colour, and the element keeps the theme's dark twin, so it reads in the dark
+  theme (`dark:bg-page-dark` for a section's or a container's background, which has none); a colour
+  that is exactly the light value of one of the theme's text tokens (fg, dim, subtle, faint, brand)
+  is that token's classes with their dark twins. A text editor's colour, size and line height are
+  its box's, so its paragraphs, lists and quotes leave theirs out and take the box's.
+
+  Not carried over: a family no font of the kit has, gradients and pictures behind an element,
+  borders, shadows, hover colours, and a column's own padding. Elementor's tablet (1024) and mobile
+  (767) widths become the builder's (900 and 560).
 
   ## A post
 
@@ -104,11 +129,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   alias MishkaCmsCore.Runtime.Authoring.Elements
   alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
-  alias MishkaCmsMigration.Sources.WordPress.Content
+  alias MishkaCmsMigration.Sources.WordPress.{Content, ElementorKit}
 
   @widgets ~w(heading text-editor image button video icon-list image-gallery gallery spacer divider
               html shortcode)
-  @styled_widgets ~w(text-editor image video icon-list image-gallery gallery divider shortcode)
+  @styled_widgets ~w(image video icon-list image-gallery gallery divider shortcode)
   @layouts ["section", "column", "container"]
   @galleries ["image-gallery", "gallery"]
   @headings ~w(h1 h2 h3 h4 h5 h6)
@@ -144,6 +169,45 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     "#5b4fe0" => ["text-brand", "dark:text-brand-dark"]
   }
   @color_classes @colors |> Map.values() |> List.flatten()
+
+  # The theme's colour classes an element of the builder carries, light and dark, by the Tailwind
+  # prefix they colour: what a colour of Elementor's takes the place of.
+  @theme_paint (@themed |> Map.values() |> Enum.flat_map(&String.split/1)) ++ @color_classes
+  @paints %{"color" => "text", "background" => "bg"}
+  @light_paint Map.new(@paints, fn {_prop, prefix} ->
+                 {prefix, Enum.filter(@theme_paint, &String.starts_with?(&1, prefix <> "-"))}
+               end)
+  @dark_paint Map.new(@paints, fn {_prop, prefix} ->
+                {prefix, Enum.filter(@theme_paint, &String.starts_with?(&1, "dark:#{prefix}-"))}
+              end)
+  # The theme's own colour a raw colour gives way to in the dark theme, on an element with none.
+  @dark_default %{"text" => "dark:text-fg-dark", "bg" => "dark:bg-page-dark"}
+
+  # The classes of a text block a text editor's own colour, size and line height take the place of,
+  # so its paragraphs, lists and quotes take them from the box as Elementor's do.
+  @inheriting ~w(p ul ol blockquote)
+  @inherited %{
+    "color" => Enum.filter(@theme_paint, &String.starts_with?(&1, ["text-", "dark:text-"])),
+    "font-size" => ["text-base"],
+    "line-height" => ["leading-relaxed"]
+  }
+
+  @weights %{
+    "300" => "font-light",
+    "400" => "font-normal",
+    "normal" => "font-normal",
+    "500" => "font-medium",
+    "600" => "font-semibold",
+    "700" => "font-bold",
+    "bold" => "font-bold",
+    "800" => "font-extrabold"
+  }
+  @transforms %{
+    "uppercase" => "uppercase",
+    "lowercase" => "lowercase",
+    "capitalize" => "capitalize",
+    "none" => "normal-case"
+  }
 
   @videos %{
     "youtube" => {"youtube_url", "https://www.youtube.com/watch?v=XHOmBV4js_E"},
@@ -200,28 +264,33 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   @doc """
   The content pieces of `row`, an entry Elementor laid out, made as a `kind` (`"page"` or
   `"post"`) is, the names of the widgets in it the CMS has no equivalent for, and the names of
-  those of them Elementor drew nothing for, reading its images with `fetch`; `:none` for an entry
-  Elementor did not lay out.
+  those of them Elementor drew nothing for, reading its images with `fetch` and naming the site's
+  `globals` (`MishkaCmsMigration.Sources.WordPress.ElementorKit`); `:none` for an entry Elementor
+  did not lay out.
   """
-  @spec call(map(), String.t(), Content.fetch()) ::
+  @spec call(map(), String.t(), Content.fetch(), ElementorKit.globals()) ::
           {:ok, [map()], [String.t()], [String.t()]} | :none
+  def call(row, kind, fetch, globals \\ %{})
+
   def call(
         %{"meta" => %{"_elementor_edit_mode" => "builder", "_elementor_data" => data}} = row,
         kind,
-        fetch
+        fetch,
+        globals
       )
       when is_binary(data),
-      do: data |> JSON.decode() |> laid_out(row, kind, fetch)
+      do: data |> JSON.decode() |> laid_out(row, {kind, fetch, globals})
 
-  def call(_row, _kind, _fetch), do: :none
+  def call(_row, _kind, _fetch, _globals), do: :none
 
-  defp laid_out({:ok, [_ | _] = elements}, row, kind, fetch) do
+  defp laid_out({:ok, [_ | _] = elements}, row, {kind, fetch, globals}) do
     found = Enum.reduce(elements, %{media: [], unsupported: []}, &found/2)
     unsupported = Enum.reverse(found.unsupported)
 
     ctx = %{
       kind: kind,
       fetch: fetch,
+      globals: ElementorKit.read(globals),
       media: media(found.media, fetch),
       fallbacks: fallbacks(row, unsupported)
     }
@@ -230,7 +299,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
      unsupported |> Enum.reject(&is_map_key(ctx.fallbacks, elem(&1, 0))) |> named()}
   end
 
-  defp laid_out(_no_layout, _row, _kind, _fetch), do: :none
+  defp laid_out(_no_layout, _row, _call), do: :none
 
   defp named(unsupported), do: unsupported |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
 
@@ -350,16 +419,29 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp stack(nodes, %{kind: "page"}), do: [built("el-stack", [], nodes)]
   defp stack(nodes, _post), do: nodes
 
-  defp placed(nodes, %{"isInner" => true}, _ctx), do: nodes
   defp placed([], _element, _ctx), do: []
 
-  defp placed(nodes, element, %{kind: "page"}) do
+  defp placed(nodes, %{"isInner" => true} = element, %{kind: "page"} = ctx),
+    do:
+      Enum.map(
+        nodes,
+        &looked(&1, fn look -> painted(look, "background", background(settings(element), ctx)) end)
+      )
+
+  defp placed(nodes, %{"isInner" => true}, _post), do: nodes
+
+  defp placed(nodes, element, %{kind: "page"} = ctx) do
     settings = settings(element)
 
     [
       "el-section"
       |> built([], boxed(settings, nodes))
-      |> restyled_node(spacing(settings, "padding", "p"), spacing(settings, "margin", "m"))
+      |> looked(fn look ->
+        look
+        |> painted("background", background(settings, ctx))
+        |> with_styles(spacing(settings, "padding", "p"))
+        |> with_styles(spacing(settings, "margin", "m"))
+      end)
     ]
   end
 
@@ -396,6 +478,142 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp merge_styles(styles, more),
     do: Map.merge(styles, more, fn _bucket, left, right -> Map.merge(left, right) end)
+
+  # An element's look: its classes and the builder's style settings for it, `{classes, styles}`,
+  # worked on together and written once, the classes the Inspector's settings replace dropped
+  # (`Styles.merge_class/2`).
+  defp looked({_tag, attrs, _children} = node, fun),
+    do: dressed(node, fun.({attrs |> class_of() |> String.split(), %{}}))
+
+  defp dressed({tag, attrs, children}, {classes, styles}),
+    do:
+      {tag,
+       with_class(attrs, classes |> Enum.uniq() |> Enum.join(" ") |> Styles.merge_class(styles)),
+       children}
+
+  defp class_of(attrs), do: attrs |> List.keyfind("class", 0, {"class", ""}) |> elem(1)
+
+  defp with_class(attrs, class) when class in [nil, ""], do: List.keydelete(attrs, "class", 0)
+  defp with_class(attrs, class), do: List.keystore(attrs, "class", 0, {"class", class})
+
+  defp with_styles({classes, styles}, more), do: {classes, merge_styles(styles, more)}
+
+  # Elementor's colour of a part: one of the kit's, named in `__globals__`, which the page names by
+  # its token, or a value of its own. A global the kit does not have draws nothing, as on WordPress.
+  defp colour(settings, key, ctx),
+    do: settings |> global(key) |> coloured(settings[key], ctx)
+
+  defp coloured({"colors", id}, _value, ctx) when is_map_key(ctx.globals.colours, id),
+    do: {:global, id}
+
+  defp coloured(nil, value, _ctx), do: value |> ElementorKit.css_colour() |> own_colour()
+  defp coloured(_unknown, _value, _ctx), do: nil
+
+  defp own_colour(nil), do: nil
+  defp own_colour(value), do: {:raw, value}
+
+  defp background(%{"background_background" => type}, _ctx) when type not in [nil, "classic"],
+    do: nil
+
+  defp background(settings, ctx), do: colour(settings, "background_color", ctx)
+
+  defp global(%{"__globals__" => %{} = globals}, key), do: globals |> Map.get(key) |> reference()
+  defp global(_settings, _key), do: nil
+
+  defp reference("globals/" <> _ = reference), do: reference |> URI.parse() |> referenced()
+  defp reference(_own_value), do: nil
+
+  defp referenced(%URI{path: "globals/" <> kind, query: query}) when is_binary(query),
+    do: query |> URI.decode_query() |> Map.get("id") |> referenced(kind)
+
+  defp referenced(_unreadable), do: nil
+
+  defp referenced(id, kind) when is_binary(id) and id != "", do: {kind, id}
+  defp referenced(_id, _kind), do: nil
+
+  # A colour in place of the theme's: a global as its token, the light one through the builder's
+  # style setting and its dark twin by its class; a value of the theme's own as its token classes;
+  # any other value through the style setting, the element keeping the theme's own dark twin, so
+  # it reads in the dark theme.
+  defp painted(look, _prop, nil), do: look
+
+  defp painted({classes, styles}, prop, {:global, id}) do
+    prefix = Map.fetch!(@paints, prop)
+
+    {unpainted(classes, prefix) ++ [ElementorKit.dark_class(prefix, id)],
+     merge_styles(styles, %{base: %{prop => ElementorKit.colour(id)}})}
+  end
+
+  defp painted({classes, styles}, "color", {:raw, value}) when is_map_key(@colors, value),
+    do: {unpainted(classes, "text") ++ Map.fetch!(@colors, value), styles}
+
+  defp painted({classes, styles}, prop, {:raw, value}) do
+    prefix = Map.fetch!(@paints, prop)
+    kept = Enum.reject(classes, &(&1 in Map.fetch!(@light_paint, prefix)))
+
+    {kept ++ dark_default(Enum.any?(kept, &(&1 in Map.fetch!(@dark_paint, prefix))), prefix),
+     merge_styles(styles, %{base: %{prop => value}})}
+  end
+
+  defp unpainted(classes, prefix),
+    do:
+      Enum.reject(
+        classes,
+        &(&1 in Map.fetch!(@light_paint, prefix) or &1 in Map.fetch!(@dark_paint, prefix))
+      )
+
+  defp dark_default(true, _prefix), do: []
+  defp dark_default(false, prefix), do: [Map.fetch!(@dark_default, prefix)]
+
+  # Elementor's typography of a part: one of the kit's fonts, named in `__globals__`, whole, or its
+  # own settings. A family is its font's token class, a family of its own the class of the kit's
+  # font in that family (the one font a stylesheet loads), and the rest the builder's style settings.
+  defp typed(look, settings, ctx),
+    do: settings |> global("typography_typography") |> typography(settings, ctx) |> typeset(look)
+
+  defp typography({"typography", id}, _settings, ctx),
+    do: ctx.globals.typography |> Map.get(id) |> global_font(id)
+
+  defp typography(nil, settings, ctx),
+    do:
+      {ctx.globals.families
+       |> Map.get(ElementorKit.family(settings))
+       |> font_class(), type_styles(settings)}
+
+  defp typography(_unknown, _settings, _ctx), do: {nil, %{}}
+
+  defp global_font(nil, _id), do: {nil, %{}}
+
+  defp global_font(settings, id),
+    do: {settings |> ElementorKit.family() |> family_class(id), type_styles(settings)}
+
+  defp family_class(nil, _id), do: nil
+  defp family_class(_family, id), do: ElementorKit.font_class(id)
+
+  defp font_class(nil), do: nil
+  defp font_class(id), do: ElementorKit.font_class(id)
+
+  defp typeset({nil, more}, look), do: with_styles(look, more)
+
+  defp typeset({class, more}, {classes, styles}),
+    do: with_styles({classes ++ [class], styles}, more)
+
+  defp type_styles(settings),
+    do:
+      [
+        size(settings),
+        responsive(settings, "typography_font_weight", &%{"font-weight" => weight(&1)}),
+        responsive(settings, "typography_line_height", &%{"line-height" => css_length(&1)}),
+        responsive(settings, "typography_letter_spacing", &%{"letter-spacing" => css_length(&1)}),
+        responsive(settings, "typography_text_transform", &%{"text-transform" => transform(&1)})
+      ]
+      |> Enum.reduce(%{}, &merge_styles(&2, &1))
+
+  defp weight(value) when is_binary(value), do: Map.get(@weights, value)
+  defp weight(_value), do: nil
+
+  defp transform(value) when is_binary(value), do: Map.get(@transforms, value)
+  defp transform(_value), do: nil
 
   # A setting Elementor keeps once for every width (`padding`, `padding_tablet`, `padding_mobile`),
   # read for each and made into that width's properties by `props`.
@@ -476,13 +694,25 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp styled(nodes, _type, _ctx), do: nodes
 
-  defp style({tag, attrs, children}) when is_map_key(@styles, tag),
-    do: {tag, classed(attrs, List.keymember?(attrs, "class", 0), tag), children}
+  defp style(node), do: style(node, [])
 
-  defp style(node), do: node
+  defp style({tag, attrs, children}, inherited) when is_map_key(@styles, tag),
+    do: {tag, classed(attrs, List.keymember?(attrs, "class", 0), tag, inherited), children}
 
-  defp classed(attrs, true, _tag), do: attrs
-  defp classed(attrs, false, tag), do: attrs ++ [{"class", Map.fetch!(@styles, tag)}]
+  defp style(node, _inherited), do: node
+
+  defp classed(attrs, true, _tag, _inherited), do: attrs
+
+  defp classed(attrs, false, tag, inherited) when tag in @inheriting,
+    do:
+      @styles
+      |> Map.fetch!(tag)
+      |> String.split()
+      |> Enum.reject(&(&1 in inherited))
+      |> Enum.join(" ")
+      |> then(&with_class(attrs, &1))
+
+  defp classed(attrs, false, tag, _inherited), do: attrs ++ [{"class", Map.fetch!(@styles, tag)}]
 
   defp widget("heading", %{"title" => title} = settings, ctx)
        when is_binary(title) and title != "" do
@@ -492,7 +722,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   end
 
   defp widget("text-editor", %{"editor" => html} = settings, ctx) when is_binary(html),
-    do: html |> Content.nodes(ctx.fetch) |> boxed_text(aligned(settings), ctx)
+    do: html |> Content.nodes(ctx.fetch) |> boxed_text(settings, ctx)
 
   defp widget("image", %{"image" => %{"url" => url} = image} = settings, ctx)
        when is_binary(url) and url != "" do
@@ -507,11 +737,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     do:
       settings["link"]
       |> link_attributes()
-      |> button(
-        settings["text"] |> text("Click here") |> fragment(),
-        aligned(settings),
-        ctx
-      )
+      |> button(settings["text"] |> text("Click here") |> fragment(), settings, ctx)
 
   defp widget("video", settings, _ctx), do: settings |> video() |> played()
 
@@ -547,28 +773,19 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp heading(size) when size in ["div", "span", "p"], do: "p"
   defp heading(_default), do: "h2"
 
-  defp heading_tag(tag, children, settings, %{kind: "page"}) do
-    classes = @styles |> Map.fetch!(tag) |> String.split() |> colored(settings["title_color"])
-
-    restyled_node(
-      {tag, [{"class", Enum.join(classes, " ")}], children},
-      merge_styles(aligned(settings), size(settings))
-    )
-  end
+  defp heading_tag(tag, children, settings, %{kind: "page"} = ctx),
+    do:
+      looked({tag, [{"class", Map.fetch!(@styles, tag)}], children}, fn look ->
+        look
+        |> with_styles(aligned(settings))
+        |> painted("color", colour(settings, "title_color", ctx))
+        |> typed(settings, ctx)
+      end)
 
   defp heading_tag(tag, children, _settings, _post), do: {tag, [], children}
 
   defp size(settings),
     do: responsive(settings, "typography_font_size", &%{"font-size" => css_length(&1)})
-
-  defp colored(classes, color) when is_binary(color) do
-    case Map.fetch(@colors, String.downcase(color)) do
-      {:ok, tokens} -> Enum.reject(classes, &(&1 in @color_classes)) ++ tokens
-      :error -> classes
-    end
-  end
-
-  defp colored(classes, _no_color), do: classes
 
   defp aligned(settings),
     do:
@@ -577,15 +794,40 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
         _start -> nil
       end)
 
-  defp boxed_text(nodes, styles, %{kind: "page"}),
-    do: [restyled_node({"div", [], nodes}, styles)]
+  defp boxed_text(nodes, settings, %{kind: "page"} = ctx) do
+    look =
+      {[], aligned(settings)}
+      |> painted("color", colour(settings, "text_color", ctx))
+      |> typed(settings, ctx)
 
-  defp boxed_text(nodes, _styles, _post), do: nodes
+    inherited = inherited(look)
+    [dressed({"div", [], LazyHTML.Tree.postwalk(nodes, &style(&1, inherited))}, look)]
+  end
 
-  defp button(href, label, aligned, %{kind: "page"}),
-    do: aligned_button({"a", href ++ [{"class", @button}], label}, aligned)
+  defp boxed_text(nodes, _settings, _post), do: nodes
 
-  defp button(href, label, _aligned, _post), do: [{"p", [], [{"a", href, label}]}]
+  defp inherited({classes, styles}) do
+    set = styles |> Map.values() |> Enum.flat_map(&Map.keys/1)
+    coloured? = Enum.any?(classes, &String.starts_with?(&1, ["text-", "dark:text-"]))
+
+    for {prop, dropped} <- @inherited,
+        prop in set or (prop == "color" and coloured?),
+        class <- dropped,
+        do: class
+  end
+
+  defp button(href, label, settings, %{kind: "page"} = ctx),
+    do:
+      {"a", href ++ [{"class", @button}], label}
+      |> looked(fn look ->
+        look
+        |> painted("color", colour(settings, "button_text_color", ctx))
+        |> painted("background", background(settings, ctx))
+        |> typed(settings, ctx)
+      end)
+      |> aligned_button(aligned(settings))
+
+  defp button(href, label, _settings, _post), do: [{"p", [], [{"a", href, label}]}]
 
   defp aligned_button(a, styles) when styles == %{}, do: [a]
 
