@@ -341,7 +341,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert_triggered(run, :run_import)
     end
 
-    test "a dry run may be asked again before the import, and not after", %{
+    test "a dry run may be asked again before the import and after it, and not once cancelled", %{
       site: site,
       admin: admin
     } do
@@ -349,10 +349,43 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert run.status == :dry_run
 
       run = import!(run, admin)
-      assert run.status == :done
+      assert {run.status, run.created_count} == {:done, 1}
+
+      again = MishkaCmsMigration.start_dry_run!(run, actor: admin, tenant: site.id)
+      assert {again.status, again.progress, again.finished_at} == {:dry_running, nil, nil}
+      assert again.report == run.report
+      assert %{success: 1} = Oban.drain_queue(queue: :migration)
+
+      run =
+        run.id
+        |> MishkaCmsMigration.get_run!(actor: admin, tenant: site.id)
+        |> import!(admin)
+
+      assert {run.status, run.report.counts.skipped} == {:done, 1}
+
+      run = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
 
       assert {:error, %Ash.Error.Invalid{}} =
                MishkaCmsMigration.start_dry_run(run, actor: admin, tenant: site.id)
+    end
+
+    @tag capture_log: true
+    test "a failed run takes Run again, which forgets why it failed", %{
+      site: site,
+      admin: admin
+    } do
+      run =
+        site
+        |> create_run!(admin, rows(), %{connection: %{"broken" => "list"}})
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      [job] = assert_triggered(run, :run_dry_run)
+      assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
+      failed = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      assert {failed.status, failed.reason} == {:failed, "source_unreachable"}
+
+      again = MishkaCmsMigration.start_dry_run!(failed, actor: admin, tenant: site.id)
+      assert {again.status, again.reason, again.finished_at} == {:dry_running, nil, nil}
     end
 
     test "a site has one migration job at a time, and a refused step changes nothing", %{
@@ -433,8 +466,13 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                MishkaCmsMigration.start_dry_run(second, actor: admin, tenant: site.id)
     end
 
-    test "a run that is done cannot be cancelled", %{site: site, admin: admin} do
+    test "a run that is done keeps its secret until it is cancelled, and a cancelled one stays so",
+         %{site: site, admin: admin} do
       run = site |> create_run!(admin, rows()) |> dry_run!(admin) |> import!(admin)
+      assert MigrationRun.open_secret(run) == {:ok, "letmein"}
+
+      run = MishkaCmsMigration.cancel_run!(run, actor: admin, tenant: site.id)
+      assert {run.status, run.connection_secret} == {:cancelled, nil}
 
       assert {:error, %Ash.Error.Invalid{}} =
                MishkaCmsMigration.cancel_run(run, actor: admin, tenant: site.id)
@@ -536,7 +574,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
     end
 
     @tag capture_log: true
-    test "is deleted once the run ends: cancelled, imported or failed",
+    test "is kept while the run can run again, imported or failed, and deleted once it is cancelled",
          %{site: site, admin: admin, tmp_dir: dir} do
       {:ok, cancelled} = file_run(site, admin, %{file: upload!(export!(dir))})
       MishkaCmsMigration.cancel_run!(cancelled, actor: admin, tenant: site.id)
@@ -545,7 +583,10 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       {:ok, imported} = file_run(site, admin, %{file: upload!(export!(dir))})
       assert %{status: :dry_run} = imported = dry_run!(imported, admin)
       assert File.exists?(imported.connection["file"])
-      assert %{status: :done} = import!(imported, admin)
+      assert %{status: :done} = imported = import!(imported, admin)
+      assert File.exists?(imported.connection["file"])
+      assert %{status: :dry_run} = imported |> dry_run!(admin)
+      MishkaCmsMigration.cancel_run!(imported, actor: admin, tenant: site.id)
       refute File.exists?(imported.connection["file"])
 
       {:ok, failed} = file_run(site, admin, %{file: upload!(export!(dir))})
@@ -556,8 +597,10 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert :ok = perform_job(DryRunWorker, job.args, attempt: 3)
 
       assert %{status: :failed, reason: "unreadable_file"} =
-               MishkaCmsMigration.get_run!(failed.id, actor: admin, tenant: site.id)
+               failed = MishkaCmsMigration.get_run!(failed.id, actor: admin, tenant: site.id)
 
+      assert File.exists?(failed.connection["file"])
+      MishkaCmsMigration.cancel_run!(failed, actor: admin, tenant: site.id)
       refute File.exists?(failed.connection["file"])
     end
   end

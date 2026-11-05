@@ -171,6 +171,12 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == source_id))
       |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
+  defp menu_item(site, source_id),
+    do:
+      MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == source_id))
+
   defp menu_items_with(changes),
     do:
       {"application/json",
@@ -805,6 +811,35 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
   end
 
   describe "a second run" do
+    test "Run again on an imported run plans a menu sent to A component after that import, and Import writes it",
+         %{site: site, admin: admin} do
+      layout!(site)
+      run = imported!(site, admin)
+      assert {run.status, outcomes(run)["23"]} == {:done, {:undecided, "menu_goes_to"}}
+      refute component(site, "nav-footer")
+
+      decide!(site, admin, "component", "23")
+      again = dry_run!(run, admin)
+
+      assert {again.id, again.status} == {run.id, :dry_run}
+      assert {:created, _note} = outcomes(again)["23"]
+      assert %{plan: :created} = menu_item(site, "23")
+      refute component(site, "nav-footer")
+
+      done = import!(again, admin)
+
+      assert {done.id, done.status} == {run.id, :done}
+      assert outcomes(done)["23"] == {:created, "old_address: RSS feed"}
+      assert outcomes(done)["22"] == {:skipped, "unchanged"}
+
+      assert {"Contact", {:navigate, "/contact"}} in component_links(
+               component(site, "nav-footer")
+             )
+
+      assert %{outcome: :created, run_id: run_id} = menu_item(site, "23")
+      assert run_id == run.id
+    end
+
     test "leaves alone a menu WordPress did not change", %{site: site, admin: admin} do
       layout!(site)
       imported!(site, admin)

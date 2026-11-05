@@ -49,7 +49,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   A dry run decides and reports; it writes nothing in the CMS and fires no event, and records what
   it would do with each item as the item's plan (`MishkaCmsMigration.MigrationItem`'s
-  `:record_plan`), which the Items page shows before anything is imported. An import writes each
+  `:record_plan`), which the Items page shows before anything is imported. It first empties the
+  plan of every item of the run's source host on its site, in one update (`:forget_plan`), so a
+  first dry run and a Run again alike leave a plan only on the items the source lists now. An import writes each
   item as the admin who pressed Import, and once every kind is walked its report and the source's
   facts are saved on the run and the report is handed to `migration:import:finished`
   (`MishkaCmsMigration.Events`).
@@ -67,7 +69,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   a cursor it already answered for that kind, `{:too_many_pages, kind}` after 10,000 pages of one
   kind — fails the job with its reason in words (`MishkaCmsMigration.Report.reason/1`). AshOban
   tries it again, and after the last attempt runs the trigger's `on_error`, the run's `:fail`,
-  which keeps the reason and clears the secret. A last attempt that never returns — Oban stops it at
+  which keeps the reason; the run keeps its secret, so it can run again. A last attempt that never returns — Oban stops it at
   its timeout, or it crashes past every rescue — fails its run through Oban's own telemetry
   (`MishkaCmsMigration.Workers.Helpers.Discarded`).
 
@@ -78,9 +80,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   use Ash.Resource.ManualUpdate
 
+  require Ash.Query
+
   alias Ash.Error.Changes.InvalidAttribute
   alias AshOban.Errors.CancelJob
-  alias MishkaCmsMigration.{Events, MigrationRun, Report, Source}
+  alias MishkaCmsMigration.{Events, MigrationItem, MigrationRun, Report, Source}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Workers.Helpers.{Decision, Writer}
@@ -158,6 +162,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
          extra = source.extra(conn),
+         :ok <- forget_plans(run, mode, context),
          {:ok, report} <-
            walk_kinds(%{
              run: run,
@@ -173,6 +178,22 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       {:ok, report, extra}
     end
   end
+
+  defp forget_plans(run, :dry_run, context) do
+    MigrationItem
+    |> Ash.Query.filter(source_host == ^run.source_host)
+    |> Ash.bulk_update(:forget_plan, %{},
+      scope: context,
+      strategy: :atomic,
+      return_errors?: true
+    )
+    |> forgotten()
+  end
+
+  defp forget_plans(_run, :import, _context), do: :ok
+
+  defp forgotten(%Ash.BulkResult{status: :success}), do: :ok
+  defp forgotten(%Ash.BulkResult{errors: errors}), do: {:error, Ash.Error.to_error_class(errors)}
 
   defp walk_kinds(state) do
     Enum.reduce_while(state.source.kinds(), {:ok, Report.new()}, fn kind, {:ok, report} ->

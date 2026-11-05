@@ -42,14 +42,21 @@ defmodule MishkaCmsMigration.MigrationRun do
   ## Its life
 
       :pending ─ start_dry_run ─▶ :dry_running ─▶ :dry_run ─ start_import ─▶ :importing ─▶ :done
-                                        │            │ ▲                          │
-                                        │            └─┘ start_dry_run again      │
-                                        └──────────────────────▶ :failed ◀────────┘
+                                        │                                          │
+                                        └───────────────────▶ :failed ◀────────────┘
 
-      cancel: :pending, :dry_running, :dry_run or :importing ─▶ :cancelled
+      start_dry_run again: :dry_run, :done or :failed ─▶ :dry_running
+      cancel: any status but :cancelled ─▶ :cancelled
 
   An admin creates a run (`:create`), asks for a dry run (`:start_dry_run`) and, once it has
-  reported, for the import (`:start_import`). Each request queues the job of one of the run's
+  reported, for the import (`:start_import`). A run whose dry run is ready, that is done or that
+  failed takes `:start_dry_run` again, Run again: a fresh dry run on the same run and connection,
+  then the usual import, which brings what the source changed since and what an admin decided, left
+  out or mapped since the last import. It empties how far the last job got (`progress`), when the
+  run ended (`finished_at`) and why it failed (`reason`), and the dry run empties the plan of each
+  item of the run's source host before it records its own
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`); the run's `report` stays until the new dry run
+  replaces it, and the run's log keeps each step's counts. Each request queues the job of one of the run's
   AshOban triggers, `:run_dry_run` or `:run_import`, on the `migration` queue
   (`MishkaCmsMigration.Workers.DryRunWorker`, `MishkaCmsMigration.Workers.ImportWorker`), as the
   admin who asked (`MishkaCmsMigration.Resources.Changes.EnqueueJob`). A trigger has no
@@ -67,8 +74,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   refused them, and only what AshOban runs, and what its job runs with its context, passes
   (`AshOban.Checks.AshObanInteraction`).
 
-  An admin ends a run that is not done with `:cancel`, which frees the site for another: its job,
-  waiting or running, is cancelled (`MishkaCmsMigration.Resources.Changes.CancelJobs`); a job that
+  An admin ends a run with `:cancel`, which frees the site for another and clears its secret and
+  file: its job, waiting or running, is cancelled (`MishkaCmsMigration.Resources.Changes.CancelJobs`); a job that
   already left the queue finds the run out of its trigger's `where` and is cancelled, or, already
   walking, stops at its next page. The job's write and the record of each item share one
   transaction, so a job stopped there leaves either both or neither. A job Oban stops on its last
@@ -81,8 +88,8 @@ defmodule MishkaCmsMigration.MigrationRun do
   user and the admin whose job it was are told in the topbar bell
   (`MishkaCmsMigration.Resources.Notifiers.Steps`).
 
-  Running again means a new run; the items earlier runs wrote
-  (`MishkaCmsMigration.MigrationItem`) are what makes it update rather than duplicate.
+  Running again, Run again on the same run or a new run of the same host, updates rather than
+  duplicates: the items earlier runs wrote (`MishkaCmsMigration.MigrationItem`) are what makes it so.
   `created_count`, `updated_count`, `skipped_count`, `failed_count` and `undecided_count` count the
   items this run's import was the last to touch; a dry run records only each item's plan, which
   they do not count.
@@ -96,8 +103,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   caller gives as well wins. Only its sealed form is kept, in `connection_secret`, sealed the way
   `MishkaCmsCore.Settings` seals a `:secret` setting: `Phoenix.Token.encrypt/4` with the endpoint's
   `secret_key_base`, under a salt of this extension's own. The argument is dropped once sealed. The
-  sealed secret is kept from the run's creation until it ends — done, failed or cancelled — and is
-  cleared then; a job opens it with `open_secret/1` each time it connects to the source.
+  sealed secret is kept from the run's creation until an admin cancels it, and is cleared then: a
+  run that is done or failed keeps it, so it can run again; a job opens it with `open_secret/1` each
+  time it connects to the source.
 
   A run with no secret hands the source `nil`. A secret that is stored but cannot be opened —
   `secret_key_base` was rotated since it was sealed — is `{:error, :unreadable_secret}`, which fails
@@ -118,9 +126,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   That folder is outside the one the CMS serves (`MishkaCmsCore.Runtime.Media.static_dir/0`) and
   readable by the CMS's own user alone, so the export, with its drafts, private posts and
-  commenters' addresses, is never public. The file is deleted once the run ends: done, failed or
-  cancelled (`:finish_import`, `:fail`, `:cancel`), after the run is saved so. A run left waiting
-  keeps it until an admin cancels it.
+  commenters' addresses, is never public. The file is deleted once an admin cancels the run
+  (`:cancel`), after the run is saved so: a run that is done or failed keeps it, as it keeps its
+  secret, so it can run again.
 
   ## Who reaches it
 
@@ -146,9 +154,9 @@ defmodule MishkaCmsMigration.MigrationRun do
   running job's progress, show without a reload.
 
   A row offers what its status allows: Dry run on a run that is Connected (`:pending`), Run again on
-  one whose dry run is ready (`:dry_run`), both `:start_dry_run`, Import on that same ready run
-  (`:start_import`, once the admin confirms), and Cancel (`:cancel`, once the admin confirms) on
-  one that is waiting, dry running, ready or importing. They are `:event` row actions, run by the
+  one whose dry run is ready (`:dry_run`), that is Imported (`:done`) or that Failed, both
+  `:start_dry_run`, Import on a ready run (`:start_import`, once the admin confirms), and Cancel
+  (`:cancel`, once the admin confirms) on any run that is not cancelled. They are `:event` row actions, run by the
   page (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index`). Every row also has Items, a link
   to the run's Items page (`items_path/1`, `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
   They are drawn by the domain's Tailwind adapter as the Pages table draws its own: an icon, with
@@ -619,7 +627,7 @@ defmodule MishkaCmsMigration.MigrationRun do
         action :dry_run_again do
           type :event
           event "dry_run"
-          visible fn record, _state -> record.status == :dry_run end
+          visible fn record, _state -> record.status in [:dry_run, :done, :failed] end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Run again") end
@@ -654,9 +662,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             dgettext("mishka_gervaz", "Cancel this run? It cannot be started again.")
           end
 
-          visible fn record, _state ->
-            record.status in [:pending, :dry_running, :dry_run, :importing]
-          end
+          visible fn record, _state -> record.status != :cancelled end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Cancel") end
@@ -908,13 +914,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       accept []
 
       validate {TenantContext, require_master: false}
-      validate {Status, from: [:pending, :dry_run]}
+      validate {Status, from: [:pending, :dry_run, :done, :failed]}
 
       change set_attribute(:status, :dry_running)
       change set_attribute(:progress, nil)
+      change set_attribute(:finished_at, nil)
+      change set_attribute(:reason, nil)
       change {EnqueueJob, trigger: :run_dry_run}
 
-      description "Queues a dry run: what an import would create, update and skip, writing nothing"
+      description "Queues a dry run, a first one or Run again: what an import would create, update and skip, writing nothing"
     end
 
     update :start_import do
@@ -971,8 +979,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       change set_attribute(:status, :done)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
-      change set_attribute(:connection_secret, nil)
-      change {SourceFile, step: :drop}
 
       description "System-internal: saves the import's report"
     end
@@ -981,7 +987,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       accept []
 
       validate {TenantContext, require_master: false}
-      validate {Status, from: [:pending, :dry_running, :dry_run, :importing]}
+      validate {Status, from: [:pending, :dry_running, :dry_run, :importing, :done, :failed]}
 
       change set_attribute(:status, :cancelled)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
@@ -989,7 +995,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       change {SourceFile, step: :drop}
       change CancelJobs
 
-      description "Ends a run that is not done: its job is cancelled, its secret and file cleared"
+      description "Ends a run: its job is cancelled, its secret and file cleared, and it cannot run again"
     end
 
     update :record_progress do
@@ -1013,8 +1019,6 @@ defmodule MishkaCmsMigration.MigrationRun do
       change Reason
       change set_attribute(:status, :failed)
       change set_attribute(:finished_at, &DateTime.utc_now/0)
-      change set_attribute(:connection_secret, nil)
-      change {SourceFile, step: :drop}
 
       description "System-internal: saves why a dry run or an import could not go on"
     end
@@ -1092,7 +1096,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       allow_nil? true
       sensitive? true
 
-      description "The source's secret, sealed (open_secret/1); cleared once the run ends"
+      description "The source's secret, sealed (open_secret/1); cleared once an admin cancels the run"
     end
 
     attribute :options, :map do
