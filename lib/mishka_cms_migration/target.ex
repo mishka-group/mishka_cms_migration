@@ -31,10 +31,11 @@ defmodule MishkaCmsMigration.Target do
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
   `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing, a `prepare/3`
-  that writes at once and a `waiting/2` that plans every write; a target writes only `attrs/2`,
-  `note/2` when it writes an item otherwise than the source has it, `existing/2` when the CMS may
-  already hold some of its items, and `prepare/3` and `waiting/2` when a write needs something
-  from the source first or may wait for an admin.
+  that writes at once, a `waiting/2` that plans every write and a `needs/1` that needs nothing; a
+  target writes only `attrs/2`, `note/2` when it writes an item otherwise than the source has it,
+  `existing/2` when the CMS may already hold some of its items, `prepare/3` and `waiting/2` when a
+  write needs something from the source first or may wait for an admin, and `needs/1` when its
+  record points at items of other kinds.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -198,6 +199,20 @@ defmodule MishkaCmsMigration.Target do
       defp kept("import"), do: {:updated, record}
       defp kept(nil), do: {:undecided, "site_has_own"}
 
+  ## What an item needs
+
+  `needs/1` names, by kind, the source ids of the items of other kinds whose CMS records the item's
+  record points at, such as a post's author, categories, tags and files:
+  `%{"user" => ["3"], "category" => ["4", "5"]}`. A full run walks those kinds first, so it does not
+  ask. A job of picked items (Dry run this item, Import this item) brings nothing it was not asked
+  for, so it asks: an item one of whose needs, or whose parent, has no CMS record yet (it was
+  never imported, failed or waits for an admin's decision) waits, skipped as `"parent_missing"`,
+  `"post_missing"` or `"waits_for: <kinds>"` (`MishkaCmsMigration.Report`), in the dry run too
+  (`MishkaCmsMigration.Workers.Helpers.Needs`). One an admin left out,
+  or an import skipped, does not hold it, as it would not in a full run. `use` answers `%{}`.
+
+      def needs(item), do: %{"category" => Enum.map(item.attrs["categories"] || [], &to_string/1)}
+
   ## What the report says
 
   `note/2` is what the report says about an item the target writes otherwise than the source has
@@ -337,6 +352,12 @@ defmodule MishkaCmsMigration.Target do
   @callback waiting(Item.t(), context()) ::
               {:undecided, String.t()} | {:skipped, String.t()} | nil
 
+  @doc """
+  The items of other kinds `item`'s record points at, their source ids by kind (see "What an item
+  needs"). `use` answers `%{}`.
+  """
+  @callback needs(Item.t()) :: %{String.t() => [String.t()]}
+
   @doc false
   defmacro __using__(opts) do
     kind = Keyword.fetch!(opts, :kind)
@@ -388,13 +409,17 @@ defmodule MishkaCmsMigration.Target do
       @impl MishkaCmsMigration.Target
       def waiting(_item, _context), do: nil
 
+      @impl MishkaCmsMigration.Target
+      def needs(_item), do: %{}
+
       defoverridable resources: 0,
                      writes_to: 2,
                      note: 2,
                      existing: 2,
                      prepare: 3,
                      recorded: 2,
-                     waiting: 2
+                     waiting: 2,
+                     needs: 1
     end
   end
 

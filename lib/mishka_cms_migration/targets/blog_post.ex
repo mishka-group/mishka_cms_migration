@@ -51,6 +51,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     Items page (`MishkaCmsMigration.MigrationItem`'s `left_out`): the post is written without it,
     and so without an author an admin left out.
 
+    Its author, categories, tags, featured file and the files of its content are what it needs
+    (`needs/1`): Import this item writes a post alone only once each of them has a CMS record, or
+    was left out or skipped, and it waits otherwise, where a full run, which writes them first,
+    writes it without the one that failed.
+
     ## Links to other posts
 
     Its `"links"` name the links of its content that point at a post of the source, each by its
@@ -196,6 +201,24 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           Provision.item_paths().post,
           %{Languages.capture() => language, "slug" => slug},
           site_id
+        )
+
+    @impl MishkaCmsMigration.Target
+    def needs(%Item{attrs: attrs}),
+      do: %{
+        "user" => ids(attrs["author"]),
+        "category" => ids(attrs["categories"]),
+        "tag" => ids(attrs["tags"]),
+        "media" => ids([attrs["featured_media"] | Map.values(attrs["media"] || %{})])
+      }
+
+    defp ids(ids),
+      do:
+        for(
+          id <- List.wrap(ids),
+          (is_integer(id) and id > 0) or (is_binary(id) and id not in ["", "0"]),
+          uniq: true,
+          do: to_string(id)
         )
 
     @impl MishkaCmsMigration.Target

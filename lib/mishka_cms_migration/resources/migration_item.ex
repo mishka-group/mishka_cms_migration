@@ -81,8 +81,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   A choice takes the same permission and the same site as reading the items, and is refused while
   one of the site's runs is dry running or importing
   (`MishkaCmsMigration.Resources.Validations.SiteIdle`). Each one is broadcast on
-  `"migration_item:<site_id>:updated"`, for the Items table to draw the item again; what the jobs
-  record is never broadcast.
+  `"migration_item:<site_id>:updated"`, for the Items table to draw the item again. What a job of
+  picked items records is broadcast there too (`picked?/1`), so the rows it settled are drawn again;
+  what a whole run's job records is never broadcast.
 
   ## In the admin
 
@@ -97,6 +98,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   filters by kind, plan and last import, searches the title and the source id, and keeps them and
   the view it shows in the address under `items`. A row expands to what is kept of the item, as
   JSON.
+
+  A row's Dry run this item and Import this item (Gervaz's `:event` row actions, Import once the
+  admin confirms), on an item not left out, run the run's own job for that item alone, and Import
+  the picked items (Gervaz's `:event` bulk action) for the rows picked with the checkboxes
+  (`MishkaCmsMigration.MigrationRun`'s "Picked items"); the page runs them
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`).
 
   A row's Leave out or Bring back makes that choice (Gervaz's `:update` row actions), and so do the
   bulk actions of the same names (Gervaz's `:update` bulk actions) for the rows picked with the
@@ -448,10 +455,40 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       row_actions do
         actions_layout do
-          width "minmax(96px,max-content)"
+          width "minmax(164px,max-content)"
         end
 
         action :expand, type: :accordion
+
+        action :dry_run_item do
+          type :event
+          event "dry_run_item"
+          visible fn item, _state -> not item.left_out end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Dry run this item") end
+            icon "hero-play"
+          end
+        end
+
+        action :import_item do
+          type :event
+          event "import_item"
+
+          confirm fn _item ->
+            dgettext(
+              "mishka_gervaz",
+              "Import this item now? It writes this item alone into the CMS."
+            )
+          end
+
+          visible fn item, _state -> not item.left_out end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import this item") end
+            icon "hero-arrow-down-tray"
+          end
+        end
 
         action :map_to do
           type :edit
@@ -503,6 +540,20 @@ defmodule MishkaCmsMigration.MigrationItem do
       end
 
       bulk_actions do
+        action :import_items do
+          type :event
+
+          confirm dgettext_noop(
+                    "mishka_gervaz",
+                    "Import {count} items now? Each is written alone, the rest left as they are."
+                  )
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import the picked items") end
+            icon "hero-arrow-down-tray"
+          end
+        end
+
         action :leave_out do
           type :update
           action {:master_leave_out, :leave_out}
@@ -941,6 +992,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     prefix "migration_item"
 
     publish_all :update, [[nil, :site_id], "updated"]
+
+    publish_all :create, [[nil, :site_id], "updated"],
+      filter: &MishkaCmsMigration.MigrationItem.picked?/1
   end
 
   multitenancy do
@@ -1147,6 +1201,15 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   def fetch(id, %{site_id: site_id} = user),
     do: Ash.get(__MODULE__, id, actor: user, tenant: site_id, not_found_error?: false)
+
+  @doc """
+  Whether a notification of this resource is of an item a job of picked items recorded
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`), whose actions' shared context says
+  `picked_items?`: the `pub_sub`'s filter on the jobs' creates, so only those are broadcast.
+  """
+  @spec picked?(Ash.Notifier.Notification.t()) :: boolean()
+  def picked?(%Ash.Notifier.Notification{changeset: %{context: %{picked_items?: true}}}), do: true
+  def picked?(_notification), do: false
 
   @doc """
   Whether `item` has a Map to…: a category or a tag, the kinds whose CMS records an admin may

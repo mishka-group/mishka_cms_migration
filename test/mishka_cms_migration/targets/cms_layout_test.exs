@@ -171,11 +171,22 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == source_id))
       |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
-  defp menu_item(site, source_id),
+  defp menu_item(site, source_id), do: item(site, "menu", source_id)
+
+  defp item(site, kind, source_id),
     do:
       MigrationItem
       |> Ash.read!(tenant: site.id, authorize?: false)
-      |> Enum.find(&(&1.source_kind == "menu" and &1.source_id == source_id))
+      |> Enum.find(&(&1.source_kind == kind and &1.source_id == source_id))
+
+  defp import_alone!(run, admin, items) do
+    MishkaCmsMigration.import_items!(run, Enum.map(items, & &1.id),
+      actor: admin,
+      tenant: run.site_id
+    )
+
+    %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+  end
 
   defp menu_items_with(changes),
     do:
@@ -838,6 +849,32 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
 
       assert %{outcome: :created, run_id: run_id} = menu_item(site, "23")
       assert run_id == run.id
+    end
+
+    test "Import this item writes a menu sent to A component once the pages it links are imported, never bringing them in",
+         %{site: site, admin: admin} do
+      layout!(site)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+
+      import_alone!(run, admin, [menu_item(site, "23")])
+
+      assert %{outcome: :skipped, reason: "waits_for: page"} = menu_item(site, "23")
+      refute component(site, "nav-footer")
+      assert %{outcome: nil} = item(site, "page", "29")
+
+      import_alone!(run, admin, [item(site, "page", "29"), item(site, "page", "27")])
+      import_alone!(run, admin, [menu_item(site, "23")])
+
+      assert %{outcome: :created} = menu_item(site, "23")
+
+      assert component_links(component(site, "nav-footer")) == [
+               {"Contact", {:navigate, "/contact"}},
+               {"Docs", {:navigate, "/docs"}},
+               {"RSS feed", {:href, "http://localhost:8089/feed/"}}
+             ]
+
+      assert %{outcome: nil} = menu_item(site, "22")
     end
 
     test "leaves alone a menu WordPress did not change", %{site: site, admin: admin} do

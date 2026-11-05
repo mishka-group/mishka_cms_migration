@@ -1,0 +1,124 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+defmodule MishkaCmsMigration.Workers.Helpers.Needs do
+  @moduledoc """
+  What the items of a page of a job of picked items need that the job was not asked for
+  (`MishkaCmsMigration.Workers.Helpers.Pipeline`): each item's parent and the items of other kinds
+  its record points at (`MishkaCmsMigration.Target`'s `needs/1`). A full run walks a parent before
+  its children and a kind before the kinds that point at it; a job of picked items brings nothing
+  else, so what it needs comes from what earlier imports recorded
+  (`MishkaCmsMigration.MigrationItem`), read in one query for the page, by the run's source host,
+  the kinds and the source ids. What the job was asked for too is never waited on: the walk brings
+  it first.
+
+  `call/3` answers:
+
+    * `waits` — by source id, why an item waits, in the words a full import uses where it has them:
+      `"parent_missing"` for a parent, `"post_missing"` for a post (as a comment's import says),
+      and `"waits_for: <kinds>"` for the other kinds, joined by `"; "`. What it needs waits it when it
+      has no CMS record and an admin has not left it out, and no import skipped it: it was never
+      imported, failed, or waits for a decision. The walk holds back only an item it would create
+      or update; one it leaves as it is, or an admin's choice, stands;
+    * `parents` — the parents the earlier imports recorded, by source id, `true` for one an admin
+      left out, so the walk settles each child at once and skips one under a left-out parent as
+      `"parent_left_out"`, as it does in a full run.
+  """
+
+  require Ash.Query
+
+  alias MishkaCmsMigration.{MigrationItem, Target}
+  alias MishkaCmsMigration.Source.Item
+
+  @missing %{"post" => "post_missing"}
+
+  @doc "What the picked `items`, a page of `kind`, need, for the walk of `state`."
+  @spec call(map(), String.t(), [Item.t()]) :: %{
+          waits: %{String.t() => String.t()},
+          parents: %{String.t() => boolean()}
+        }
+  def call(_state, _kind, []), do: %{waits: %{}, parents: %{}}
+
+  def call(state, kind, items) do
+    target = kind |> Target.fetch() |> needs_of()
+    needed = Map.new(items, &{&1.source_id, needed(state, kind, target, &1)})
+    found = needed |> Map.values() |> List.flatten() |> Enum.uniq() |> found(state)
+
+    %{
+      waits:
+        for(
+          {id, refs} <- needed,
+          reason = waits(kind, refs, found),
+          into: %{},
+          do: {id, reason}
+        ),
+      parents:
+        for(
+          %Item{parent: parent} <- items,
+          %{left_out: left_out} <- [found[{kind, parent}]],
+          into: %{},
+          do: {parent, left_out}
+        )
+    }
+  end
+
+  defp needs_of({:ok, target}), do: &target.needs/1
+  defp needs_of({:error, :not_installed}), do: fn _item -> %{} end
+
+  defp needed(state, kind, needs, item) do
+    refs =
+      for {needed_kind, ids} <- needs.(item), id <- ids, do: {needed_kind, to_string(id)}
+
+    [{kind, item.parent} | refs]
+    |> Enum.reject(fn {needed_kind, id} ->
+      is_nil(id) or id in Map.get(state.picked, needed_kind, [])
+    end)
+    |> Enum.uniq()
+  end
+
+  defp found([], _state), do: %{}
+
+  defp found(refs, state) do
+    {kinds, ids} = Enum.unzip(refs)
+
+    MigrationItem
+    |> Ash.Query.filter(
+      source_host == ^state.run.source_host and source_kind in ^Enum.uniq(kinds) and
+        source_id in ^Enum.uniq(ids)
+    )
+    |> Ash.read!(scope: state.scope)
+    |> Map.new(&{{&1.source_kind, &1.source_id}, &1})
+  end
+
+  defp waits(kind, refs, found) do
+    {parent, others} =
+      refs
+      |> Enum.filter(&waiting_on?(found[&1]))
+      |> Enum.split_with(&(elem(&1, 0) == kind))
+
+    {missing, others} = Enum.split_with(others, &is_map_key(@missing, elem(&1, 0)))
+
+    [parent_missing(parent) | Enum.map(missing, &Map.fetch!(@missing, elem(&1, 0)))]
+    |> Enum.concat([waits_for(others)])
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> reason()
+  end
+
+  defp waiting_on?(%MigrationItem{left_out: true}), do: false
+  defp waiting_on?(%MigrationItem{target_id: id}) when is_binary(id), do: false
+  defp waiting_on?(%MigrationItem{outcome: :skipped}), do: false
+  defp waiting_on?(_never_imported_failed_or_undecided), do: true
+
+  defp parent_missing([]), do: nil
+  defp parent_missing(_parent), do: "parent_missing"
+
+  defp waits_for([]), do: nil
+
+  defp waits_for(refs),
+    do: "waits_for: " <> (refs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.join(", "))
+
+  defp reason([]), do: nil
+  defp reason(parts), do: Enum.join(parts, "; ")
+end

@@ -79,6 +79,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   said it does (`new_tab`). Only `http`, `https`, `mailto` and `tel` addresses, and a path on the
   site, are links; an item with any other, such as `#`, has none.
 
+  The pages, posts, categories and tags a menu's items point at are what it needs (`needs/1`): Import
+  this item writes a menu only once each of them has a CMS record, or was left out.
+
   The import's report names the items that still point at the source's host, after `"old_address:
   "`, so an admin can see which links leave the site; a dry run, which writes nothing, names none.
   The items' records are found with one query for the items (`note/2`) and one more, then one for
@@ -189,6 +192,14 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
            |> drafted(item, context)
            |> waited()
   end
+
+  @impl MishkaCmsMigration.Target
+  def needs(item),
+    do:
+      item.attrs["items"]
+      |> entries()
+      |> Enum.flat_map(&reference/1)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
 
   @impl MishkaCmsMigration.Target
   def attrs(item, %{record: record, prepared: prepared, source_host: host} = context) do

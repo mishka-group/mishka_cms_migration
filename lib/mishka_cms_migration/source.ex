@@ -72,6 +72,12 @@ defmodule MishkaCmsMigration.Source do
   `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails the run; an
   error from `normalize/3` fails only that item, and the report says why.
 
+  A job of picked items, Dry run this item or Import this item on the Items page, walks only the
+  kinds of those items and reads only their rows: `rows/3` with their source ids, where the source
+  has it, and otherwise every page of their kind from `list/3`, keeping the picked ones once they
+  are normalized. `rows/3` is optional; a source that reads a site over the network should have it,
+  so one item never costs a walk of its whole kind.
+
   ## Its connection form
 
   The Migration page's New import opens one form for every source, and the form asks for what
@@ -204,6 +210,17 @@ defmodule MishkaCmsMigration.Source do
   @doc "One page of `kind` from `cursor`, and the cursor of the next page (`nil` after the last)."
   @callback list(conn(), kind :: String.t(), cursor()) ::
               {:ok, [term()], cursor()} | {:error, term()}
+
+  @doc """
+  The rows of `kind` whose source ids are `source_ids`, as `list/3` answers them, read without
+  listing the whole kind: what a job of picked items reads (see "A run"). A row it answers that was
+  not asked for is left out once it is normalized, so a kind the source reads in one go, such as
+  WordPress's menus, may answer it whole. Optional.
+  """
+  @callback rows(conn(), kind :: String.t(), source_ids :: [String.t()]) ::
+              {:ok, [term()]} | {:error, term()}
+
+  @optional_callbacks rows: 3
 
   @doc """
   Facts about the source a run keeps in its `extra` (`MishkaCmsMigration.MigrationRun`), such as a

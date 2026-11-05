@@ -37,6 +37,11 @@ defmodule MishkaCmsMigration do
 
       {:ok, run} = MishkaCmsMigration.start_dry_run(run, actor: admin, tenant: site.id)
       {:ok, run} = MishkaCmsMigration.start_import(run, actor: admin, tenant: site.id)
+
+  Once the run is no longer running, some of its items alone, by the ids of their
+  `MishkaCmsMigration.MigrationItem`s:
+
+      {:ok, run} = MishkaCmsMigration.import_items(run, [item.id], actor: admin, tenant: site.id)
   """
   use Ash.Domain,
     otp_app: :mishka_cms_migration,
@@ -73,9 +78,12 @@ defmodule MishkaCmsMigration do
       define :get_run, action: :read, get_by: :id
       define :start_dry_run, action: :start_dry_run
       define :start_import, action: :start_import
+      define :dry_run_items, action: :dry_run_items, args: [:items]
+      define :import_items, action: :import_items, args: [:items]
       define :cancel_run, action: :cancel
       define :finish_dry_run, action: :finish_dry_run, args: [:report, :extra]
       define :finish_import, action: :finish_import, args: [:report, :extra]
+      define :finish_items, action: :finish_items, args: [:report, :status]
       define :fail_run, action: :fail, args: [:error]
       define :record_progress, action: :record_progress, args: [:progress]
     end

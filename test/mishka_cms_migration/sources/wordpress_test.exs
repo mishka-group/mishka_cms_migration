@@ -228,6 +228,28 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
     end
 
+    test "reads picked rows by their ids from their kind's route, 100 ids a request" do
+      stub!()
+      conn = connected!()
+      ids = Enum.map(1..101, &to_string/1)
+
+      assert {:ok, rows} = WordPress.rows(conn, "comment", ids)
+      assert length(rows) == 2 * length(recorded("comments"))
+
+      for asked <- [Enum.take(ids, 100), ["101"]] do
+        include = Enum.join(asked, ",")
+
+        assert_received {:wordpress_request,
+                         %{
+                           request_path: "/wp-json/wp/v2/comments",
+                           query_params: %{"include" => ^include, "status" => "all"}
+                         }}
+      end
+
+      assert {:ok, [%{"id" => 23}]} = WordPress.rows(conn, "menu", ["23"])
+      assert {:ok, [%{"id" => "title"}]} = WordPress.rows(conn, "setting", ["title"])
+    end
+
     test "reads a post's old address with only the fields it needs" do
       stub!()
       assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "post_redirect", nil)

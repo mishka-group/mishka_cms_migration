@@ -46,7 +46,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   when the site has it. `list/3` reads each other kind from its REST route (`/wp/v2/users`,
   `/wp/v2/categories`, `/wp/v2/tags`, `/wp/v2/media`, `/wp/v2/pages`, `/wp/v2/posts`,
   `/wp/v2/comments`) as the signed-in user, with `context=edit`, so WordPress answers the raw fields
-  an editor sees, 100 rows a page. Pages and posts are asked for with
+  an editor sees, 100 rows a page; `rows/3` asks the same route for the rows of picked items alone,
+  by their ids. Pages and posts are asked for with
   `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
   asked for with `status=all` and `type=all`: approved and held for moderation, of every type
   (WordPress answers only plain comments unless asked), but not spam and not the trash.
@@ -408,6 +409,38 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   end
 
   def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
+
+  @doc """
+  The rows of `kind` with the WordPress ids `source_ids`, what a job of picked items reads: asked
+  for from the kind's REST route as `list/3` asks for a page, by their ids (`include`), 100 ids a
+  request. The settings, read from the REST index, and the menus, whose main one and block twins
+  are told apart only among them all, are the picked rows of `list/3`'s one page. WordPress refuses
+  as `list/3` says.
+  """
+  @impl MishkaCmsMigration.Source
+  def rows(%{req: req}, kind, source_ids) when is_map_key(@routes, kind) do
+    {route, params} = Map.fetch!(@routes, kind)
+
+    source_ids
+    |> Enum.chunk_every(@per_page)
+    |> Enum.reduce_while({:ok, []}, fn ids, {:ok, read} ->
+      req
+      |> Req.get(
+        url: route,
+        params: [context: "edit", per_page: @per_page, include: Enum.join(ids, ",")] ++ params
+      )
+      |> listed(1)
+      |> read_on(read)
+    end)
+  end
+
+  def rows(conn, kind, source_ids) do
+    with {:ok, rows, _next} <- list(conn, kind, nil),
+         do: {:ok, Enum.filter(rows, &(to_string(&1["id"]) in source_ids))}
+  end
+
+  defp read_on({:ok, rows, _next}, read), do: {:cont, {:ok, read ++ rows}}
+  defp read_on(refused, _read), do: {:halt, refused}
 
   @doc """
   The rows `list/3` answers for `"menu"`, of the REST API's `menus` and `menu-items` (or rows of the

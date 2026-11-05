@@ -67,12 +67,12 @@ defmodule MishkaCmsMigration.MigrationRun do
   (`MishkaCmsMigration.Workers`).
 
   The job's action walks the source (`MishkaCmsMigration.Workers.Helpers.Pipeline`) and saves its
-  `report` (`MishkaCmsMigration.Report`) through `:finish_dry_run` or `:finish_import` and how far
-  it is through `:record_progress`, whose `progress` each request empties for its new job; after
-  its last attempt fails, AshOban runs `:fail`, the
-  triggers' `on_error`, which keeps the reason. Those six are the system's own: every actor is
-  refused them, and only what AshOban runs, and what its job runs with its context, passes
-  (`AshOban.Checks.AshObanInteraction`).
+  `report` (`MishkaCmsMigration.Report`) through `:finish_dry_run` or `:finish_import`, or, for a
+  job of picked items (see "Picked items"), `:finish_items`, and how far it is through
+  `:record_progress`, whose `progress` each request empties for its new job; after its last
+  attempt fails, AshOban runs `:fail`, the triggers' `on_error`, which keeps the reason. Those
+  seven are the system's own: every actor is refused them, and only what AshOban runs, and what
+  its job runs with its context, passes (`AshOban.Checks.AshObanInteraction`).
 
   An admin ends a run with `:cancel`, which frees the site for another and clears its secret and
   file: its job, waiting or running, is cancelled (`MishkaCmsMigration.Resources.Changes.CancelJobs`); a job that
@@ -93,6 +93,23 @@ defmodule MishkaCmsMigration.MigrationRun do
   `created_count`, `updated_count`, `skipped_count`, `failed_count` and `undecided_count` count the
   items this run's import was the last to touch; a dry run records only each item's plan, which
   they do not count.
+
+  ## Picked items
+
+  An admin may dry run or import some of a run's items alone, from the Items page: Dry run this
+  item, Import this item and Import the picked items (`:dry_run_items`, `:import_items`, with the
+  ids of the picked `MishkaCmsMigration.MigrationItem`s, at most 100). Either takes a run that is
+  waiting, ready, done or failed, moves it to `:dry_running` or `:importing` as its own steps do,
+  so the site's one running job and its refusal hold the same way, and queues the job of the same
+  trigger, with the items' source ids by kind and the status the run is in as its arguments
+  (`MishkaCmsMigration.Resources.Changes.PickedItems`). The job walks those items alone and
+  settles them as a whole run would, reading from the source only their rows
+  (`c:MishkaCmsMigration.Source.rows/3`) and what they need, such as a post's files; an item whose
+  parent, or what its record points at, was not imported waits, it never brings that in
+  (`MishkaCmsMigration.Workers.Helpers.Needs`). It then saves what it did into the run's report
+  (`MishkaCmsMigration.Report.merge/2`) and puts the run back in the status it was in
+  (`:finish_items`), and the items' rows refresh from their broadcasts. Neither is a step of the
+  run's log; a job of picked items that fails fails its run, as the run's own does.
 
   ## The source's secret
 
@@ -213,6 +230,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     CancelJobs,
     CheckConnection,
     EnqueueJob,
+    PickedItems,
     Reason,
     SourceFile
   }
@@ -925,6 +943,48 @@ defmodule MishkaCmsMigration.MigrationRun do
       description "Queues a dry run, a first one or Run again: what an import would create, update and skip, writing nothing"
     end
 
+    update :dry_run_items do
+      accept []
+      require_atomic? false
+
+      argument :items, {:array, :uuid} do
+        allow_nil? false
+        constraints min_length: 1, max_length: 100
+        description "The ids of the picked items, items of the run's site and source host"
+      end
+
+      validate {TenantContext, require_master: false}
+      validate {Status, from: [:pending, :dry_run, :done, :failed]}
+
+      change set_attribute(:status, :dry_running)
+      change set_attribute(:progress, nil)
+      change PickedItems
+      change {EnqueueJob, trigger: :run_dry_run}
+
+      description "Queues a dry run of the picked items alone, which puts the run back where it was"
+    end
+
+    update :import_items do
+      accept []
+      require_atomic? false
+
+      argument :items, {:array, :uuid} do
+        allow_nil? false
+        constraints min_length: 1, max_length: 100
+        description "The ids of the picked items, items of the run's site and source host"
+      end
+
+      validate {TenantContext, require_master: false}
+      validate {Status, from: [:pending, :dry_run, :done, :failed]}
+
+      change set_attribute(:status, :importing)
+      change set_attribute(:progress, nil)
+      change PickedItems
+      change {EnqueueJob, trigger: :run_import}
+
+      description "Queues the import of the picked items alone, which puts the run back where it was"
+    end
+
     update :start_import do
       accept []
 
@@ -943,6 +1003,17 @@ defmodule MishkaCmsMigration.MigrationRun do
       transaction? false
       require_atomic? false
 
+      argument :items, :map do
+        allow_nil? true
+        description "The picked items' source ids by kind, for a job of picked items; nil for all"
+      end
+
+      argument :back_to, :atom do
+        allow_nil? true
+        constraints one_of: [:pending, :dry_run, :done, :failed]
+        description "The status a job of picked items puts the run back in"
+      end
+
       validate {Status, from: [:dry_running]}
 
       manual {Pipeline, mode: :dry_run}
@@ -954,6 +1025,17 @@ defmodule MishkaCmsMigration.MigrationRun do
       accept []
       transaction? false
       require_atomic? false
+
+      argument :items, :map do
+        allow_nil? true
+        description "The picked items' source ids by kind, for a job of picked items; nil for all"
+      end
+
+      argument :back_to, :atom do
+        allow_nil? true
+        constraints one_of: [:pending, :dry_run, :done, :failed]
+        description "The status a job of picked items puts the run back in"
+      end
 
       validate {Status, from: [:importing]}
 
@@ -981,6 +1063,22 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:finished_at, &DateTime.utc_now/0)
 
       description "System-internal: saves the import's report"
+    end
+
+    update :finish_items do
+      accept [:report]
+
+      argument :status, :atom do
+        allow_nil? false
+        constraints one_of: [:pending, :dry_run, :done, :failed]
+        description "The status the run was in before the job of picked items"
+      end
+
+      validate {Status, from: [:dry_running, :importing]}
+
+      change set_attribute(:status, arg(:status))
+
+      description "System-internal: saves the report a job of picked items merged and puts the run back"
     end
 
     update :cancel do
@@ -1034,6 +1132,7 @@ defmodule MishkaCmsMigration.MigrationRun do
              :run_import,
              :finish_dry_run,
              :finish_import,
+             :finish_items,
              :record_progress,
              :fail
            ]) do
@@ -1928,6 +2027,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("target_missing"), do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+
+  defp said("waits_for: " <> kinds),
+    do:
+      dgettext("mishka_gervaz", "Waits until its %{kinds} are imported",
+        kinds: kinds |> String.split(", ") |> Enum.map(&kind_noun/1) |> Languages.join()
+      )
+
   defp said("no_user"), do: dgettext("mishka_gervaz", "No user with this email on the site")
   defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")
   defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")

@@ -14,8 +14,10 @@ defmodule MishkaCmsMigration.Resources.Changes.EnqueueJob do
   Besides what AshOban keeps in it (the run's id, its site as the tenant, the actor through
   `MishkaCmsMigration.Workers.Helpers.Actor`), the job carries its site, who asked (`actor_id`) and
   the resource, the shape the activity log reads a job by
-  (`MishkaCmsCore.Activity.Sources.Oban`). AshOban's own `run_oban_trigger` change takes no
-  per-action arguments, so it cannot say who asked.
+  (`MishkaCmsCore.Activity.Sources.Oban`), and the arguments a change before it put in the
+  changeset's `job_arguments` context, which AshOban hands the trigger's action, such as the items
+  of a job of picked items (`MishkaCmsMigration.Resources.Changes.PickedItems`). AshOban's own
+  `run_oban_trigger` change takes no per-action arguments, so it cannot say who asked.
   """
 
   use Ash.Resource.Change
@@ -27,18 +29,19 @@ defmodule MishkaCmsMigration.Resources.Changes.EnqueueJob do
 
   @impl true
   def change(changeset, opts, context) do
-    Ash.Changeset.after_action(changeset, fn _changeset, run ->
-      enqueue(run, opts[:trigger], context.actor)
+    Ash.Changeset.after_action(changeset, fn changeset, run ->
+      enqueue(run, opts[:trigger], context.actor, changeset.context[:job_arguments] || %{})
     end)
   end
 
   @impl true
   def atomic(changeset, opts, context), do: {:ok, change(changeset, opts, context)}
 
-  defp enqueue(run, trigger, actor) do
+  defp enqueue(run, trigger, actor, arguments) do
     AshOban.run_trigger(run, trigger,
       actor: actor,
       tenant: run.site_id,
+      action_arguments: arguments,
       args: %{site_id: run.site_id, actor_id: actor_id(actor), resource: inspect(MigrationRun)}
     )
 

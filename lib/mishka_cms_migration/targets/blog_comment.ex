@@ -69,7 +69,9 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
     The comment is written on the Blog post the same run, or an earlier one, wrote for its
     `"post"` (`MishkaCmsMigration.Targets.BlogPost`), under the comment written for its parent: the
     walk writes a parent first. Its post, parent and author are set when the comment is created and
-    never changed by a later run, which writes its text and status over a comment it wrote.
+    never changed by a later run, which writes its text and status over a comment it wrote. Its post
+    is what it needs (`needs/1`), so Import this item writes a comment alone only on a post an
+    import wrote.
 
     A re-run is held to the rules every target is: a comment WordPress did not change is
     `"unchanged"`, and one an admin edited or moderated in the CMS is kept as the admin left it
@@ -106,6 +108,14 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
 
       Map.new(items, &{&1.source_id, left_out(&1) || found(&1, page, context)})
     end
+
+    @impl MishkaCmsMigration.Target
+    def needs(%Item{attrs: %{"post_type" => "page"}}), do: %{}
+
+    def needs(%Item{attrs: %{"post" => post}}) when is_integer(post) or is_binary(post),
+      do: %{"post" => [to_string(post)]}
+
+    def needs(_item), do: %{}
 
     @impl MishkaCmsMigration.Target
     def attrs(item, %{record: nil, prepared: %{post_id: post, author_id: author}} = context) do

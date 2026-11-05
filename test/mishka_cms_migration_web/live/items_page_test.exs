@@ -156,6 +156,15 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       ~s|#{@table} [phx-value-event="#{action}"][phx-value-id="#{item.id}"], | <>
         ~s|#{@table} [phx-click*='"event":"#{action}"'][phx-click*='"id":"#{item.id}"']|
 
+  # An `:event` row action names its row in `phx-value-values`.
+  defp item_action(event, item),
+    do: ~s|#{@table} [phx-value-event="#{event}"][phx-value-values*="#{item.id}"]|
+
+  defp item_action!(view, event, item) do
+    view |> element(item_action(event, item)) |> render_click()
+    settled(view)
+  end
+
   defp row_action!(view, action, item) do
     view |> element(row_button(action, item)) |> render_click()
     settled(view)
@@ -579,6 +588,75 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
                stored(site),
                &(&1.source_kind != "tag" or &1.plan_reason == "left_out_by_admin")
              )
+    end
+  end
+
+  describe "Dry run this item and Import this item" do
+    test "run the run's job for the item alone, draw its row again live, and leave the rest as it was",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"tag", "13"}))
+      others = Enum.reject(stored(site), &(&1.id == tag.id))
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+
+      assert plan_of(view, tag) == "created"
+      assert has_element?(view, "#{item_action("import_item", tag)}[data-confirm]")
+
+      assert item_action!(view, "dry_run_item", tag) =~ "Dry run of the item started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert plan_of(view, tag) == "skipped"
+      assert item!(tag).plan_reason == "unchanged"
+
+      assert item_action!(view, "import_item", tag) =~ "Import of the item started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert %{outcome: :skipped, reason: "unchanged", run_id: run_id} = item!(tag)
+      assert run_id == run.id
+      assert Enum.reject(stored(site), &(&1.id == tag.id)) == others
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
+    end
+
+    test "Import the picked items imports the picked rows in one job", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      [first, second | _] =
+        stored(site) |> Enum.filter(&(&1.source_kind == "tag")) |> Enum.sort_by(& &1.source_id)
+
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+      pick!(view, first)
+      pick!(view, second)
+
+      assert bulk!(view, "import_items") =~ "Import of 2 items started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+
+      assert Enum.map([first, second], &item!(&1).reason) == ["unchanged", "unchanged"]
+    end
+
+    test "are refused in words while another run of the site is running, and are not offered on an item left out",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      [tag, left_out | _] = Enum.filter(stored(site), &(&1.source_kind == "tag"))
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+
+      row_action!(view, "leave_out", left_out)
+      refute has_element?(view, item_action("dry_run_item", left_out))
+      refute has_element?(view, item_action("import_item", left_out))
+
+      site
+      |> later_run!(admin, run)
+      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      assert item_action!(view, "import_item", tag) =~ "still waiting or running"
+      assert item_action!(view, "dry_run_item", tag) =~ "still waiting or running"
+      assert item!(tag) == tag
+      assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
     end
   end
 
