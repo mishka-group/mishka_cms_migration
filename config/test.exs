@@ -26,6 +26,11 @@ config :mishka_cms_migration, MishkaCmsMigration.Sources.WordPress,
 config :mishka_cms_migration, MishkaCmsMigration.Targets.CmsMedia,
   req_options: [plug: {Req.Test, MishkaCmsMigration.Sources.WordPress}]
 
+# Google Fonts' answer for a stylesheet's fonts comes from the same stub, which answers it from what
+# Google answered (`test/fixtures/google_fonts`) where a test asks it to.
+config :mishka_cms_migration, MishkaCmsMigration.Targets.CmsStylesheet,
+  req_options: [plug: {Req.Test, MishkaCmsMigration.Sources.WordPress}]
+
 # The files an import stores go under `tmp/`, which `test_helper.exs` empties before each run; the
 # rows that name them are rolled back with each test.
 config :mishka_cms_core,

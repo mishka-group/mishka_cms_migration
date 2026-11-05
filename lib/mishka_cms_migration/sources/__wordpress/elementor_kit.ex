@@ -29,8 +29,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorKit do
       the markup pairs with `dark:`;
     * a font is `--font-el-<id>`, its family then `sans-serif`, with a Google Fonts `@import` of
       every family but the system ones Elementor lists (Arial, Tahoma, ...), in the weights the
-      kit's fonts give it and 400 and 700. The site's Content-Security-Policy allows Google
-      Fonts, and the CSS compiler puts a remote `@import` ahead of everything else.
+      kit's fonts give it and 400 and 700. The stylesheet target writes it as the `@font-face`
+      rules Google answers for it (`MishkaCmsMigration.Targets.CmsStylesheet`'s "Google fonts"),
+      so the fonts load wherever the site's CSS does, its admin's previews too.
 
   A page names a colour through the builder's own style setting, `var(--color-el-<id>)`
   (`colour/1`), and its twin and a font by their token classes (`dark_class/2`, `font_class/1`),

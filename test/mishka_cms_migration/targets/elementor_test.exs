@@ -44,6 +44,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
     "/wp-json/" => "elementor-index",
     "/wp-json/elementor/v1/globals" => "elementor-globals"
   }
+  @google_fonts Path.expand("../../fixtures/google_fonts/elementor-globals.css", __DIR__)
+  @fonts %{"/css" => {"text/css; charset=utf-8", File.read!(@google_fonts)}}
+  @external_resource @google_fonts
 
   # A stylesheet's write runs Tailwind, which a fresh checkout downloads the first time: here, rather
   # than inside an import's transaction.
@@ -99,9 +102,22 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
     Map.new(theme.declarations)
   end
 
+  defp at_rules(css, name) do
+    assert {:ok, rules} = IgniterCss.get_at_rules(css, name)
+    rules
+  end
+
+  defp font_requests(count \\ 0) do
+    receive do
+      {:wordpress_request, %{host: "fonts.googleapis.com"}} -> font_requests(count + 1)
+    after
+      0 -> count
+    end
+  end
+
   describe "Elementor's global colours and fonts" do
     setup %{site: site} do
-      stub!(Map.merge(@answers, @globals))
+      stub!(@answers |> Map.merge(@globals) |> Map.merge(@fonts))
 
       %{
         admin: migration_admin!(site, @admin ++ ["admin:dashboard:runtime:stylesheet"])
@@ -123,6 +139,63 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
              }
 
       assert stylesheets(site) == [stylesheet]
+    end
+
+    test "an import writes the @font-face rules Google Fonts answers for the kit's fonts in place of its @import, asked once, and a second run asks nothing",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert font_requests() == 0
+
+      import!(run, admin)
+
+      assert_received {:wordpress_request,
+                       %{host: "fonts.googleapis.com", request_path: "/css"} = asked}
+
+      assert asked.query_params["family"] == "Poppins:400,700|Lora:400,700|Inter:400,600,700"
+      assert ["Mozilla/5.0 " <> _browser] = Plug.Conn.get_req_header(asked, "user-agent")
+      assert font_requests() == 0
+
+      [stylesheet] = stylesheets(site)
+      assert at_rules(stylesheet.content, "import") == []
+
+      assert stylesheet.content |> at_rules("font-face") |> Enum.map(& &1.declarations) ==
+               @google_fonts
+               |> File.read!()
+               |> at_rules("font-face")
+               |> Enum.map(& &1.declarations)
+
+      for %{declarations: declarations} <- at_rules(stylesheet.content, "font-face") do
+        assert "url(https://fonts.gstatic.com/" <> _file = Map.new(declarations)["src"]
+      end
+
+      assert tokens(stylesheet.content)["--font-el-primary"] == ~s("Poppins", sans-serif)
+
+      assert outcomes(imported!(site, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "unchanged"}
+             }
+
+      assert font_requests() == 0
+    end
+
+    test "with Google Fonts out of reach the stylesheet keeps the kit's @import, and a second run asks again",
+         %{site: site, admin: admin} do
+      stub!(@answers |> Map.merge(@globals) |> Map.put("/css", :unreachable))
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:created, nil}}
+
+      [stylesheet] = stylesheets(site)
+
+      assert [%{target: "https://fonts.googleapis.com/css?" <> _fonts}] =
+               at_rules(stylesheet.content, "import")
+
+      assert at_rules(stylesheet.content, "font-face") == []
+
+      stub!(@answers |> Map.merge(@globals) |> Map.merge(@fonts))
+      assert outcomes(imported!(site, admin), "stylesheet") == %{"elementor" => {:updated, nil}}
+
+      assert [%{id: id, content: content}] = stylesheets(site)
+      assert id == stylesheet.id
+      assert at_rules(content, "import") == []
+      assert at_rules(content, "font-face") != []
     end
 
     test "the imported page names the tokens the stylesheet declares, through the builder's style settings",

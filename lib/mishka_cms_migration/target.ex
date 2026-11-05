@@ -340,7 +340,8 @@ defmodule MishkaCmsMigration.Target do
   @doc """
   What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import
   writes it, from what `prepare/3` fetched, such as `%{file_hash: hash}` for a downloaded file (see
-  "What a write needs first"). `use` answers `%{}`.
+  "What a write needs first"), or `%{content_hash: nil}` for a write the next run makes again, such
+  as a stylesheet written without the fonts Google did not answer. `use` answers `%{}`.
   """
   @callback recorded(Item.t(), context()) :: map()
 

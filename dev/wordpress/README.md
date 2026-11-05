@@ -90,7 +90,8 @@ it runs on a site already in use, and a second run changes nothing but the kit a
 REST index's site fields and namespaces, which list Elementor's `elementor/v1`), `rest/elementor-globals.*` (the
 kit's colours and fonts, Elementor's own `/elementor/v1/globals`), `rest/elementor-pages.*`, `rest/elementor-posts.*`
 and `wxr/elementor.xml` (an export of those entries and the active kit alone), with its rows in `rest/INDEX.txt` and
-the Elementor version in `VERSIONS.txt`. On a clean site record the curated seed first, then these:
+the Elementor version in `VERSIONS.txt`, and `../google_fonts/elementor-globals.css`, what Google Fonts answers a
+browser for the `@import` the kit's fonts make, asked with the same `user-agent` the stylesheet target sends. On a clean site record the curated seed first, then these:
 
 ```sh
 docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh
