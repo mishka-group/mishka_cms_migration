@@ -64,16 +64,25 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   to the Tailwind classes the Inspector would have written, after the element's own.
 
     * alignment (`align`) — a heading's, a text editor's and a button's `text-align`;
-    * a section's and a container's `padding` and `margin` — by side (`py`/`px` when both sides
-      match, else `pt`, `pb`, `pl`, `pr`), exact, not rounded to a spacing step;
+    * the `padding` and `margin` of a section and a container (on the Section at the top, on the
+      grid or the stack an inner one becomes), of a column (on the Stack its cell becomes, wrapped
+      in one even when it holds one widget), of a widget (its Advanced tab's `_padding` and
+      `_margin`, on the element it draws, or on a box around it when it draws more than one, or a
+      link) and a button's own (`text_padding`) — by side (`py`/`px` when both sides match, else
+      `pt`, `pb`, `pl`, `pr`), exact, not rounded to a spacing step;
     * a section's `content_width` and a container's `boxed_width` — the Container's `max-width`;
-    * a container's `flex_gap` — the `gap` of the grid or stack it becomes;
+    * a container's `flex_gap` — the `gap` of the grid or stack it becomes; a section's named
+      column `gap` — the grid's `gap` in the pixels Elementor documents for it (no 0, narrow 5,
+      default 10, extended 15, wide 20, wider 30), or its `gap_columns_custom`;
+    * an image's `width`, and its own size (`width: auto`) when Elementor gives none, in place of
+      the builder's full width, and its `align` — its margins (`mx: auto` centred, `ml: auto` to
+      the right, `mx: 0` to the left), centred when Elementor says nothing, as Elementor draws it;
     * a heading's, a text editor's and a button's typography — its font's `font-size`, in the unit
       Elementor has (px, em, rem, %, vw, vh), `font-weight` (300 to 800), `line-height`,
       `letter-spacing` and `text-transform`, each at the widths Elementor has them;
     * colours — a heading's (`title_color`), a text editor's (`text_color`) and a button's
-      (`button_text_color`) `color`, and the `background` of a button, a section and a container
-      whose background is a colour (`background_background` `classic`).
+      (`button_text_color`) `color`, and the `background` of a button, a section, a column and a
+      container whose background is a colour (`background_background` `classic`).
 
   ## Elementor's global colours and fonts
 
@@ -94,14 +103,15 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   A colour of the widget's own is the style setting with its value (`text-[#0f766e]`), in place of
   the theme's light colour, and the element keeps the theme's dark twin, so it reads in the dark
-  theme (`dark:bg-page-dark` for a section's or a container's background, which has none); a colour
-  that is exactly the light value of one of the theme's text tokens (fg, dim, subtle, faint, brand)
-  is that token's classes with their dark twins. A text editor's colour, size and line height are
-  its box's, so its paragraphs, lists and quotes leave theirs out and take the box's.
+  theme (`dark:bg-page-dark` for the background of a section, a column or a container, which has
+  none); a colour that is exactly the light value of one of the theme's text tokens (fg, dim,
+  subtle, faint, brand) is that token's classes with their dark twins. A text editor's colour, size
+  and line height are its box's, so its paragraphs, lists and quotes leave theirs out and take the
+  box's.
 
   Not carried over: a family no font of the kit has, gradients and pictures behind an element,
-  borders, shadows, hover colours, and a column's own padding. Elementor's tablet (1024) and mobile
-  (767) widths become the builder's (900 and 560).
+  borders, shadows and hover colours. Elementor's tablet (1024) and mobile (767) widths become the
+  builder's (900 and 560).
 
   ## A post
 
@@ -202,6 +212,26 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     "bold" => "font-bold",
     "800" => "font-extrabold"
   }
+
+  # Elementor's named column gaps, in the pixels it documents for each.
+  @gaps %{
+    "no" => "0px",
+    "narrow" => "5px",
+    "default" => "10px",
+    "extended" => "15px",
+    "wide" => "20px",
+    "wider" => "30px"
+  }
+
+  # An image's alignment as its margins, the way the builder centres a block.
+  @image_aligns %{
+    "left" => %{"mx" => "0px"},
+    "center" => %{"mx" => "auto"},
+    "right" => %{"ml" => "auto", "mr" => "0px"}
+  }
+
+  @no_look {[], %{}}
+
   @transforms %{
     "uppercase" => "uppercase",
     "lowercase" => "lowercase",
@@ -369,7 +399,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp element(%{"elType" => "section", "elements" => columns} = section, ctx)
        when is_list(columns),
-       do: columns |> cells(ctx) |> side_by_side(ctx) |> placed(section, ctx)
+       do:
+         columns
+         |> cells(ctx)
+         |> side_by_side(section |> settings() |> column_gap(ctx), ctx)
+         |> placed(section, ctx)
 
   defp element(%{"elType" => "column", "elements" => widgets}, ctx) when is_list(widgets),
     do: Enum.flat_map(widgets, &element(&1, ctx))
@@ -386,7 +420,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp element(%{"elType" => "widget", "widgetType" => type} = widget, ctx)
        when type in @widgets,
-       do: type |> widget(settings(widget), ctx) |> styled(type, ctx)
+       do:
+         type
+         |> widget(settings(widget), ctx)
+         |> styled(type, ctx)
+         |> spaced(settings(widget), ctx)
 
   defp element(%{"elType" => _type} = element, ctx),
     do: Map.get(ctx.fallbacks, element["id"], [])
@@ -396,24 +434,58 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp settings(%{"settings" => %{} = settings}), do: settings
   defp settings(_element), do: %{}
 
+  # Each element's nodes, as a cell of the grid or the stack it is drawn in, with the look a column
+  # gives its own cell: its padding, margin and background.
   defp cells(elements, ctx),
-    do: elements |> Enum.map(&element(&1, ctx)) |> Enum.reject(&(&1 == []))
+    do:
+      for(
+        element <- elements,
+        nodes = element(element, ctx),
+        nodes != [],
+        do: {nodes, cell_look(element, ctx)}
+      )
 
-  defp flexed(direction, cells, ctx) when direction in @rows, do: side_by_side(cells, ctx)
-  defp flexed(_column, cells, ctx), do: cells |> Enum.concat() |> stack(ctx)
+  defp cell_look(%{"elType" => "column"} = column, %{kind: "page"} = ctx),
+    do: box_look(settings(column), ctx)
 
-  defp side_by_side([], _ctx), do: []
-  defp side_by_side([cell], ctx), do: stack(cell, ctx)
+  defp cell_look(_element, _ctx), do: @no_look
 
-  defp side_by_side(cells, ctx),
+  # An element's own padding, margin and background, as the look of what it is drawn as.
+  defp box_look(settings, ctx),
+    do:
+      @no_look
+      |> painted("background", background(settings, ctx))
+      |> with_styles(spacing(settings, "padding", "p"))
+      |> with_styles(spacing(settings, "margin", "m"))
+
+  defp flexed(direction, cells, ctx) when direction in @rows, do: side_by_side(cells, %{}, ctx)
+  defp flexed(_column, cells, ctx), do: cells |> Enum.flat_map(&elem(&1, 0)) |> stack(ctx)
+
+  defp side_by_side([], _gap, _ctx), do: []
+
+  defp side_by_side([{nodes, look}], _gap, ctx),
+    do: nodes |> stack(ctx) |> Enum.map(&worn(&1, look))
+
+  defp side_by_side(cells, gap, ctx),
     do: [
-      {"div", [{"class", "grid gap-6 md:grid-cols-#{cells |> length() |> grid()}"}],
-       Enum.map(cells, &cell(&1, ctx))}
+      restyled_node(
+        {"div", [{"class", "grid gap-6 md:grid-cols-#{cells |> length() |> grid()}"}],
+         Enum.map(cells, &cell(&1, ctx))},
+        gap
+      )
     ]
 
-  defp cell([{_tag, _attrs, _children} = one], _ctx), do: one
-  defp cell(nodes, %{kind: "page"}), do: built("el-stack", [], nodes)
-  defp cell(nodes, _post), do: {"div", [], nodes}
+  defp cell({[{_tag, _attrs, _children} = one], {[], styles}}, _ctx) when styles == %{}, do: one
+  defp cell({nodes, look}, %{kind: "page"}), do: "el-stack" |> built([], nodes) |> worn(look)
+  defp cell({nodes, _look}, _post), do: {"div", [], nodes}
+
+  defp column_gap(%{"gap" => "custom"} = settings, %{kind: "page"}),
+    do: responsive(settings, "gap_columns_custom", &%{"gap" => css_length(&1)})
+
+  defp column_gap(%{"gap" => gap}, %{kind: "page"}) when is_map_key(@gaps, gap),
+    do: %{base: %{"gap" => Map.fetch!(@gaps, gap)}}
+
+  defp column_gap(_settings, _ctx), do: %{}
 
   defp stack([], _ctx), do: []
   defp stack(nodes, %{kind: "page"}), do: [built("el-stack", [], nodes)]
@@ -422,27 +494,13 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp placed([], _element, _ctx), do: []
 
   defp placed(nodes, %{"isInner" => true} = element, %{kind: "page"} = ctx),
-    do:
-      Enum.map(
-        nodes,
-        &looked(&1, fn look -> painted(look, "background", background(settings(element), ctx)) end)
-      )
+    do: Enum.map(nodes, &worn(&1, box_look(settings(element), ctx)))
 
   defp placed(nodes, %{"isInner" => true}, _post), do: nodes
 
   defp placed(nodes, element, %{kind: "page"} = ctx) do
     settings = settings(element)
-
-    [
-      "el-section"
-      |> built([], boxed(settings, nodes))
-      |> looked(fn look ->
-        look
-        |> painted("background", background(settings, ctx))
-        |> with_styles(spacing(settings, "padding", "p"))
-        |> with_styles(spacing(settings, "margin", "m"))
-      end)
-    ]
+    ["el-section" |> built([], boxed(settings, nodes)) |> worn(box_look(settings, ctx))]
   end
 
   defp placed(nodes, _element, _post), do: nodes
@@ -497,6 +555,32 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp with_class(attrs, class), do: List.keystore(attrs, "class", 0, {"class", class})
 
   defp with_styles({classes, styles}, more), do: {classes, merge_styles(styles, more)}
+
+  # A look worked out apart from the element it is given to, such as a column's, added to its own.
+  defp worn(node, {[], styles}) when styles == %{}, do: node
+
+  defp worn(node, {classes, styles}),
+    do:
+      looked(node, fn {own, own_styles} -> {own ++ classes, merge_styles(own_styles, styles)} end)
+
+  # A widget's own padding and margin (Elementor's Advanced tab), on the element it draws, or on a
+  # box around it when it draws more than one, or a link, which is inline.
+  defp spaced(nodes, settings, %{kind: "page"}),
+    do:
+      settings
+      |> spacing("_padding", "p")
+      |> merge_styles(spacing(settings, "_margin", "m"))
+      |> widget_box(nodes)
+
+  defp spaced(nodes, _settings, _post), do: nodes
+
+  defp widget_box(styles, nodes) when styles == %{}, do: nodes
+  defp widget_box(_styles, []), do: []
+
+  defp widget_box(styles, [{tag, _attrs, _children} = one]) when tag != "a",
+    do: [restyled_node(one, styles)]
+
+  defp widget_box(styles, nodes), do: [restyled_node({"div", [], nodes}, styles)]
 
   # Elementor's colour of a part: one of the kit's, named in `__globals__`, which the page names by
   # its token, or a value of its own. A global the kit does not have draws nothing, as on WordPress.
@@ -728,7 +812,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
        when is_binary(url) and url != "" do
     file = Map.get(ctx.media, media_id(image))
 
-    [{"img", [{"src", url}, {"alt", alt(image, file)}], []}]
+    [image(url, alt(image, file), settings, ctx)]
     |> linked(image_link(settings, url))
     |> captioned(caption(settings, file))
   end
@@ -824,6 +908,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
         |> painted("color", colour(settings, "button_text_color", ctx))
         |> painted("background", background(settings, ctx))
         |> typed(settings, ctx)
+        |> with_styles(spacing(settings, "text_padding", "p"))
       end)
       |> aligned_button(aligned(settings))
 
@@ -854,6 +939,26 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
 
   defp followed("on"), do: [{"rel", "nofollow"}]
   defp followed(_followed), do: []
+
+  # An image at its own size, or the width Elementor gives it, and aligned as it is: centred unless
+  # it says otherwise, as Elementor draws it.
+  defp image(url, alt, settings, %{kind: "page"}),
+    do:
+      restyled_node(
+        {"img", [{"src", url}, {"alt", alt}, {"class", Map.fetch!(@styles, "img")}], []},
+        settings
+        |> image_aligned()
+        |> responsive("align", &Map.get(@image_aligns, &1))
+        |> merge_styles(%{base: %{"width" => "auto"}})
+        |> merge_styles(responsive(settings, "width", &%{"width" => css_length(&1)}))
+      )
+
+  defp image(url, alt, _settings, _post), do: {"img", [{"src", url}, {"alt", alt}], []}
+
+  defp image_aligned(%{"align" => align} = settings) when is_map_key(@image_aligns, align),
+    do: settings
+
+  defp image_aligned(settings), do: Map.put(settings, "align", "center")
 
   defp image_link(%{"link_to" => "file"}, url), do: %{"url" => url}
   defp image_link(%{"link_to" => "custom", "link" => link}, _url), do: link

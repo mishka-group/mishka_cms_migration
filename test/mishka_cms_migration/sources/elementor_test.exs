@@ -577,6 +577,178 @@ defmodule MishkaCmsMigration.Sources.WordPress.ElementorTest do
     end
   end
 
+  describe "a page's Elementor columns, widgets and images, as the builder's own style settings" do
+    defp laid_looks(elements, selector) do
+      elements
+      |> laid_out!()
+      |> html()
+      |> attribute(selector, "class")
+      |> Enum.map(&Styles.from_classes/1)
+    end
+
+    defp columns(section_settings, column_settings),
+      do: [
+        %{
+          "elType" => "section",
+          "settings" => section_settings,
+          "elements" =>
+            for(
+              settings <- column_settings,
+              do: %{
+                "elType" => "column",
+                "settings" => settings,
+                "elements" => [widget("heading", %{"title" => "T"})]
+              }
+            )
+        }
+      ]
+
+    test "give a column its padding, margin and background on the Stack it is drawn as, at each width" do
+      column = %{
+        "padding" => box("30", "30"),
+        "padding_mobile" => box("10", "10"),
+        "margin" => box("", "20"),
+        "background_background" => "classic",
+        "background_color" => "#FAFAFA"
+      }
+
+      assert [{authored, styles}] =
+               laid_looks(columns(%{}, [column, %{}]), "[class*=grid-cols] > div")
+
+      assert %{
+               base: %{"py" => "30px", "mb" => "20px", "background" => "#fafafa"},
+               mobile: %{"py" => "10px"}
+             } = styles
+
+      assert {styles.base["display"], styles.base["direction"]} == {"flex", "flex-col"}
+      assert "dark:bg-page-dark" in authored
+
+      assert [{_authored, %{base: %{"py" => "30px", "display" => "flex"}}}] =
+               laid_looks(columns(%{}, [column]), "section > div > div")
+    end
+
+    test "give an inner section its own padding and margin, on the grid it is drawn as" do
+      inner = %{
+        "elType" => "section",
+        "isInner" => true,
+        "settings" => %{"padding" => box("12", "12"), "margin" => box("8", "")},
+        "elements" => columns(%{}, [%{}, %{}]) |> hd() |> Map.fetch!("elements")
+      }
+
+      outer = [
+        %{
+          "elType" => "section",
+          "settings" => %{},
+          "elements" => [%{"elType" => "column", "elements" => [inner]}]
+        }
+      ]
+
+      assert [{_authored, %{base: %{"py" => "12px", "mt" => "8px"}}}] =
+               laid_looks(outer, "[class*=grid-cols]")
+    end
+
+    test "give a section's columns the gap Elementor names, in the pixels it documents, and a stack none" do
+      for {gap, pixels} <- [{"no", "0px"}, {"narrow", "5px"}, {"wide", "20px"}, {"wider", "30px"}] do
+        assert [{authored, %{base: %{"gap" => ^pixels}}}] =
+                 laid_looks(columns(%{"gap" => gap}, [%{}, %{}]), "[class*=grid-cols]")
+
+        refute "gap-6" in authored
+      end
+
+      custom = %{
+        "gap" => "custom",
+        "gap_columns_custom" => %{"unit" => "px", "size" => 12},
+        "gap_columns_custom_mobile" => %{"unit" => "px", "size" => 4}
+      }
+
+      assert [{_authored, %{base: %{"gap" => "12px"}, mobile: %{"gap" => "4px"}}}] =
+               laid_looks(columns(custom, [%{}, %{}]), "[class*=grid-cols]")
+
+      assert [{_authored, styles}] =
+               laid_looks(columns(%{"gap" => "wide"}, [%{}]), "section > div > div")
+
+      refute Map.has_key?(styles.base, "gap")
+    end
+
+    test "give a widget its own padding and margin, on a box around it when it is a link or draws more than one" do
+      margin = %{"_margin" => box("24", ""), "_padding_tablet" => box("6", "6")}
+
+      assert [{_authored, %{base: %{"mt" => "24px"}, tablet: %{"py" => "6px"}}}] =
+               laid_looks([widget("heading", Map.put(margin, "title", "T"))], "h2")
+
+      html = widget("html", Map.put(margin, "html", "<p>One</p><p>Two</p>"))
+      assert [{[], %{base: %{"mt" => "24px"}}} | _] = laid_looks([html], "div:has(> p)")
+
+      image =
+        widget(
+          "image",
+          Map.merge(margin, %{"image" => %{"url" => @uploads <> "hero.jpg"}, "link_to" => "file"})
+        )
+
+      assert [{[], %{base: %{"mt" => "24px"}}}] = laid_looks([image], "div:has(> a)")
+    end
+
+    test "give a button its own padding in place of the builder's" do
+      button = widget("button", %{"text" => "Go", "text_padding" => box("14", "14")})
+
+      assert [{authored, %{base: %{"py" => "14px"}}}] = laid_looks([button], "a")
+      refute "py-2.5" in authored
+      assert "px-5" in authored
+    end
+
+    test "draw an image at its own size, or the width Elementor gives it, centred unless it is aligned otherwise" do
+      url = %{"url" => @uploads <> "hero.jpg"}
+
+      assert [{authored, %{base: %{"width" => "auto", "mx" => "auto"}}}] =
+               laid_looks([widget("image", %{"image" => url})], "img")
+
+      refute "w-full" in authored
+
+      settings = %{
+        "image" => url,
+        "align" => "right",
+        "align_mobile" => "center",
+        "width" => %{"unit" => "%", "size" => 50},
+        "width_mobile" => %{"unit" => "px", "size" => 200}
+      }
+
+      assert [{_authored, styles}] = laid_looks([widget("image", settings)], "img")
+
+      assert styles == %{
+               base: %{"width" => "50%", "ml" => "auto", "mr" => "0px"},
+               mobile: %{"width" => "200px", "mx" => "auto"}
+             }
+    end
+
+    test "are as the seeded page has them: a column's padding, a widget's margin, an image's alignment and named gaps" do
+      html = html(items!("page", "elementor-pages")["elementor-landing"])
+
+      seeded = fn selector ->
+        html |> attribute(selector, "class") |> Enum.map(&Styles.from_classes/1)
+      end
+
+      assert [{_, %{base: %{"gap" => "20px"}}}, {_, %{base: %{"gap" => "0px"}}}] =
+               seeded.("[class*=grid-cols]")
+
+      assert [_figure, {_, %{base: %{"px" => "30px", "py" => "30px"}}}] =
+               seeded.("section:nth-of-type(2) [class*=grid-cols] > *")
+
+      assert [_hero, {_, %{base: %{"width" => "60%", "mx" => "0px"}}}] = seeded.("img")
+      assert [{_, %{base: %{"mt" => "24px"}}}] = seeded.("div:has(> a.inline-block)")
+    end
+
+    test "are not in a post, which is the Blog's HTML" do
+      elements =
+        columns(%{"gap" => "wide"}, [%{"padding" => box("30", "30")}]) ++
+          [
+            widget("image", %{"image" => %{"url" => @uploads <> "hero.jpg"}, "align" => "left"}),
+            widget("heading", %{"title" => "T", "_margin" => box("24", "")})
+          ]
+
+      assert elements |> laid_out!("post") |> html() |> attribute("[class]", "class") == []
+    end
+  end
+
   describe "a page laid out with sections" do
     setup do
       %{page: items!("page", "elementor-pages")["elementor-landing"]}
