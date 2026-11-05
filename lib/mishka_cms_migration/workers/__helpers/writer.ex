@@ -36,13 +36,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item the
   target's `prepare/3` finds to be a record the CMS holds (`{:connected, record, reason}`) is
   recorded the same way, as skipped with `reason`. What the target's `recorded/2` answers is
-  recorded on the item of a record written, except its `:note`, which the report says after the
-  target's note. An item whose
+  recorded on the item of a record written. An item whose
   conflict waits for an admin's decision is not written either: it is recorded as `:undecided`,
   with the conflict as its reason, and the next run asks again.
 
   The target is handed the item's decisions (`MishkaCmsMigration.Target`'s context, `decisions`),
-  so what an admin decided on a conflict holds for its note and its write.
+  so what an admin decided on a conflict holds for its note and its write, and what its
+  `existing/2` found for the item's write in its read of the page (`prepared`), so its note and its
+  write need not read it again.
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
@@ -64,7 +65,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     * `{:created, target, nil, decisions}` or `{:updated, target, record, decisions}` — written
       in an import, reported and recorded as the item's plan in a dry run, with its target's note
       and the pieces of its content left unconverted as its reason, or as what its target's
-      `waiting/2` answers instead;
+      `waiting/2` answers instead; `{:created, target, nil, decisions, prepared}` is settled the
+      same way, with `prepared`, what the target's `existing/2` found for the write, as its
+      context's `prepared`;
     * `{:connected, target, record}` or `{:mapped, target, record}` — recorded against `record`
       in an import, never written, and reported as skipped, `"connected"`;
     * `{:skipped, reason}`, `{:failed, reason}` or `{:undecided, conflict}` — recorded with its
@@ -93,15 +96,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     |> entered(item, :skipped, "connected")
   end
 
-  def call(%{mode: :dry_run} = state, %Item{} = item, {outcome, target, record, decisions}) do
-    context = item_context(state, item, record, decisions)
+  def call(state, %Item{} = item, {outcome, target, record, decisions}),
+    do: call(state, item, {outcome, target, record, decisions, nil})
+
+  def call(
+        %{mode: :dry_run} = state,
+        %Item{} = item,
+        {outcome, target, record, decisions, prepared}
+      ) do
+    context = item_context(state, item, record, decisions, prepared)
     item |> target.waiting(context) |> planned(state, item, {outcome, target, context})
   end
 
-  def call(%{mode: :import} = state, %Item{} = item, {outcome, target, record, decisions}) do
-    state
-    |> written(item, {outcome, target, record}, item_context(state, item, record, decisions))
-    |> settled(state, item, outcome)
+  def call(
+        %{mode: :import} = state,
+        %Item{} = item,
+        {outcome, target, record, decisions, prepared}
+      ) do
+    context = item_context(state, item, record, decisions, prepared)
+    state |> written(item, {outcome, target, record}, context) |> settled(state, item, outcome)
   end
 
   defp planned(nil, state, item, {outcome, target, context}),
@@ -145,16 +158,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
          note = note(target, item, context, kept),
          {:ok, written} <-
            target.prepare(item, context, &transacted(state, {source_item, item}, plan, &1, note)) do
-      {:ok, written, written_note(written, note)}
+      {:ok, written, note}
     end
   rescue
     error -> {:error, error}
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
-
-  defp written_note({:ok, record}, note), do: Ash.Resource.get_metadata(record, :note) || note
-  defp written_note(_written, note), do: note
 
   defp transacted(state, items, {_outcome, target, _record} = plan, context, note),
     do:
@@ -163,12 +173,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
       end)
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
-    {found, added} = item |> target.recorded(context) |> Map.pop(:note)
-    note = noted(Enum.reject([note, found], &is_nil/1))
-
     with {:ok, written} <- write(target, item, record, context),
-         {:ok, _item} <- recorded(state, source_item, written, {outcome, note}, added) do
-      {:ok, Ash.Resource.put_metadata(written, :note, note)}
+         {:ok, _item} <-
+           recorded(state, source_item, written, {outcome, note}, target.recorded(item, context)) do
+      {:ok, written}
     end
   end
 
@@ -341,6 +349,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp escaped(nil), do: ""
   defp escaped(raw), do: raw |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
 
-  defp item_context(state, item, record, decisions),
-    do: %{state.context | record: record, decisions: %{item.source_id => decisions}}
+  defp item_context(state, item, record, decisions, prepared),
+    do: %{
+      state.context
+      | record: record,
+        prepared: prepared,
+        decisions: %{item.source_id => decisions}
+    }
 end

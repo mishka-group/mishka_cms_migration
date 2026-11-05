@@ -21,7 +21,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     * none, or one never written — `{:created, target, nil, decisions}`, unless the target finds
       it in the CMS already (`MishkaCmsMigration.Target`'s `existing/2`):
       `{:connected, target, record}`, the CMS record it is, `{:updated, target, record, decisions}`,
-      the CMS record it is written over, `{:skipped, reason}`, why it is left out, or
+      the CMS record it is written over, `{:created, target, nil, decisions, prepared}`, created
+      with what the target found for its write, `{:skipped, reason}`, why it is left out, or
       `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
     * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
@@ -69,11 +70,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @type decisions :: %{String.t() => String.t()}
 
   @typedoc """
-  What to do with an item: write a new record, write over `record`, record it against `record` the
-  CMS already held, leave it, and why, or wait for an admin's decision on a conflict.
+  What to do with an item: write a new record, with what the target found for its write when it
+  found anything, write over `record`, record it against `record` the CMS already held, leave it,
+  and why, or wait for an admin's decision on a conflict.
   """
   @type plan ::
           {:created, module(), nil, decisions()}
+          | {:created, module(), nil, decisions(), term()}
           | {:updated, module(), struct(), decisions()}
           | {:connected, module(), struct()}
           | {:mapped, module(), struct()}
@@ -132,6 +135,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   defp connected(target, {:updated, record}, {:created, _target, nil, decided}),
     do: {:updated, target, record, decided}
+
+  defp connected(target, {:created, prepared}, {:created, _target, nil, decided}),
+    do: {:created, target, nil, decided, prepared}
 
   defp connected(_target, {:skipped, reason}, _plan) when is_binary(reason),
     do: {:skipped, reason}

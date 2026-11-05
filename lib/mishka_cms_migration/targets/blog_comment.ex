@@ -58,11 +58,13 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
     `"guest_website_dropped"`).
 
     The report says a guest's comment is one (`"guest_comment: <name>"`, which
-    `MishkaCmsMigration.Report` counts as `guests`). An import finds the author once, in
-    `prepare/3`, and `attrs/2` and `recorded/2` read it from the context's `prepared`. A dry run
-    writes no blogger, so it finds the author for its note from the users the site has, and plans a
-    comment by a source's user as a user's when the run's `authors` choice is `"create"`, which
-    makes every such user.
+    `MishkaCmsMigration.Report` counts as `guests`). The authors of a page's comments, and in an
+    import the posts they are on, are found together in `existing/2`, one read for the page in a
+    dry run and in an import, from the comments as the source lists them, and handed to each
+    comment's note and write as its context's `prepared` (`{:created, prepared}`). A dry run writes
+    no blogger, so it finds the authors from the users the site has, and plans a comment by a
+    source's user as a user's when the run's `authors` choice is `"create"`, which makes every such
+    user.
 
     ## Its post and its place in a thread
 
@@ -102,22 +104,11 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
       do: Map.new(items, &{&1.source_id, {:skipped, "not_chosen"}})
 
     def existing(items, context) do
-      posts = posts(items, context)
+      written = Enum.reject(items, &left_out/1)
+      page = %{posts: posts(written, context), authors: authors(written, context)}
 
-      items
-      |> Map.new(&{&1.source_id, found(&1, posts, context)})
-      |> Map.filter(fn {_id, found} -> found end)
+      Map.new(items, &{&1.source_id, left_out(&1) || found(&1, page, context)})
     end
-
-    @impl MishkaCmsMigration.Target
-    def prepare(item, %{record: nil} = context, write) do
-      post = [item] |> posts(context) |> Map.fetch!(post_key(item)) |> Map.fetch!(:id)
-      author = [item] |> authors(context) |> Map.get(item.source_id)
-
-      write.(%{context | prepared: %{post_id: post, author_id: author}})
-    end
-
-    def prepare(_item, context, write), do: write.(context)
 
     @impl MishkaCmsMigration.Target
     def attrs(item, %{record: nil, prepared: %{post_id: post, author_id: author}} = context) do
@@ -137,19 +128,12 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
         when is_integer(author) and author > 0,
         do: nil
 
-    def note(item, %{record: nil, mode: :dry_run} = context),
-      do: noted(item, [item] |> authors(context) |> Map.get(item.source_id))
+    def note(item, %{record: nil, prepared: %{author_id: author}}), do: noted(item, author)
 
     def note(_item, %{record: %{guest_name: name}}) when is_binary(name),
       do: "guest_comment: " <> name
 
     def note(_item, _context), do: nil
-
-    @impl MishkaCmsMigration.Target
-    def recorded(item, %{prepared: %{author_id: author}}) when is_nil(author),
-      do: %{note: noted(item, nil)}
-
-    def recorded(_item, _context), do: %{}
 
     defp comment(%Item{attrs: %{"status" => status}} = item),
       do: %{
@@ -157,8 +141,10 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
         status: Map.fetch!(@statuses, status)
       }
 
-    defp found(item, posts, context),
-      do: left_out(item) || unwritten(item, posts, context)
+    defp found(item, %{posts: posts, authors: authors}, context),
+      do:
+        unwritten(item, posts, context) ||
+          {:created, %{post_id: posts[post_key(item)], author_id: authors[item.source_id]}}
 
     defp left_out(%Item{attrs: %{"type" => type}}) when type != "comment",
       do: {:skipped, "not_a_comment"}
@@ -255,8 +241,11 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
 
     defp posts(_items, %{mode: :dry_run}), do: %{}
 
-    defp posts(items, context),
-      do: Written.call(BlogPost, "post", Enum.map(items, &post_key/1), context)
+    defp posts(items, context) do
+      BlogPost
+      |> Written.call("post", Enum.map(items, &post_key/1), context)
+      |> Map.new(fn {key, post} -> {key, post.id} end)
+    end
 
     defp post_key(%Item{attrs: %{"post" => post}}), do: to_string(post)
   end

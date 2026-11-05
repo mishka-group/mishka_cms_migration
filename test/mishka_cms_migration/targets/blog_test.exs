@@ -2045,6 +2045,46 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert outcomes(run, "comment")["2"] == {:failed, "forbidden"}
       assert comments(site) == %{}
     end
+
+    # Top-level comments on one post by a site's user, a guest and a WordPress user, in turn.
+    defp commented(count) do
+      by = Map.new(recorded("comments"), &{&1["id"], &1})
+
+      for id <- 1..count do
+        row = by[Enum.at([2, 8, 3], rem(id, 3))]
+        %{row | "id" => 100 + id, "parent" => 0} |> put_in(["content", "raw"], "Comment #{id}")
+      end
+    end
+
+    # The reads that find a comment's author: the site's users by email, and the bloggers runs
+    # wrote by id. The Blog's own write of a comment reads its author too, which is not counted.
+    defp author_reads(queries),
+      do:
+        Enum.count(
+          queries,
+          &((&1 =~ ~s(FROM "users") and &1 =~ ~s("email"::citext = ANY)) or
+              (&1 =~ ~s(FROM "mishka_blog_bloggers") and &1 =~ ~s("id"::uuid = ANY)))
+        )
+
+    defp author_reads(site, admin, count) do
+      members!(site)
+      stub_comments!(commented(count))
+      run = wordpress_run!(site, admin, %{comments: true, authors: "create"})
+      dry = queries_while(fn -> dry_run!(run, admin) end)
+      run = MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id)
+      import = queries_while(fn -> import!(run, admin) end)
+
+      assert map_size(comments(site)) == count
+      %{dry_run: author_reads(dry), import: author_reads(import)}
+    end
+
+    test "the authors of a page of comments are found in one read, however many comments it has, in a dry run and in an import",
+         %{site: site, admin: admin} do
+      other = create_site!()
+
+      assert author_reads(site, admin, 3) ==
+               author_reads(other, migration_admin!(other, @commenters), 12)
+    end
   end
 
   describe "what an admin left out" do

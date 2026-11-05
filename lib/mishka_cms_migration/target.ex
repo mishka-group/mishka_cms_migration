@@ -130,6 +130,11 @@ defmodule MishkaCmsMigration.Target do
 
       def prepare(_item, context, write), do: write.(context)
 
+  What the database can tell for a whole page at once, such as who wrote each of its comments, is
+  found in `existing/2` instead of `prepare/3`: one read for the page, in a dry run and in an
+  import, handed to each item as its context's `prepared` (`{:created, prepared}`, see "What the
+  CMS already holds"), so neither `note/2` nor the write asks again for each item.
+
   ## Where an item is written
 
   Every item of a kind goes to the target's `resource/0` through its `actions/0`. A target whose
@@ -153,6 +158,11 @@ defmodule MishkaCmsMigration.Target do
       answers whose item lands in a record every site already has, such as the main menu, which
       becomes the links of the site layout's header (`MishkaCmsMigration.Targets.CmsLayout`). A
       later run treats the record as any other a run wrote;
+    * `{:created, prepared}` — the item is created, as one the answer leaves out is, and its
+      context's `prepared` is `prepared` from the start: what the target found for its write in its
+      read of the page, such as a comment's author, for `note/2`, `waiting/2`, `prepare/3`,
+      `attrs/2` and `recorded/2` to read. It is found from the item as the source lists it, before
+      the plugins of `migration:item:before_import` (`MishkaCmsMigration.Events`) see it;
     * `{:skipped, reason}` — the item is left out, with `reason`;
     * `{:undecided, conflict}` — the item meets something the site already has that only an admin
       can settle, such as a setting the site has a value of its own for: nothing is written, the
@@ -227,7 +237,8 @@ defmodule MishkaCmsMigration.Target do
   from which run of which source (its id, such as `"wordpress"`, and host), with which choices, the
   the job's `scope`, for a target that records other items it changed (see "Keeping an admin's
   edits"), the CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
-  "A create and an update"), what `prepare/3` fetched for the write (`nil` until it does), the language plugin the source runs
+  "A create and an update"), what the write needs that `existing/2` found (`{:created, prepared}`)
+  or `prepare/3` fetched (`nil` until one does), the language plugin the source runs
   (`languages`, `"polylang"` or `"wpml"`, else `nil`), and an
   admin's decisions on the items, by source id (see "An admin's decision", read with
   `decision/3`).
@@ -249,12 +260,14 @@ defmodule MishkaCmsMigration.Target do
         }
 
   @typedoc """
-  What `existing/2` says of one item: the CMS record it already is, the one it is written over, why
-  it is left out, or the conflict it waits on for an admin's decision.
+  What `existing/2` says of one item: the CMS record it already is, the one it is written over, what
+  its write needs when it is created, why it is left out, or the conflict it waits on for an
+  admin's decision.
   """
   @type found ::
           {:connected, struct()}
           | {:updated, struct()}
+          | {:created, term()}
           | {:skipped, String.t()}
           | {:undecided, String.t()}
 
@@ -312,9 +325,7 @@ defmodule MishkaCmsMigration.Target do
   @doc """
   What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import
   writes it, from what `prepare/3` fetched, such as `%{file_hash: hash}` for a downloaded file (see
-  "What a write needs first"). A `:note` in it is not recorded as a field but added to the item's
-  note, for a fact only `prepare/3` found, such as a comment's author being a guest. `use` answers
-  `%{}`.
+  "What a write needs first"). `use` answers `%{}`.
   """
   @callback recorded(Item.t(), context()) :: map()
 
