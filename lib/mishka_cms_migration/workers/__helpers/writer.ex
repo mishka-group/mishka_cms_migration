@@ -59,6 +59,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias Ash.Resource.Info
   alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
 
   @doc """
   Settles `item` by `plan` and answers its entry in the report:
@@ -244,7 +245,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
           source_slug: source_slug(item),
           source_parent: item.parent,
           source_modified_at: item.modified_at,
-          content_hash: Item.hash(item),
+          content_hash: LanguageUrls.hash(item, state.run.site_id),
           target_resource: inspect(resource),
           target_id: id,
           target_updated_at: updated_at,

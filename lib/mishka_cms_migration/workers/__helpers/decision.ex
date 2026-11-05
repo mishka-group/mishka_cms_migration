@@ -24,7 +24,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       the CMS record it is written over, `{:created, target, nil, decisions, prepared}`, created
       with what the target found for its write, `{:skipped, reason}`, why it is left out, or
       `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
-    * its `MishkaCmsMigration.Source.Item.hash/1` is the one recorded — `{:skipped, "unchanged"}`;
+    * its `MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2` is the one recorded —
+      `{:skipped, "unchanged"}`: an item that writes links is changed, to be written again, when
+      the site's language address mode changed since it was written;
     * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
       record is the CMS's own and is never written — `{:skipped, "connected"}`;
@@ -66,6 +68,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
+  alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
 
   @blog_kinds MishkaCmsMigration.Application.blog_kinds()
 
@@ -106,7 +109,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     records = known |> Map.values() |> Enum.flat_map(&record_refs(&1, target)) |> current(state)
 
     items
-    |> Map.new(&{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records)})
+    |> Map.new(
+      &{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records, state.run.site_id)}
+    )
     |> existing(target, items, state)
   end
 
@@ -167,22 +172,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp read_records({:error, %Ash.Error.Forbidden{}}, _records), do: {:halt, :forbidden}
   defp read_records({:error, error}, _records), do: raise(error)
 
-  defp plan(_target, _item, %{left_out: true}, _records), do: {:skipped, "left_out_by_admin"}
+  defp plan(_target, _item, %{left_out: true}, _records, _site),
+    do: {:skipped, "left_out_by_admin"}
 
-  defp plan(_target, item, known, :forbidden)
+  defp plan(_target, item, known, :forbidden, _site)
        when is_binary(known.mapped_id) or is_binary(known.target_id),
        do: {:failed, "forbidden: " <> item.kind}
 
-  defp plan(target, _item, %{mapped_id: id}, records) when is_binary(id),
+  defp plan(target, _item, %{mapped_id: id}, records, _site) when is_binary(id),
     do: records |> Map.get(id) |> mapped(target)
 
-  defp plan(target, _item, nil, _records), do: {:created, target, nil, %{}}
+  defp plan(target, _item, nil, _records, _site), do: {:created, target, nil, %{}}
 
-  defp plan(target, _item, %{target_id: nil, decisions: decided}, _records),
+  defp plan(target, _item, %{target_id: nil, decisions: decided}, _records, _site),
     do: {:created, target, nil, decided}
 
-  defp plan(target, item, known, records),
-    do: decide(target, known, Item.hash(item), Map.get(records, known.target_id))
+  defp plan(target, item, known, records, site_id),
+    do: decide(target, known, LanguageUrls.hash(item, site_id), Map.get(records, known.target_id))
 
   defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
