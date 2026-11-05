@@ -945,7 +945,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
     update :dry_run_items do
       accept []
-      require_atomic? false
 
       argument :items, {:array, :uuid} do
         allow_nil? false
@@ -954,7 +953,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: false}
-      validate {Status, from: [:pending, :dry_run, :done, :failed]}
+      validate {Status, from: [:pending, :dry_run, :done, :failed], as_read: true}
 
       change set_attribute(:status, :dry_running)
       change set_attribute(:progress, nil)
@@ -966,7 +965,6 @@ defmodule MishkaCmsMigration.MigrationRun do
 
     update :import_items do
       accept []
-      require_atomic? false
 
       argument :items, {:array, :uuid} do
         allow_nil? false
@@ -975,7 +973,7 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       validate {TenantContext, require_master: false}
-      validate {Status, from: [:pending, :dry_run, :done, :failed]}
+      validate {Status, from: [:pending, :dry_run, :done, :failed], as_read: true}
 
       change set_attribute(:status, :importing)
       change set_attribute(:progress, nil)

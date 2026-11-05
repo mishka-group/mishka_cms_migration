@@ -220,10 +220,37 @@ defmodule MishkaCmsMigration.PickedItemsTest do
                {"/wp-json/wp/v2/tags", %{"include" => "13"}}
              ] = requests()
 
-      assert {touching(started, "mishka_cms_migration_items"), length(started)} == {1, 8}
+      assert touching(started, "mishka_cms_migration_items") == 1
+      assert touching(started, "mishka_cms_migration_runs") == 1
+      assert length(started) <= 9
       assert touching(job, "mishka_cms_migration_items") == 2
       assert touching(job, "mishka_cms_migration_runs") == 2
       assert length(job) <= 25
+    end
+  end
+
+  describe "a run read before it moved on" do
+    test "queues no second job: the run as the database holds it refuses it, in words",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      [id] = ids(site, [{"tag", "13"}])
+
+      assert {:ok, %{status: :importing}} =
+               MishkaCmsMigration.import_items(run, [id], actor: admin, tenant: site.id)
+
+      for step <- [&MishkaCmsMigration.import_items/3, &MishkaCmsMigration.dry_run_items/3] do
+        assert {:error, %{errors: [%{field: :status} = error]}} =
+                 step.(run, [id], actor: admin, tenant: site.id)
+
+        assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
+                 "The run cannot do that while it is importing."
+      end
+
+      assert [%{worker: "MishkaCmsMigration.Workers.ImportWorker"}] =
+               all_enqueued(queue: :migration)
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      assert %{outcome: :created} = item(site, "tag", "13")
     end
   end
 

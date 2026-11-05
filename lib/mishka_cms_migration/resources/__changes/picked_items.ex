@@ -15,10 +15,11 @@ defmodule MishkaCmsMigration.Resources.Changes.PickedItems do
       end
 
   The items are read in one query, as the admin, among the items of the run's site and source host
-  alone, before the run is written: an id that names none of them is left out, and when none is
-  left the action is refused on `items`, in words. A read before the write is a hook, so the action
-  is not atomic (`require_atomic? false`); the run's `:one_active_per_site` identity still holds one
-  running job per site.
+  alone, while the action is built: an id that names none of them is left out, and when none is
+  left the action is refused on `items`, in words. The run's move is then one atomic update, held
+  by `MishkaCmsMigration.Resources.Validations.Status` with `as_read: true`, so a request made with
+  a run read before it moved on, such as a second click on a page drawn before the first, is
+  refused by the database, queues no job, and the status the run goes back to is the one it held.
   """
 
   use Ash.Resource.Change
@@ -34,6 +35,9 @@ defmodule MishkaCmsMigration.Resources.Changes.PickedItems do
   @impl true
   def change(changeset, _opts, context),
     do: Ash.Changeset.before_action(changeset, &picked(&1, context))
+
+  @impl true
+  def atomic(changeset, _opts, context), do: {:ok, picked(changeset, context)}
 
   defp picked(%{data: run} = changeset, context) do
     ids = Ash.Changeset.get_argument(changeset, :items)
