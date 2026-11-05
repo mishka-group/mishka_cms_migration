@@ -244,6 +244,19 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
       end
 
+      layout do
+        notice :cancelled_run do
+          position :after_filters
+          type :warning
+          icon "hero-exclamation-triangle"
+          show_when fn state -> state.path_params[:cancelled] == true end
+
+          content fn state ->
+            MigrationRun.cancelled_words(state.path_params[:file_source] == true)
+          end
+        end
+      end
+
       columns do
         default_sort updated_at: :desc, id: :asc
 

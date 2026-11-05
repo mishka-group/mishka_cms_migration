@@ -1406,6 +1406,27 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp required_secret?(field), do: field[:name] == :secret and field[:required] == true
 
   @doc """
+  What a cancelled run's alert says: that `:cancel` deleted what the run connected with, the export
+  file when `file_source?` (`MishkaCmsMigration.Source.file?/1`), else the WordPress password, and
+  that a New import brings the content again. The Items page's table shows it only for a cancelled
+  run (`MigrationItem`'s `:cancelled_run` notice).
+  """
+  @spec cancelled_words(boolean()) :: String.t()
+  def cancelled_words(true),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "This run was cancelled. Its export file was deleted, so it cannot run again. Start a New import to bring content again."
+      )
+
+  def cancelled_words(false),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "This run was cancelled. Its WordPress password was deleted, so it cannot run again. Start a New import to bring content again."
+      )
+
+  @doc """
   The source's secret `run` keeps, opened: `{:ok, secret}`, `{:ok, nil}` when it keeps none, or
   `{:error, :unreadable_secret}` when it was sealed under another `secret_key_base`.
   """

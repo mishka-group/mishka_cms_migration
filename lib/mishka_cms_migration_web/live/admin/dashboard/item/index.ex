@@ -60,6 +60,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   (`MishkaCmsMigration.MigrationItem.decision_options/1`). Save keeps the decision (`:choose`),
   closes the modal and says that the next dry run and import follow it.
 
+  A cancelled run's table shows an alert between the filters and the rows
+  (`MishkaCmsMigration.MigrationRun.cancelled_words/1`), from the path params `cancelled` and
+  `file_source`.
+
   When the links an import writes may not match the site's language addresses, the head shows the
   warning that says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), above the
   table that holds the main menu's Needs your decision.
@@ -143,7 +147,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       run: socket.assigns.run.id,
       source_host: socket.assigns.run.source_host,
       site_id: socket.assigns.run.site_id,
-      connectable: MigrationRun.connectable?(socket.assigns.run)
+      connectable: MigrationRun.connectable?(socket.assigns.run),
+      cancelled: socket.assigns.run.status == :cancelled,
+      file_source: Source.file?(socket.assigns.run.source)
     }
 
     url_state = UrlSync.decode(params, uri, MigrationItem)
