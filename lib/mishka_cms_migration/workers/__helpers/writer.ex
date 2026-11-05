@@ -236,7 +236,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp store(state, items, {:restored, target, record}, context, note) do
     with {:ok, restored} <- Archived.restore(record, context),
          do:
-           store(state, items, {:updated, target, restored}, %{context | record: restored}, note)
+           store(
+             state,
+             items,
+             {:updated, target, restored},
+             Map.put(context, :record, restored),
+             note
+           )
   end
 
   defp store(state, {source_item, item}, {outcome, target, record}, context, note) do
