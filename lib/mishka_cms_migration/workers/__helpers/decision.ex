@@ -26,10 +26,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       the CMS record it is written over, `{:created, target, nil, decisions, prepared}`, created
       with what the target found for its write, `{:skipped, reason}`, why it is left out, or
       `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
+    * the CMS record it was written to is gone, deleted for good — `{:skipped, "target_missing"}`,
+      whether or not the source changed it, and it is not written again;
     * its `MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2` is the one recorded —
       `{:skipped, "unchanged"}`: an item that writes links is changed, to be written again, when
       the site's language address mode changed since it was written;
-    * the CMS record it was written to is gone — `{:skipped, "target_missing"}`;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
       record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
@@ -229,8 +230,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp decide(target, known, hash, {:archived, record}),
     do: archived(target, known, record, restoring(known, hash, record))
 
-  defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+  defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
   defp decide(target, known, _hash, record),

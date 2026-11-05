@@ -225,6 +225,36 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       assert {:ok, %Tree{}} = Tree.parse(landing.template)
     end
 
+    test "an archived stylesheet waits for the admin's decision, Restore it brings it back inactive as the core's Restore does, and one deleted for good is reported deleted, not unchanged",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      [stylesheet] = stylesheets(site)
+
+      Ash.destroy!(stylesheet, tenant: site.id, authorize?: false)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:undecided, "archived_in_cms"}}
+      assert stylesheets(site) == []
+
+      decide_kind!(site, admin, "stylesheet", "elementor", "import")
+
+      assert outcomes(import!(run, admin), "stylesheet") == %{
+               "elementor" => {:updated, "restored"}
+             }
+
+      assert [%{id: id, active: false}] = stylesheets(site)
+      assert id == stylesheet.id
+
+      Ash.destroy!(stylesheet, action: :permanent_destroy, tenant: site.id, authorize?: false)
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:skipped, "target_missing"}}
+
+      assert outcomes(import!(run, admin), "stylesheet") == %{
+               "elementor" => {:skipped, "target_missing"}
+             }
+
+      assert stylesheets(site) == []
+    end
+
     test "a site with its own stylesheet of that name waits for the admin's decision, and follows it",
          %{site: site, admin: admin} do
       own = "@theme {\n  --color-el-primary: #000000;\n}\n"
