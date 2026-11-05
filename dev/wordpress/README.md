@@ -113,6 +113,31 @@ language to id.
 ./seed_polylang.sh && ./record_polylang.sh
 ```
 
+## E2E data
+
+`seed_e2e.sh` runs after `seed.sh` and adds what the browser e2e of the migration needs and the curated seed lacks.
+It finds each entry by slug (a user by login, the menu by name, a comment by author and text), creates only what is
+missing and writes an existing one only when it differs, so a second run changes nothing. It never touches the
+passwords or `.env.local`, and its entries carry the slug prefix `e2e-` and the post meta `_e2e_seed`.
+
+| Entry | For |
+| --- | --- |
+| `e2e-youtube-embed` | a YouTube embed block and an `[embed]` shortcode (the "Big Buck Bunny" video) |
+| `e2e-scripts-and-handlers` | a `<script>` in a Custom HTML block and an `onclick` on a link: "Contains scripts or inline event handlers"; also in the category `blog` |
+| `e2e-duplicate-a`, `e2e-duplicate-b`, `e2e-same-name-other-bytes` | media: A and B are the same bytes under different titles, C has the same file name and other bytes; `e2e-duplicate-media` uses A |
+| page `privacy` (title "E2E Privacy"), category `blog` | addresses a fresh Mishka CMS site already has (`/privacy`, the `/blog` front page); `about` and `contact` already come from `seed.sh`: the "Connect / Import as new" decision |
+| site title, tagline, logo, icon | the script only checks they are set (they are), so a CMS site with its own values gets "Keep / Use WordPress" |
+| users `e2e-author1`, `e2e-author2` and the posts `e2e-by-author-1`, `e2e-by-author-2` | users no CMS has: user creation and the "Forgot password" warning |
+| menu "E2E Header" | a classic menu with no location, only published pages and posts, for Header links without draft conflicts |
+| `e2e-guest-comments` | two approved guest comments (one with a website) and a guest reply |
+
+Polylang stays off for these runs. Switch it on for the language tests and off after them:
+
+```sh
+docker compose run --rm -T wp-cli wp --user=admin plugin activate polylang
+docker compose run --rm -T wp-cli wp --user=admin plugin deactivate polylang
+```
+
 ## Bulk content
 
 `seed_bulk.sh` runs after `seed.sh` and fills the site the way a company blog looks after years of use: 8 more
