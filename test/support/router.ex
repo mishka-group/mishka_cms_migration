@@ -5,7 +5,7 @@
 defmodule MishkaCmsMigration.TestRouter do
   @moduledoc """
   The routes this extension's suite drives: the CMS's admin dashboard, which is where the extension
-  shows up (a tab of the Settings page and a button on another extension's dashboard).
+  shows up (its own page and a button on another extension's dashboard).
 
   The pipeline is the CMS's `:browser` pipeline: the session, the site of the request's host, the
   signed-in user and the actor. Dropping any of them changes what a page does — tenancy and

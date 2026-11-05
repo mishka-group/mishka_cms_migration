@@ -9,8 +9,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   `MishkaCmsMigration.MigrationRun` for its columns and row actions). The table follows the runs'
   PubSub notifications, which this page hands on to it.
 
-  A card's New import, or the page opened with `?new_import=<source id>` as the Settings page's
-  Migration tab opens it (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.SettingsTab`), opens the run's Gervaz form for that source in a modal: the page sends the
+  A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
   form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
   Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
   secret as a masked password input, or, for a source that reads a file
@@ -83,9 +82,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   @impl true
   def handle_params(params, uri, socket) do
-    if connected?(socket) and is_binary(params["new_import"]),
-      do: send(self(), {:new_run, params["new_import"]})
-
     {:noreply, assign(socket, :url_state, UrlSync.decode(params, uri, MigrationRun))}
   end
 
@@ -101,8 +97,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
      |> close_modal()
      |> put_flash(:info, gettext("Connected to %{site}.", site: connected_to(run)))}
   end
-
-  def handle_info({:new_run, id}, socket), do: id |> Source.fetch() |> new_run(socket)
 
   def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_modal(socket)}
 

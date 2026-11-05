@@ -51,7 +51,7 @@ defmodule MishkaCmsMigration.Application do
 
   @sidebar_menus [MishkaCmsMigrationWeb.SidebarMenu]
 
-  @admin_plugins [MishkaCmsMigrationWeb.SettingsPanel, MishkaCmsMigrationWeb.BlogAction]
+  @admin_plugins [MishkaCmsMigrationWeb.BlogAction]
 
   @activity_sources [MishkaCmsMigration.Activity]
 
