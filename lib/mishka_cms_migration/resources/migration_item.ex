@@ -170,7 +170,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "unsupported_widgets" => ["import", "leave_out"],
     "scripts" => ["import", "trust"],
     "language_missing" => ["import", "leave_out"],
-    "language_unknown" => ["import", "keep"]
+    "language_unknown" => ["import", "keep"],
+    "archived_in_cms" => ["import", "leave_out"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -1469,6 +1470,12 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("scripts", "trust"),
     do: dgettext("mishka_gervaz", "Keep them (I trust this content)")
+
+  defp choice_word("archived_in_cms", "import"),
+    do: dgettext("mishka_gervaz", "Restore it from the archive")
+
+  defp choice_word("archived_in_cms", "leave_out"),
+    do: dgettext("mishka_gervaz", "Leave it archived, and import what names it without it")
 
   defp choice_word("unsupported_widgets", "import"),
     do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")

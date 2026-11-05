@@ -2089,6 +2089,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")
   defp said("edited_in_cms"), do: dgettext("mishka_gervaz", "Edited in the CMS, so kept")
   defp said("target_missing"), do: dgettext("mishka_gervaz", "Deleted in the CMS, so left out")
+
+  defp said("archived_in_cms"),
+    do: dgettext("mishka_gervaz", "Archived in the CMS: restore it, or leave it archived")
+
+  defp said("restored"),
+    do: dgettext("mishka_gervaz", "Restored from the archive, as you decided")
+
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
   defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
 

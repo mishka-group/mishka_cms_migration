@@ -147,6 +147,39 @@ defmodule MishkaCmsMigration.PickedItemsTest do
     end
   end
 
+  describe "a post whose tag an admin archived" do
+    test "waits for the admin's decision on the tag, though the tag has a record, and is written once the admin restored it",
+         %{site: site} do
+      admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:media"])
+      run = site |> wordpress_run!(admin) |> dry_run!(admin) |> import!(admin)
+
+      gutenberg =
+        Tag
+        |> Ash.read!(tenant: site.id, authorize?: false)
+        |> Enum.find(&(&1.name == "Gutenberg"))
+
+      Ash.destroy!(gutenberg, actor: admin, tenant: site.id)
+      run = run |> dry_run!(admin) |> import!(admin)
+      assert %{outcome: :undecided, reason: "archived_in_cms"} = item(site, "tag", "18")
+
+      Repo.query!(
+        "UPDATE mishka_cms_migration_items SET content_hash = 'changed' WHERE source_id = '33'"
+      )
+
+      run = import_items!(run, admin, [{"post", "33"}])
+      assert %{outcome: :skipped, reason: "waits_for: tag"} = item(site, "post", "33")
+
+      site
+      |> item("tag", "18")
+      |> MishkaCmsMigration.decide_item!("import", actor: admin, tenant: site.id)
+
+      import_items!(run, admin, [{"tag", "18"}, {"post", "33"}])
+
+      assert %{outcome: :updated, reason: "restored"} = item(site, "tag", "18")
+      assert %{outcome: :updated} = item(site, "post", "33")
+    end
+  end
+
   describe "the rows it settles" do
     test "are broadcast, where a whole run's job broadcasts none of its items",
          %{site: site, admin: admin} do

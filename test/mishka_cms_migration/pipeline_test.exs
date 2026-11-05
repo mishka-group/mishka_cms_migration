@@ -333,15 +333,19 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert Enum.find(redirects(site), &(&1.id == edited.id)).to == "/kept-by-admin"
     end
 
-    test "does not bring back a row deleted in the CMS after the import", %{
-      site: site,
-      admin: admin
-    } do
+    test "does not bring back a row archived or deleted in the CMS after the import: an archived one waits for the admin's decision",
+         %{site: site, admin: admin} do
       migrate!(site, admin, %{"redirect" => @rows})
       deleted = Enum.find(redirects(site), &(&1.from_path == "/old-one"))
       Ash.destroy!(deleted, actor: admin, tenant: site.id)
 
       changed = List.replace_at(@rows, 0, %{"id" => 1, "from" => "/old-one", "to" => "/again"})
+      run = migrate!(site, admin, %{"redirect" => changed})
+
+      assert %{"1" => {:undecided, "archived_in_cms"}} = outcomes(run)
+      refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
+
+      Ash.destroy!(deleted, action: :permanent_destroy, actor: admin, tenant: site.id)
       run = migrate!(site, admin, %{"redirect" => changed})
 
       assert %{"1" => {:skipped, "target_missing"}} = outcomes(run)
@@ -746,7 +750,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert item!(site, "2").target_id == news.id
     end
 
-    test "mapped under a left-out parent keeps its mapping, and is skipped as mapped_missing once that record is gone",
+    test "mapped under a left-out parent keeps its mapping, waits for the admin's decision once that record is archived, and is skipped as mapped_missing once it is gone",
          %{site: site, admin: admin} do
       topics = collection!(site, admin, "Topics")
       rows = [category(2, "News"), category(3, "Guides", 2)]
@@ -758,7 +762,9 @@ defmodule MishkaCmsMigration.PipelineTest do
                outcomes(dry_run!(run, admin))
 
       Ash.destroy!(topics, tenant: site.id, authorize?: false)
+      assert %{"3" => {:undecided, "archived_in_cms"}} = outcomes(dry_run!(run, admin))
 
+      Ash.destroy!(topics, action: :permanent_destroy, tenant: site.id, authorize?: false)
       assert %{"3" => {:skipped, "mapped_missing"}} = outcomes(dry_run!(run, admin))
     end
 

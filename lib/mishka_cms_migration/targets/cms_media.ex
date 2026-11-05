@@ -97,9 +97,9 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   ## A second run
 
   A file the source did not change is `"unchanged"` and never downloaded again. One it changed has
-  its description written over, and keeps the file the first run stored. A record an admin edited,
-  archived or deleted in the CMS is kept as the admin left it
-  (`MishkaCmsMigration.Workers.Helpers.Decision`).
+  its description written over, and keeps the file the first run stored. A record an admin edited
+  or deleted in the CMS is kept as the admin left it, and one an admin archived waits for the
+  admin's decision, Restore it or Leave it archived (`MishkaCmsMigration.Workers.Helpers.Decision`).
 
   ## Where a file went
 
