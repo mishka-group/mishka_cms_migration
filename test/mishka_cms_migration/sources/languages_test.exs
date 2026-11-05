@@ -111,6 +111,71 @@ defmodule MishkaCmsMigration.Sources.LanguagesTest do
     end
   end
 
+  describe "the REST API of a site that runs WPML" do
+    setup do
+      test = self()
+
+      Req.Test.stub(WordPress, fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        send(test, {:asked, conn.request_path, conn.query_params})
+        wpml_answer(conn)
+      end)
+
+      :ok
+    end
+
+    defp wpml_answer(%{request_path: "/wp-json/"} = conn),
+      do:
+        Req.Test.text(
+          Plug.Conn.put_resp_content_type(conn, "application/json"),
+          Languages.wpml_index()
+        )
+
+    defp wpml_answer(%{request_path: "/wp-json/wp/v2/users/me"} = conn),
+      do: Req.Test.json(conn, %{"id" => 1, "username" => "admin"})
+
+    defp wpml_answer(%{request_path: "/wp-json/wpml/v1/languages"} = conn),
+      do: Req.Test.json(conn, Languages.wpml_languages())
+
+    defp wpml_answer(%{request_path: "/wp-json/wp/v2/posts", query_params: params} = conn) do
+      rows = Languages.wpml_rows(@recordings["post"], params["lang"])
+      Req.Test.json(Plug.Conn.put_resp_header(conn, "x-wp-totalpages", "1"), rows)
+    end
+
+    test "is read once for each language, so the translations arrive, each once" do
+      assert {:ok, conn} = WordPress.connect(@connection, "app password")
+      assert conn.languages == ["en", "fa"]
+
+      assert {:ok, english, {"fa", 1}} = WordPress.list(conn, "post", nil)
+      assert {:ok, persian, nil} = WordPress.list(conn, "post", {"fa", 1})
+      assert Enum.map(english ++ persian, & &1["id"]) |> Enum.sort() == [121, 122, 123, 124]
+
+      items = items!(WordPress, conn, english ++ persian, "post")
+      assert editions(items) == @editions["post"]
+
+      assert_received {:asked, "/wp-json/wp/v2/posts", %{"lang" => "en"}}
+      assert_received {:asked, "/wp-json/wp/v2/posts", %{"lang" => "fa"}}
+    end
+
+    test "is read for the picked ids of each language" do
+      assert {:ok, conn} = WordPress.connect(@connection, "app password")
+      assert {:ok, rows} = WordPress.rows(conn, "post", ["121", "122"])
+      assert rows |> Enum.map(& &1["id"]) |> Enum.sort() == [121, 122, 123, 124]
+    end
+  end
+
+  describe "a site without WPML" do
+    test "is read with no language asked for and no request for the languages" do
+      assert conn = connected!()
+      assert conn.languages == []
+      stub!(%{"/wp-json/" => "polylang-index"})
+      assert {:ok, _rows, nil} = WordPress.list(conn, "post", nil)
+      refute_received {:wordpress_request, %{request_path: "/wp-json/wpml/v1/languages"}}
+      assert_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/posts"} = request}
+      refute Map.has_key?(request.query_params, "lang")
+    end
+  end
+
   describe "an export" do
     test "of Polylang gives each entry and term its language and its other editions, and names Polylang" do
       assert {:ok, conn} = WordPressFile.connect(%{"file" => Languages.export()}, nil)

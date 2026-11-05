@@ -16,7 +16,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice do
   The part that asks for an answer is the main menu's Needs your decision on the Items page, whose
   Decide… offers Write links for the site's current mode and Wait. For a source that runs a
   language plugin it also says how translations are imported, and what of them waits for a decision
-  (`MishkaCmsMigration.Targets.Helpers.Editions`).
+  (`MishkaCmsMigration.Targets.Helpers.Editions`); for Polylang that its free plugin shares no
+  language over REST, so an export file brings the translations. Its tip says that a later change of
+  Language in addresses is followed by Run again and Import, which write the links of the menu and of
+  the pages and posts again (`MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2`).
   """
 
   use Phoenix.Component
@@ -55,13 +58,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice do
         <p :if={@cause in ["polylang", "wpml"]} class="m-0 mt-1.5" data-role="language-editions">
           <strong>{gettext("Translations:")}</strong>
           {gettext(
-            "Each translation is imported in its own language and linked to its other editions. One in a language the site does not publish in, or whose language the source does not say (Polylang's free plugin says none over the REST API, and WPML's lists its default language alone), waits for your decision. The site's export file (Tools > Export) carries every translation and its language."
+            "Each translation is imported in its own language and linked to its other editions. One in a language the site does not publish in, or whose language the source does not say, waits for your decision."
           )}
+          {translations(@cause)}
         </p>
         <p class="m-0 mt-1.5">
           <strong>{gettext("Tip:")}</strong>
           {gettext(
-            "Choose the site's Language in addresses (Settings) before importing: links written under another choice stop matching, or break, when you switch it later."
+            "Choose the site's Language in addresses (Settings) before importing. If you change Language in addresses later, press Run again and Import to rewrite the links."
           )}
         </p>
         <p class="m-0 mt-1.5">
@@ -74,6 +78,18 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice do
     </div>
     """
   end
+
+  defp translations("polylang"),
+    do:
+      gettext(
+        "Polylang Free doesn't share languages over REST: upload the WordPress export file to bring translations."
+      )
+
+  defp translations(_wpml),
+    do:
+      gettext(
+        "The site's export file (Tools > Export) carries every translation and its language."
+      )
 
   defp explained("polylang"), do: explained_plugin("Polylang")
   defp explained("wpml"), do: explained_plugin("WPML")

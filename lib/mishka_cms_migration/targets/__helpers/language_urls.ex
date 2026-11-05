@@ -18,6 +18,13 @@ defmodule MishkaCmsMigration.Targets.Helpers.LanguageUrls do
     * `"prefix_all"` — the site gives every language a prefix, so the links are written with
       `/en/…` and an unprefixed source address is not the address they point at.
 
+  A Run again writes such links again after an admin changes the site's `Language in addresses`:
+  `hash/2` is the item's hash with that mode added for an item that writes links, so the item is
+  no longer `"unchanged"`. Links are rewritten for the new mode, unless the record was changed in
+  the CMS since, which keeps it as it is. The menu's links stay fixed addresses: the core's
+  navigation (`MishkaCmsCore.Install.StarterContent.nav_links/1`) can draw a path in the page's own
+  language (`site_path/2`), but has no form for a link to one language's edition.
+
   The plugin is named first when both hold; a site that does not prefix its first language, with a
   source that runs no language plugin, has no cause.
 
@@ -32,6 +39,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.LanguageUrls do
   alias MishkaCmsMigration.Target
 
   @conflict "language_urls"
+  @linked ["links", "pages"]
 
   @doc """
   What makes links written now differ from the source's, or `nil`. `languages` is the source's
@@ -53,6 +61,23 @@ defmodule MishkaCmsMigration.Targets.Helpers.LanguageUrls do
       context.languages
       |> cause(context.site_id)
       |> decided(Target.decision(context, item, @conflict))
+
+  @doc """
+  `MishkaCmsMigration.Source.Item.hash/1`, with the site's language address mode added for an item
+  that writes links: a menu, and a page or post whose content links to pages or posts of the
+  source. Links are written as fixed addresses in that mode, so when the site's `Language in
+  addresses` changes, such an item no longer matches what was recorded, and a Run again writes its
+  links again (unless an admin changed it in the CMS since, which keeps it). Any other item hashes
+  as it always did.
+  """
+  @spec hash(Item.t(), String.t()) :: String.t()
+  def hash(item, site_id), do: stamped(Item.hash(item), linked?(item), site_id)
+
+  defp stamped(hash, true, site_id), do: hash <> "@" <> Languages.url_mode(site_id)
+  defp stamped(hash, false, _site_id), do: hash
+
+  defp linked?(%Item{kind: "menu"}), do: true
+  defp linked?(%Item{attrs: attrs}), do: Enum.any?(@linked, &(attrs[&1] not in [nil, %{}]))
 
   defp mode("prefix_all"), do: "prefix_all"
   defp mode(_prefix_others), do: nil

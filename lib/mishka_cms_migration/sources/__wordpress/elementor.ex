@@ -52,7 +52,31 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
     * a shortcode — its shortcodes, converted as classic content's are.
 
   The paragraphs, lists, quotes, links, images, figures and rules of these take the classes of the
-  builder's element of the same tag (Paragraph, Bulleted list, Link, ...).
+  builder's element of the same tag (Paragraph, Bulleted list, Link, ...), with the builder's slate
+  colours swapped for the site's colour tokens (`text-fg dark:text-fg-dark`, ...): slate does not
+  change in the dark theme, and the tokens do.
+
+  ## What of Elementor's styling is carried over
+
+  Through the builder's own style settings (`MishkaCmsCore.Runtime.Authoring.Tree.Styles`, what its
+  Inspector writes and reads back), never an inline `style`: a property and a value for each width
+  (Elementor's own, tablet and mobile settings are the builder's base, tablet and mobile), compiled
+  to the Tailwind classes the Inspector would have written, after the element's own.
+
+    * alignment (`align`) — a heading's, a text editor's and a button's `text-align`;
+    * a heading's font size (`typography_font_size`) — `font-size`, in the unit Elementor has
+      (px, em, rem, %, vw, vh);
+    * a section's and a container's `padding` and `margin` — by side (`py`/`px` when both sides
+      match, else `pt`, `pb`, `pl`, `pr`), exact, not rounded to a spacing step;
+    * a section's `content_width` and a container's `boxed_width` — the Container's `max-width`;
+    * a container's `flex_gap` — the `gap` of the grid or stack it becomes;
+    * a heading's colour — only when it is exactly the light value of one of the theme's text
+      tokens (fg, dim, subtle, faint, brand), as that token's classes with their dark twins; any
+      other colour keeps the theme's default.
+
+  Not carried over: other colours (text, buttons, backgrounds), fonts, weights, borders, shadows,
+  and a column's own padding. Elementor's tablet (1024) and mobile (767) widths become the
+  builder's (900 and 560).
 
   ## A post
 
@@ -79,6 +103,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   """
 
   alias MishkaCmsCore.Runtime.Authoring.Elements
+  alias MishkaCmsCore.Runtime.Authoring.Tree.Styles
   alias MishkaCmsMigration.Sources.WordPress.Content
 
   @widgets ~w(heading text-editor image button video icon-list image-gallery gallery spacer divider
@@ -88,11 +113,37 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   @galleries ["image-gallery", "gallery"]
   @headings ~w(h1 h2 h3 h4 h5 h6)
   @rows ["row", "row-reverse"]
-  @aligned %{"center" => "text-center", "right" => "text-right", "justify" => "text-justify"}
+  @alignments ~w(left center right justify)
+  @lengths ~w(px em rem % vw vh)
+  @breakpoints [base: "", tablet: "_tablet", mobile: "_mobile"]
   @element_id ~r/\A[\w-]+\z/
   @grid_columns 12
   @dropped_attrs ~w(class style srcset sizes loading decoding fetchpriority)
   @not_kept ["script", "style", "noscript"]
+
+  # The builder's elements are written in Tailwind's slate, which stays dark on a dark page. The
+  # site's own colour tokens (`MishkaCmsCore.Install.StarterContent.theme_css/0`) each have a
+  # `-dark` twin, so a page is drawn with them, as the starter's own pages are.
+  @themed %{
+    "text-slate-900" => "text-fg dark:text-fg-dark",
+    "text-slate-700" => "text-dim dark:text-dim-dark",
+    "text-slate-600" => "text-dim dark:text-dim-dark",
+    "text-slate-500" => "text-subtle dark:text-subtle-dark",
+    "border-slate-300" => "border-edge dark:border-edge-dark",
+    "border-slate-200" => "border-edge dark:border-edge-dark",
+    "bg-slate-900" => "bg-fg dark:bg-fg-dark",
+    "text-white" => "text-white dark:text-page-dark"
+  }
+
+  # The theme's text colours by the light value Elementor would carry for the same colour.
+  @colors %{
+    "#1a1a1f" => ["text-fg", "dark:text-fg-dark"],
+    "#6b6a72" => ["text-dim", "dark:text-dim-dark"],
+    "#8a8892" => ["text-subtle", "dark:text-subtle-dark"],
+    "#a3a0a9" => ["text-faint", "dark:text-faint-dark"],
+    "#5b4fe0" => ["text-brand", "dark:text-brand-dark"]
+  }
+  @color_classes @colors |> Map.values() |> List.flatten()
 
   @videos %{
     "youtube" => {"youtube_url", "https://www.youtube.com/watch?v=XHOmBV4js_E"},
@@ -121,8 +172,15 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
             {tag, attrs, _children} = node, styles ->
               {node,
                Enum.reduce(attrs, styles, fn
-                 {"class", class}, styles -> Map.put_new(styles, tag, class)
-                 _attr, styles -> styles
+                 {"class", class}, styles ->
+                   Map.put_new(
+                     styles,
+                     tag,
+                     class |> String.split() |> Enum.map_join(" ", &Map.get(@themed, &1, &1))
+                   )
+
+                 _attr, styles ->
+                   styles
                end)}
 
             node, styles ->
@@ -135,7 +193,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
              |> Map.fetch!("el-submit")
              |> elem(1)
              |> List.keyfind("class", 0)
-             |> elem(1))
+             |> elem(1)
+             |> String.split()
+             |> Enum.map_join(" ", &Map.get(@themed, &1, &1)))
 
   @doc """
   The content pieces of `row`, an entry Elementor laid out, made as a `kind` (`"page"` or
@@ -252,6 +312,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
          |> settings()
          |> Map.get("flex_direction")
          |> flexed(cells(children, ctx), ctx)
+         |> restyled(gap(settings(container)), ctx)
          |> placed(container, ctx)
 
   defp element(%{"elType" => "widget", "widgetType" => type} = widget, ctx)
@@ -292,14 +353,118 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp placed(nodes, %{"isInner" => true}, _ctx), do: nodes
   defp placed([], _element, _ctx), do: []
 
-  defp placed(nodes, element, %{kind: "page"}),
-    do: [built("el-section", [], element |> settings() |> boxed(nodes))]
+  defp placed(nodes, element, %{kind: "page"}) do
+    settings = settings(element)
+
+    [
+      "el-section"
+      |> built([], boxed(settings, nodes))
+      |> restyled_node(spacing(settings, "padding", "p"), spacing(settings, "margin", "m"))
+    ]
+  end
 
   defp placed(nodes, _element, _post), do: nodes
 
   defp boxed(%{"layout" => "full_width"}, nodes), do: nodes
   defp boxed(%{"content_width" => "full"}, nodes), do: nodes
-  defp boxed(_boxed, nodes), do: [built("el-container", [], nodes)]
+
+  defp boxed(settings, nodes),
+    do: [restyled_node(built("el-container", [], nodes), width(settings))]
+
+  defp width(settings),
+    do: responsive(settings, ["content_width", "boxed_width"], &%{"max-width" => css_length(&1)})
+
+  # The builder's own style vocabulary (`MishkaCmsCore.Runtime.Authoring.Tree.Styles`) is what the
+  # Inspector's panel writes: a property and a value per width (`:base`, `:tablet`, `:mobile`),
+  # compiled to Tailwind classes after the element's own. The Elementor settings that have a
+  # property there are handed to it, so the Inspector opens on them as on a value an admin set.
+  defp restyled(nodes, styles, %{kind: "page"}) when styles != %{},
+    do: Enum.map(nodes, &restyled_node(&1, styles))
+
+  defp restyled(nodes, _styles, _ctx), do: nodes
+
+  defp restyled_node(node, styles, more \\ %{})
+  defp restyled_node(node, styles, more) when styles == %{} and more == %{}, do: node
+
+  defp restyled_node({tag, attrs, children}, styles, more) do
+    styles = merge_styles(styles, more)
+    class = attrs |> List.keyfind("class", 0, {"class", nil}) |> elem(1)
+
+    {tag, List.keystore(attrs, "class", 0, {"class", Styles.merge_class(class, styles)}),
+     children}
+  end
+
+  defp merge_styles(styles, more),
+    do: Map.merge(styles, more, fn _bucket, left, right -> Map.merge(left, right) end)
+
+  # A setting Elementor keeps once for every width (`padding`, `padding_tablet`, `padding_mobile`),
+  # read for each and made into that width's properties by `props`.
+  defp responsive(settings, keys, props) do
+    for {bucket, suffix} <- @breakpoints,
+        key <- List.wrap(keys),
+        value = Map.get(settings, key <> suffix),
+        found = value |> props.() |> present(),
+        found != %{},
+        reduce: %{} do
+      styles -> merge_styles(styles, %{bucket => found})
+    end
+  end
+
+  defp present(%{} = props), do: Map.reject(props, fn {_prop, value} -> is_nil(value) end)
+  defp present(_none), do: %{}
+
+  defp spacing(settings, key, prefix),
+    do: responsive(settings, key, &sides(&1, prefix))
+
+  defp sides(%{"unit" => unit} = box, prefix) do
+    [top, right, bottom, left] = Enum.map(~w(top right bottom left), &css_length(box[&1], unit))
+
+    Map.new(
+      axis(prefix <> "y", prefix <> "t", prefix <> "b", top, bottom) ++
+        axis(prefix <> "x", prefix <> "l", prefix <> "r", left, right)
+    )
+  end
+
+  defp sides(_box, _prefix), do: %{}
+
+  defp axis(both, _first, _last, value, value) when is_binary(value), do: [{both, value}]
+
+  defp axis(_both, first, last, one, other),
+    do: for({prop, value} <- [{first, one}, {last, other}], is_binary(value), do: {prop, value})
+
+  defp gap(settings),
+    do:
+      responsive(
+        settings,
+        "flex_gap",
+        &%{"gap" => css_length(&1["column"] || &1["row"], &1["unit"])}
+      )
+
+  defp css_length(%{"size" => size, "unit" => unit}), do: css_length(size, unit)
+  defp css_length(_none), do: nil
+
+  defp css_length(value, unit) when unit in @lengths do
+    case number(value) do
+      nil -> nil
+      number -> "#{trunc_whole(number)}#{unit}"
+    end
+  end
+
+  defp css_length(_value, _unit), do: nil
+
+  defp trunc_whole(number) when number == trunc(number), do: trunc(number)
+  defp trunc_whole(number), do: number
+
+  defp number(value) when is_number(value), do: value
+
+  defp number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, ""} -> number
+      _not_a_number -> nil
+    end
+  end
+
+  defp number(_value), do: nil
 
   defp built(id, attributes, children) do
     {tag, own, _placeholder} = Map.fetch!(@elements, id)
@@ -323,18 +488,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
        when is_binary(title) and title != "" do
     tag = heading(settings["header_size"])
 
-    [
-      heading_tag(
-        tag,
-        title |> fragment() |> linked(settings["link"]),
-        aligned(settings["align"]),
-        ctx
-      )
-    ]
+    [heading_tag(tag, title |> fragment() |> linked(settings["link"]), settings, ctx)]
   end
 
-  defp widget("text-editor", %{"editor" => html}, ctx) when is_binary(html),
-    do: html |> Content.nodes(ctx.fetch) |> boxed_text(ctx)
+  defp widget("text-editor", %{"editor" => html} = settings, ctx) when is_binary(html),
+    do: html |> Content.nodes(ctx.fetch) |> boxed_text(aligned(settings), ctx)
 
   defp widget("image", %{"image" => %{"url" => url} = image} = settings, ctx)
        when is_binary(url) and url != "" do
@@ -351,7 +509,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
       |> link_attributes()
       |> button(
         settings["text"] |> text("Click here") |> fragment(),
-        aligned(settings["align"]),
+        aligned(settings),
         ctx
       )
 
@@ -389,24 +547,53 @@ defmodule MishkaCmsMigration.Sources.WordPress.Elementor do
   defp heading(size) when size in ["div", "span", "p"], do: "p"
   defp heading(_default), do: "h2"
 
-  defp heading_tag(tag, children, classes, %{kind: "page"}),
-    do: {tag, [{"class", Enum.join([Map.fetch!(@styles, tag) | classes], " ")}], children}
+  defp heading_tag(tag, children, settings, %{kind: "page"}) do
+    classes = @styles |> Map.fetch!(tag) |> String.split() |> colored(settings["title_color"])
 
-  defp heading_tag(tag, children, _classes, _post), do: {tag, [], children}
+    restyled_node(
+      {tag, [{"class", Enum.join(classes, " ")}], children},
+      merge_styles(aligned(settings), size(settings))
+    )
+  end
 
-  defp aligned(align) when is_map_key(@aligned, align), do: [Map.fetch!(@aligned, align)]
-  defp aligned(_start), do: []
+  defp heading_tag(tag, children, _settings, _post), do: {tag, [], children}
 
-  defp boxed_text(nodes, %{kind: "page"}), do: [{"div", [], nodes}]
-  defp boxed_text(nodes, _post), do: nodes
+  defp size(settings),
+    do: responsive(settings, "typography_font_size", &%{"font-size" => css_length(&1)})
+
+  defp colored(classes, color) when is_binary(color) do
+    case Map.fetch(@colors, String.downcase(color)) do
+      {:ok, tokens} -> Enum.reject(classes, &(&1 in @color_classes)) ++ tokens
+      :error -> classes
+    end
+  end
+
+  defp colored(classes, _no_color), do: classes
+
+  defp aligned(settings),
+    do:
+      responsive(settings, "align", fn
+        align when align in @alignments -> %{"text-align" => "text-" <> align}
+        _start -> nil
+      end)
+
+  defp boxed_text(nodes, styles, %{kind: "page"}),
+    do: [restyled_node({"div", [], nodes}, styles)]
+
+  defp boxed_text(nodes, _styles, _post), do: nodes
 
   defp button(href, label, aligned, %{kind: "page"}),
     do: aligned_button({"a", href ++ [{"class", @button}], label}, aligned)
 
   defp button(href, label, _aligned, _post), do: [{"p", [], [{"a", href, label}]}]
 
-  defp aligned_button(a, []), do: [a]
-  defp aligned_button(a, classes), do: [{"div", [{"class", Enum.join(classes, " ")}], [a]}]
+  defp aligned_button(a, styles) when styles == %{}, do: [a]
+
+  defp aligned_button(a, %{base: %{"text-align" => "text-left"}} = styles)
+       when map_size(styles) == 1,
+       do: [a]
+
+  defp aligned_button(a, styles), do: [restyled_node({"div", [], [a]}, styles)]
 
   defp linked(nodes, link), do: link |> link_attributes() |> linked_to(nodes)
 

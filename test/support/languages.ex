@@ -51,6 +51,33 @@ defmodule MishkaCmsMigration.Test.Languages do
     end
   end
 
+  @doc """
+  What a site that runs WPML answers for its REST index (the recorded Polylang index with WPML's
+  `wpml/v1` namespace in place of Polylang's) and for `/wpml/v1/languages` (derived), as JSON.
+  """
+  @spec wpml_index() :: String.t()
+  def wpml_index,
+    do:
+      "polylang-index"
+      |> recorded()
+      |> Map.update!("namespaces", fn namespaces ->
+        Enum.map(namespaces, &if(&1 == "pll/v1", do: "wpml/v1", else: &1))
+      end)
+      |> JSON.encode!()
+
+  @doc "WPML's active languages: English, its default, and Persian (derived)."
+  @spec wpml_languages() :: [map()]
+  def wpml_languages, do: [%{"code" => "en"}, %{"code" => "fa"}]
+
+  @doc "`recording`'s rows in the language `code` alone, with WPML's fields (derived)."
+  @spec wpml_rows(String.t(), String.t()) :: [map()]
+  def wpml_rows(recording, code),
+    do:
+      Enum.filter(
+        wpml_rows(recording),
+        &(&1["wpml_current_locale"] |> to_string() =~ ~r/\A#{code}/)
+      )
+
   @doc "`recording`'s rows with the WPML REST API plugin's fields (derived)."
   @spec wpml_rows(String.t()) :: [map()]
   def wpml_rows(recording) do

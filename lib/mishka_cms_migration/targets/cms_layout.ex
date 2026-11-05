@@ -117,7 +117,9 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   prefix, and a site that gives every language a prefix may later be switched back. On such a run
   a menu waits for an admin's decision as `"language_urls"`, before anything else
   (`MishkaCmsMigration.Targets.Helpers.LanguageUrls`): Write links for the site's current mode
-  (`"import"`) goes on, Wait (`"keep"`) skips it as `"waits_for_language_urls"`.
+  (`"import"`) goes on, Wait (`"keep"`) skips it as `"waits_for_language_urls"`. When the site's
+  `Language in addresses` changes later, a Run again plans the menu for a new write, so its links
+  follow the new mode (`MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2`).
 
   ## A second run
 

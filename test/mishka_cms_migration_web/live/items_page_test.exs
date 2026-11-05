@@ -349,6 +349,31 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert has_element?(view, ~s|#{@warning}[data-cause="wpml"]|)
       assert has_element?(view, ~s|#{@warning} [data-role="language-editions"]|, "export file")
+      assert has_element?(view, ~s|#{@warning}|, "press Run again and Import")
+    end
+
+    test "says plainly that Polylang Free shares no language over REST", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      body =
+        "index"
+        |> MishkaCmsMigration.Test.WordPress.recorded()
+        |> Map.update!("namespaces", &["pll/v1" | &1])
+        |> Jason.encode!()
+
+      stub!(%{"/wp-json/" => {"application/json", body}})
+      view = open!(conn, admin, later_run!(site, admin, run))
+
+      assert has_element?(view, ~s|#{@warning}[data-cause="polylang"]|)
+
+      assert has_element?(
+               view,
+               ~s|#{@warning} [data-role="language-editions"]|,
+               "Polylang Free doesn't share languages over REST: upload the WordPress export file to bring translations."
+             )
     end
   end
 

@@ -208,7 +208,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   A code is lower-cased, with `-` for `_`. These fields are not kept in `extra`. A row that names
   no language has neither key: Polylang's free plugin adds no field to the REST API, so its
   entries and terms say their language only in the site's export. WPML's REST API answers its
-  default language alone unless a request names another, so its other editions are not listed.
+  default language alone unless a request names another, so a site that runs WPML is read once for
+  each language of its `/wpml/v1/languages`, with `?lang=<code>`: its categories, tags, pages and
+  posts. A site without WPML is read as before, with no extra request.
 
   Files are written to the CMS's media library (`MishkaCmsMigration.Targets.CmsMedia`), the site's
   name and pictures to its settings (`MishkaCmsMigration.Targets.CmsSetting`), pages as the CMS's
@@ -285,6 +287,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   }
 
   @per_page 100
+  @translated ~w(category tag page post post_redirect)
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
   @media_fields [_fields: "id,source_url,media_details"]
@@ -369,9 +372,29 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          {:ok, index} <- index(req),
          {:ok, req} <- signed(req, Map.get(connection, "user"), secret),
          {:ok, user} <- signed_in(req) do
-      {:ok, %{req: req, index: index, user: user, read: &read(req, &1, &2)}}
+      {:ok,
+       %{
+         req: req,
+         index: index,
+         user: user,
+         languages: wpml_languages(req, index["namespaces"]),
+         read: &read(req, &1, &2)
+       }}
     end
   end
+
+  defp wpml_languages(req, namespaces) when is_list(namespaces),
+    do: req |> wpml_asked("wpml/v1" in namespaces) |> Enum.uniq()
+
+  defp wpml_languages(_req, _namespaces), do: []
+
+  defp wpml_asked(req, true), do: req |> Req.get(url: "/wpml/v1/languages") |> wpml_codes()
+  defp wpml_asked(_req, false), do: []
+
+  defp wpml_codes({:ok, %Req.Response{status: 200, body: [_ | _] = languages}}),
+    do: for(%{"code" => code} <- languages, is_binary(code) and code != "", do: code)
+
+  defp wpml_codes(_unreadable), do: []
 
   @impl MishkaCmsMigration.Source
   def extra(%{index: index, user: user}) do
@@ -391,6 +414,19 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp languages(_none), do: %{}
 
   @impl MishkaCmsMigration.Source
+  def list(%{req: req, languages: [_ | _] = codes}, kind, cursor) when kind in @translated do
+    {route, params} = Map.fetch!(@routes, kind)
+    {code, page} = cursor || {hd(codes), 1}
+
+    req
+    |> Req.get(
+      url: route,
+      params: [context: "edit", per_page: @per_page, page: page, lang: code] ++ params
+    )
+    |> listed(page)
+    |> in_language(code, codes)
+  end
+
   def list(%{req: req}, kind, cursor) when is_map_key(@routes, kind) do
     {route, params} = Map.fetch!(@routes, kind)
     page = cursor || 1
@@ -427,16 +463,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   as `list/3` says.
   """
   @impl MishkaCmsMigration.Source
-  def rows(%{req: req}, kind, source_ids) when is_map_key(@routes, kind) do
+  def rows(%{req: req} = conn, kind, source_ids) when is_map_key(@routes, kind) do
     {route, params} = Map.fetch!(@routes, kind)
+    languages = asked_in(conn, kind)
 
-    source_ids
-    |> Enum.chunk_every(@per_page)
-    |> Enum.reduce_while({:ok, []}, fn ids, {:ok, read} ->
+    for ids <- Enum.chunk_every(source_ids, @per_page), language <- languages do
+      {ids, language}
+    end
+    |> Enum.reduce_while({:ok, []}, fn {ids, language}, {:ok, read} ->
       req
       |> Req.get(
         url: route,
-        params: [context: "edit", per_page: @per_page, include: Enum.join(ids, ",")] ++ params
+        params:
+          [context: "edit", per_page: @per_page, include: Enum.join(ids, ",")] ++
+            language ++ params
       )
       |> listed(1)
       |> read_on(read)
@@ -447,6 +487,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     with {:ok, rows, _next} <- list(conn, kind, nil),
          do: {:ok, Enum.filter(rows, &(to_string(&1["id"]) in source_ids))}
   end
+
+  defp asked_in(%{languages: [_ | _] = codes}, kind) when kind in @translated,
+    do: Enum.map(codes, &[lang: &1])
+
+  defp asked_in(_conn, _kind), do: [[]]
 
   defp read_on({:ok, rows, _next}, read), do: {:cont, {:ok, read ++ rows}}
   defp read_on(refused, _read), do: {:halt, refused}
@@ -1205,6 +1250,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: row |> Map.take(@entry_attrs) |> Map.put("excerpt", excerpt)
 
   defp entry_attrs(row), do: Map.take(row, @entry_attrs)
+
+  defp in_language({:ok, rows, nil}, code, codes),
+    do: {:ok, rows, codes |> Enum.drop_while(&(&1 != code)) |> next_language()}
+
+  defp in_language({:ok, rows, page}, code, _codes), do: {:ok, rows, {code, page}}
+  defp in_language(refused, _code, _codes), do: refused
+
+  defp next_language([_current, next | _rest]), do: {next, 1}
+  defp next_language(_last), do: nil
 
   defp listed({:ok, %Req.Response{status: 200, body: rows} = response}, page) when is_list(rows),
     do: {:ok, rows, next_page(response, page)}
