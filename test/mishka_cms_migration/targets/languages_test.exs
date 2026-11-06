@@ -438,6 +438,145 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
       assert %{id: ^leadership_id} = by(Page, site, :title)["Leadership"]
       assert run.status == :done
     end
+
+    test "Import anyway writes a page that waits for its parent without it, says so, and Wait for its parent takes it back",
+         %{site: site, admin: admin} do
+      stub_rows!(fn
+        "polylang-pages" -> MishkaCmsMigration.Test.WordPress.recorded("pages")
+        recording -> MishkaCmsMigration.Test.WordPress.recorded(recording)
+      end)
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "page", "26", "import")
+      run = import!(run, admin)
+
+      leadership = item(site, "page", "26")
+      assert MigrationItem.waits_for_parent(leadership) == "parent_undecided: Team (#25)"
+      assert MigrationItem.conflicts(leadership) == ["language_unknown", "parent_missing"]
+
+      assert {:error, %Ash.Error.Invalid{errors: [%{field: :decision}]}} =
+               MishkaCmsMigration.decide_item(leadership, "import", %{conflict: "slug_taken"},
+                 actor: admin,
+                 tenant: site.id
+               )
+
+      MishkaCmsMigration.decide_item!(leadership, "import", %{conflict: "parent_missing"},
+        actor: admin,
+        tenant: site.id
+      )
+
+      run = import_items!(run, admin, ["26"])
+
+      assert %{outcome: :created, reason: "without_parent: Team (#25)", target_id: id} =
+               item(site, "page", "26")
+
+      assert %{id: ^id} = by(Page, site, :title)["Leadership"]
+      assert %{outcome: :undecided, target_id: nil} = item(site, "page", "24")
+      assert %{outcome: :skipped, target_id: nil} = item(site, "page", "25")
+
+      assert MigrationRun.reason_label("without_parent: Team (#25)", "page") =~
+               "without its parent Team (#25)"
+
+      assert run.status == :done
+
+      decide!(site, admin, "page", "25", "import")
+
+      for choice <- ["import", "keep"],
+          do:
+            MishkaCmsMigration.decide_item!(
+              item(site, "page", "25"),
+              choice,
+              %{conflict: "parent_missing"},
+              actor: admin,
+              tenant: site.id
+            )
+
+      assert %{"language_unknown" => "import", "parent_missing" => "keep"} =
+               item(site, "page", "25").decisions
+
+      import_items!(run, admin, ["25"])
+
+      assert %{outcome: :skipped, reason: "parent_undecided: About (#24)"} =
+               item(site, "page", "25")
+    end
+
+    test "one decision answers every page that waits for it, read in one query, and one import then writes each under its parent",
+         %{site: site, admin: admin} do
+      stub_rows!(fn
+        "polylang-pages" -> MishkaCmsMigration.Test.WordPress.recorded("pages")
+        recording -> MishkaCmsMigration.Test.WordPress.recorded(recording)
+      end)
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      pages = Enum.count(outcomes(run, "page"), &match?({_id, {:undecided, _conflict}}, &1))
+
+      {groups, queries} =
+        with_queries(fn -> MigrationItem.waiting_groups(run, admin) end)
+
+      assert length(queries) == 1
+      assert {:ok, groups} = groups
+      assert %{count: ^pages} = Enum.find(groups, &(&1.kind == "page"))
+      assert Enum.all?(groups, &(&1.conflict == "language_unknown"))
+
+      assert {:ok, [%{kind: "page", count: 1}]} =
+               MigrationItem.waiting_groups(run, admin, "leadership")
+
+      assert {:ok, ^pages} =
+               MigrationItem.decide_waiting(run, admin, "language_unknown", "import",
+                 kinds: ["page"]
+               )
+
+      assert {:ok, groups} = MigrationItem.waiting_groups(run, admin)
+      refute Enum.any?(groups, &(&1.kind == "page"))
+      assert Enum.any?(groups, &(&1.kind == "post"))
+
+      assert {:ok, 0} =
+               MigrationItem.decide_waiting(run, admin, "language_unknown", "import",
+                 kinds: ["page"]
+               )
+
+      run = import!(run, admin)
+
+      assert %{"24" => {:created, _}, "25" => {:created, _}, "26" => {:created, _}} =
+               outcomes(run, "page")
+
+      assert {:undecided, "language_unknown"} = hd(Map.values(outcomes(run, "post")))
+    end
+
+    test "an item's parents are read with it in one query, the top one first, and a parent the source does not list ends them",
+         %{site: site, admin: admin} do
+      stub_rows!(fn
+        "polylang-pages" ->
+          "pages"
+          |> MishkaCmsMigration.Test.WordPress.recorded()
+          |> Enum.reject(&(&1["id"] == 24))
+
+        recording ->
+          MishkaCmsMigration.Test.WordPress.recorded(recording)
+      end)
+
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      leadership = item(site, "page", "26")
+
+      {{:ok, loaded}, queries} =
+        with_queries(fn -> MigrationItem.fetch(leadership.id, admin, [:ancestors]) end)
+
+      assert length(queries) == 2
+      assert Enum.count(queries, &(&1 =~ "WITH RECURSIVE")) == 1
+
+      assert [{nil, "24", :not_listed}, {_id, "25", :undecided}] =
+               Enum.map(loaded.ancestors, &{&1.id, &1.source_id, MigrationItem.standing(&1)})
+
+      assert Ash.load!(item(site, "page", "29"), :ancestors, actor: admin, tenant: site.id).ancestors ==
+               nil
+    end
+  end
+
+  defp with_queries(fun) do
+    me = self()
+    queries = queries_while(fn -> send(me, {:result, fun.()}) end)
+    assert_received {:result, result}
+    {result, queries}
   end
 
   defp import_items!(run, admin, page_ids) do

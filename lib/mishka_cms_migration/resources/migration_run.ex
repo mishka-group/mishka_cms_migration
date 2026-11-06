@@ -1843,18 +1843,20 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("menu"), do: dgettext("mishka_gervaz", "menus")
   defp kind_noun(kind), do: kind
 
-  defp kind_one("user"), do: dgettext("mishka_gervaz", "user")
-  defp kind_one("category"), do: dgettext("mishka_gervaz", "category")
-  defp kind_one("tag"), do: dgettext("mishka_gervaz", "tag")
-  defp kind_one("media"), do: dgettext("mishka_gervaz", "file")
-  defp kind_one("setting"), do: dgettext("mishka_gervaz", "setting")
-  defp kind_one("stylesheet"), do: dgettext("mishka_gervaz", "stylesheet")
-  defp kind_one("page"), do: dgettext("mishka_gervaz", "page")
-  defp kind_one("post"), do: dgettext("mishka_gervaz", "post")
-  defp kind_one("comment"), do: dgettext("mishka_gervaz", "comment")
-  defp kind_one("post_redirect"), do: dgettext("mishka_gervaz", "redirect")
-  defp kind_one("menu"), do: dgettext("mishka_gervaz", "menu")
-  defp kind_one(kind), do: kind
+  @doc "One item of `kind`, as a sentence names it, such as page or category."
+  @spec kind_one(String.t()) :: String.t()
+  def kind_one("user"), do: dgettext("mishka_gervaz", "user")
+  def kind_one("category"), do: dgettext("mishka_gervaz", "category")
+  def kind_one("tag"), do: dgettext("mishka_gervaz", "tag")
+  def kind_one("media"), do: dgettext("mishka_gervaz", "file")
+  def kind_one("setting"), do: dgettext("mishka_gervaz", "setting")
+  def kind_one("stylesheet"), do: dgettext("mishka_gervaz", "stylesheet")
+  def kind_one("page"), do: dgettext("mishka_gervaz", "page")
+  def kind_one("post"), do: dgettext("mishka_gervaz", "post")
+  def kind_one("comment"), do: dgettext("mishka_gervaz", "comment")
+  def kind_one("post_redirect"), do: dgettext("mishka_gervaz", "redirect")
+  def kind_one("menu"), do: dgettext("mishka_gervaz", "menu")
+  def kind_one(kind), do: kind
 
   @doc false
   def switch(field, "true"), do: {:ok, field, true}
@@ -2139,6 +2141,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       dgettext(
         "mishka_gervaz",
         "Its parent %{parent} needs your decision: decide it and import it, then this one again",
+        parent: parent
+      )
+
+  defp said("parent_missing"),
+    do: dgettext("mishka_gervaz", "Its parent has no record in Mishka CMS yet")
+
+  defp said("without_parent: " <> parent),
+    do:
+      dgettext("mishka_gervaz", "Imported without its parent %{parent}, as you decided",
         parent: parent
       )
 
@@ -2432,7 +2443,14 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp language_name(code), do: Languages.name(code) || code
 
-  defp nouns(kinds), do: kinds |> String.split(", ") |> Enum.map(&kind_noun/1) |> Languages.join()
+  defp nouns(kinds), do: kinds |> String.split(", ") |> kind_nouns()
+
+  @doc """
+  `kinds` named together as a sentence says them, such as "pages, posts and tags", in the reader's
+  language (`MishkaCmsCore.Runtime.Languages.join/1`).
+  """
+  @spec kind_nouns([String.t()]) :: String.t()
+  def kind_nouns(kinds), do: kinds |> Enum.map(&kind_noun/1) |> Languages.join()
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

@@ -71,8 +71,18 @@ defmodule MishkaCmsMigration.MigrationItem do
   `:decide_import` give the same answer for the rows an admin picks, and leave the rows whose
   conflict does not offer it, or whose decision took effect, as they are.
 
+  An item that waits for its parent, which has no CMS record (`waits_for_parent/1`), has one more
+  open conflict, `"parent_missing"` (`conflicts/1`): Import anyway (`"import"`) has every later
+  import write it without its parent while the parent has none, at the top level, and Wait for its
+  parent (`"keep"`) takes that back. `:choose` answers the conflict its `conflict` argument names.
+
+  `:decide` answers one conflict with one choice on every item of a query it is open on, and leaves
+  the others as they are: what the Items page's Decisions panel runs for a whole group of what
+  waits (`:waiting_for_decision`, read grouped by `waiting_groups/3`, decided by
+  `decide_waiting/5`).
+
   The master actions (`:master_leave_out`, `:master_bring_back`, `:master_choose`,
-  `:master_decide_keep`, `:master_decide_import`) do the same on any site.
+  `:master_decide_keep`, `:master_decide_import`, `:master_decide`) do the same on any site.
 
   A left-out item takes what hangs on it along (`MishkaCmsMigration.Workers.Helpers.Pipeline`): the
   items under it in the source, such as a category's categories, a page's pages and a comment's
@@ -127,6 +137,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   nests them (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree`), from the rows it keeps
   loaded.
 
+  `ancestors` is a calculation: the items above the item at the source, the top one first, read
+  for a page of items in one query (`MishkaCmsMigration.Resources.Calculations.Ancestors`). The
+  Plan and Last import cells of an item that waits for its parent show them, each a button that
+  opens the row, whose Where it sits draws the branch with what can be done on each item; the Map
+  view places an item under parents the table has not loaded.
+
   `record_paths` is a calculation: where the item's CMS record is in the admin and on the site
   (`MishkaCmsMigration.MigrationRun.record_paths/2`), with its name, `nil` for an item with no
   record or whose record is gone; `mapped_paths` is the same for the record an admin mapped it to.
@@ -145,13 +161,14 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   import Phoenix.Component, only: [sigil_H: 2]
 
+  require Ash.Expr
   require Ash.Query
 
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
   alias MishkaCmsMigration.{MigrationRun, Target}
-  alias MishkaCmsMigration.Resources.Calculations.RecordPaths
+  alias MishkaCmsMigration.Resources.Calculations.{Ancestors, RecordPaths}
   alias MishkaCmsMigration.Resources.Changes.Decided
   alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
   alias MishkaCmsMigration.Targets.Helpers.Read
@@ -176,10 +193,14 @@ defmodule MishkaCmsMigration.MigrationItem do
     "language_missing" => ["import", "leave_out"],
     "language_unknown" => ["import", "keep"],
     "archived_in_cms" => ["import", "leave_out"],
-    "deleted_in_cms" => ["import", "keep"]
+    "deleted_in_cms" => ["import", "keep"],
+    "parent_missing" => ["import", "keep"]
   }
+  @parent_conflict "parent_missing"
+  @parent_waits ["parent_undecided", "parent_missing", "parent_not_listed"]
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
+  @items_table "#migration-items-table"
   @source [:source_host, :source_kind, :source_id]
   @written [
     :run_id,
@@ -246,7 +267,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       source do
         preload do
-          always [:record_paths, :mapped_paths]
+          always [:record_paths, :mapped_paths, :ancestors]
         end
       end
 
@@ -330,6 +351,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           static true
 
           requires [
+            :id,
             :source_kind,
             :plan,
             :plan_reason,
@@ -338,7 +360,9 @@ defmodule MishkaCmsMigration.MigrationItem do
             :left_out,
             :mapped_id,
             :mapped_paths,
-            :decisions
+            :decisions,
+            :target_id,
+            :ancestors
           ]
 
           label fn -> dgettext("mishka_gervaz", "Plan") end
@@ -352,7 +376,19 @@ defmodule MishkaCmsMigration.MigrationItem do
 
         column :result do
           static true
-          requires [:source_kind, :outcome, :reason]
+
+          requires [
+            :id,
+            :source_kind,
+            :outcome,
+            :reason,
+            :plan_reason,
+            :left_out,
+            :mapped_id,
+            :target_id,
+            :ancestors
+          ]
+
           label fn -> dgettext("mishka_gervaz", "Last import") end
 
           ui do
@@ -522,7 +558,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
           visible fn item, _state ->
             MishkaCmsMigration.MigrationItem.mappable?(item) and
-              is_nil(MishkaCmsMigration.MigrationItem.conflict(item))
+              MishkaCmsMigration.MigrationItem.conflict(item) in [nil, "parent_missing"]
           end
 
           ui do
@@ -792,6 +828,22 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "The earliest item of the site whose file has these bytes (a SHA-256), if any"
     end
 
+    read :waiting_for_decision do
+      argument :source_host, :string, allow_nil?: false
+
+      pagination keyset?: true, required?: false
+
+      filter expr(
+               source_host == ^arg(:source_host) and not left_out and is_nil(mapped_id) and
+                 ((plan == :undecided and not is_nil(plan_reason)) or
+                    ((is_nil(plan) or plan in [:created, :updated]) and outcome == :undecided and
+                       not is_nil(reason))) and
+                 not fragment("jsonb_exists(?, ?)", decisions, waiting_conflict)
+             )
+
+      description "The items of a source host that wait for a decision no admin has made"
+    end
+
     read :left_out_by_slugs do
       argument :source_host, :string, allow_nil?: false
       argument :source_kind, :string, allow_nil?: false
@@ -895,6 +947,12 @@ defmodule MishkaCmsMigration.MigrationItem do
         description "The answer to the conflict the item waits on: keep, import or leave_out"
       end
 
+      argument :conflict, :string do
+        allow_nil? true
+
+        description "Which of the item's open conflicts the decision answers, its first when nil"
+      end
+
       validate {TenantContext, require_master: false}
       validate SiteIdle, before_action?: true
       validate MappedRecord, before_action?: true, where: [changing(:mapped_id)]
@@ -914,6 +972,12 @@ defmodule MishkaCmsMigration.MigrationItem do
       argument :decision, :string do
         allow_nil? true
         description "The answer to the conflict the item waits on: keep, import or leave_out"
+      end
+
+      argument :conflict, :string do
+        allow_nil? true
+
+        description "Which of the item's open conflicts the decision answers, its first when nil"
       end
 
       validate {TenantContext, require_master: true}
@@ -975,6 +1039,37 @@ defmodule MishkaCmsMigration.MigrationItem do
       change {Decided, choice: "import"}
 
       description "Answers the conflict of an item of any site by writing it the import's way (masters)"
+    end
+
+    update :decide do
+      accept []
+      require_atomic? false
+
+      argument :conflict, :string, allow_nil?: false
+      argument :decision, :string, allow_nil?: false
+
+      validate {TenantContext, require_master: false}
+      validate SiteIdle, before_action?: true
+
+      change {Decided, bulk: true}
+
+      description "Answers one conflict with one choice on every item it is open on, leaving the rest"
+    end
+
+    update :master_decide do
+      accept []
+      multitenancy :bypass
+      require_atomic? false
+
+      argument :conflict, :string, allow_nil?: false
+      argument :decision, :string, allow_nil?: false
+
+      validate {TenantContext, require_master: true}
+      validate SiteIdle, before_action?: true
+
+      change {Decided, bulk: true}
+
+      description "Answers one conflict with one choice on items of any site (masters)"
     end
 
     create :record_plan do
@@ -1233,6 +1328,27 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       description "Where the record an admin mapped the item to is, with its name, nil when none"
     end
+
+    calculate :ancestors, {:array, :struct}, Ancestors do
+      public? true
+      constraints items: [instance_of: __MODULE__]
+
+      description "The items above the item at the source, the top one first, nil for one with no parent"
+    end
+
+    calculate :waiting_conflict,
+              :string,
+              expr(
+                if plan == :undecided do
+                  fragment("split_part(?, ': ', 1)", plan_reason)
+                else
+                  fragment("split_part(?, ': ', 1)", reason)
+                end
+              ) do
+      public? true
+
+      description "The conflict the item waits on, as its plan or its last import names it"
+    end
   end
 
   identities do
@@ -1245,14 +1361,23 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   @doc """
   The item `id` as `user` may read it: a master's on any site, a site admin's on their own site
-  alone. `{:ok, nil}` for an item that is not there or that `user` may not read.
+  alone, with what `load` names loaded, such as `:ancestors`. `{:ok, nil}` for an item that is not
+  there or that `user` may not read.
   """
-  @spec fetch(String.t(), map()) :: {:ok, struct() | nil} | {:error, term()}
-  def fetch(id, %{site_id: nil} = user),
-    do: Ash.get(__MODULE__, id, action: :master_get, actor: user, not_found_error?: false)
+  @spec fetch(String.t(), map(), list()) :: {:ok, struct() | nil} | {:error, term()}
+  def fetch(id, user, load \\ [])
 
-  def fetch(id, %{site_id: site_id} = user),
-    do: Ash.get(__MODULE__, id, actor: user, tenant: site_id, not_found_error?: false)
+  def fetch(id, %{site_id: nil} = user, load),
+    do:
+      Ash.get(__MODULE__, id,
+        action: :master_get,
+        actor: user,
+        load: load,
+        not_found_error?: false
+      )
+
+  def fetch(id, %{site_id: site_id} = user, load),
+    do: Ash.get(__MODULE__, id, actor: user, tenant: site_id, load: load, not_found_error?: false)
 
   @doc """
   Whether a notification of this resource is of an item a job of picked items recorded
@@ -1283,7 +1408,76 @@ defmodule MishkaCmsMigration.MigrationItem do
   took effect: Decide… is shown only while it is not `nil`, and Map to… comes back.
   """
   @spec conflict(map()) :: String.t() | nil
-  def conflict(item), do: code(waits_on(item)) || open_decision(item) || movable(item)
+  def conflict(item),
+    do: code(waits_on(item)) || open_decision(item) || parent_conflict(item) || movable(item)
+
+  @doc """
+  Every conflict an admin may answer on `item` now: the one it waits on (`conflict/1`), and
+  `"parent_missing"` while it waits for its parent (`waits_for_parent/1`), which Import anyway
+  answers with `"import"`: the import writes it without its parent while the parent has no CMS
+  record, and Wait for its parent (`"keep"`) undoes that. `:choose` answers the one its `conflict`
+  names, the first when it names none.
+  """
+  @spec conflicts(map()) :: [String.t()]
+  def conflicts(item),
+    do: [conflict(item), parent_conflict(item)] |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+  @doc """
+  Why `item` waits for its parent, which has no CMS record, as its last dry run or import said it
+  (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`), such as `"parent_undecided: Team (#25)"`;
+  `nil` for an item that has a CMS record, that an admin left out or mapped, and for one nothing
+  holds for its parent.
+  """
+  @spec waits_for_parent(map()) :: String.t() | nil
+  def waits_for_parent(%{left_out: true}), do: nil
+  def waits_for_parent(%{mapped_id: id}) when is_binary(id), do: nil
+  def waits_for_parent(%{target_id: id}) when is_binary(id), do: nil
+
+  def waits_for_parent(item),
+    do: parent_part(item.plan_reason) || parent_part(item.reason)
+
+  @doc """
+  Whether an admin decided that the item is imported without its parent while the parent has no
+  CMS record (Import anyway, `"parent_missing"` answered with `"import"`), given its `decisions`.
+  """
+  @spec without_parent?(map()) :: boolean()
+  def without_parent?(%{@parent_conflict => "import"}), do: true
+  def without_parent?(_decisions), do: false
+
+  @doc """
+  The choices of `conflict` in words, the recommended one first, as `{words, choice}` pairs: what
+  the Decisions panel and Where it sits offer. A conflict whose choices name what the item is about,
+  such as Add French to the site, says them for any item (Add its language to the site).
+  """
+  @spec choice_options(String.t()) :: [{String.t(), String.t()}]
+  def choice_options(conflict),
+    do: for(choice <- choices(conflict), do: {choice_word(conflict, choice), choice})
+
+  @doc """
+  Where `item` stands, as Where it sits shows each item of a branch: `:not_listed` for one the
+  source does not list (an ancestor with no `id`, `MishkaCmsMigration.Resources.Calculations.Ancestors`),
+  `:left_out`, `:connected` (mapped by an admin), `:imported` (it has a CMS record), `:undecided`
+  (it waits for a decision no admin has made, `undecided?/1`) or `:not_imported`.
+  """
+  @spec standing(map()) :: atom()
+  def standing(%{id: nil}), do: :not_listed
+  def standing(%{left_out: true}), do: :left_out
+  def standing(%{mapped_id: id}) when is_binary(id), do: :connected
+  def standing(%{target_id: id}) when is_binary(id), do: :imported
+
+  def standing(item), do: item |> undecided?() |> unsettled()
+
+  defp unsettled(true), do: :undecided
+  defp unsettled(false), do: :not_imported
+
+  @doc "What `standing/1` says, in words, such as Needs your decision."
+  @spec standing_word(atom()) :: String.t()
+  def standing_word(:not_listed), do: dgettext("mishka_gervaz", "Not in the source")
+  def standing_word(:left_out), do: dgettext("mishka_gervaz", "Left out by you")
+  def standing_word(:connected), do: dgettext("mishka_gervaz", "Connected")
+  def standing_word(:imported), do: dgettext("mishka_gervaz", "Imported")
+  def standing_word(:undecided), do: plan_word(:undecided)
+  def standing_word(:not_imported), do: dgettext("mishka_gervaz", "Not imported yet")
 
   @doc """
   Whether the admin's decision on `item` took effect: an import wrote the item by it, or connected
@@ -1350,10 +1544,15 @@ defmodule MishkaCmsMigration.MigrationItem do
   with no conflict, whose form shows Map to… instead.
   """
   @spec decision_reason(map()) :: String.t() | nil
-  def decision_reason(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}),
-    do: item |> conflict() |> conflict_words(waits_on(item), item.source_kind)
+  def decision_reason(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}) do
+    conflict = conflict(item)
+    conflict_words(conflict, waited_on(conflict, item), item.source_kind)
+  end
 
   def decision_reason(_state), do: nil
+
+  defp waited_on(@parent_conflict, item), do: waits_for_parent(item)
+  defp waited_on(_conflict, item), do: waits_on(item)
 
   defp conflict_words(nil, _reason, _kind), do: nil
   defp conflict_words(conflict, nil, kind), do: MigrationRun.reason_label(conflict, kind)
@@ -1435,12 +1634,17 @@ defmodule MishkaCmsMigration.MigrationItem do
   conflict an admin decided since the last run that met it. An item that waits for a decision reads
   Needs your decision, with the conflict in words, also when only its last import met it.
   """
-  @spec plan_cell(map()) :: Phoenix.LiveView.Rendered.t()
-  def plan_cell(item),
+  @spec plan_cell(map(), keyword()) :: Phoenix.LiveView.Rendered.t()
+  def plan_cell(item, opts \\ []),
     do:
       item
       |> planned()
-      |> Map.merge(%{role: "item-plan", reason_role: "item-plan-reason"})
+      |> Map.merge(%{
+        role: "item-plan",
+        reason_role: "item-plan-reason",
+        chain: opts[:chain] != false && waits_chain(item, :plan_reason),
+        item_id: item.id
+      })
       |> pill()
 
   @doc """
@@ -1454,14 +1658,121 @@ defmodule MishkaCmsMigration.MigrationItem do
     do:
       item
       |> imported()
-      |> Map.merge(%{role: "item-outcome", reason_role: "item-reason"})
+      |> Map.merge(%{
+        role: "item-outcome",
+        reason_role: "item-reason",
+        chain: waits_chain(item, :reason),
+        item_id: item.id
+      })
       |> pill()
+
+  @doc """
+  What waits for a decision no admin has made among the items of `run`'s source host on its site
+  (`:waiting_for_decision`, `undecided?/1`), read as `user`: `%{kind: kind, conflict: conflict,
+  count: count}` for each kind and conflict, the largest first. `search` narrows them to the items
+  whose title holds it, whatever its case, or whose source id it is. One query, whatever the number
+  of items: each kind and conflict is one row, with its count.
+  """
+  @spec waiting_groups(map(), map(), String.t() | nil) :: {:ok, [map()]} | {:error, term()}
+  def waiting_groups(run, user, search \\ nil) do
+    run
+    |> waiting_query(user, search)
+    |> Ash.Query.distinct([:source_kind, :waiting_conflict])
+    |> Ash.Query.calculate(
+      :waiting_count,
+      :integer,
+      Ash.Expr.expr(fragment("count(*) OVER (PARTITION BY ?, ?)", source_kind, waiting_conflict))
+    )
+    |> Ash.Query.select([:source_kind])
+    |> Ash.Query.load(:waiting_conflict)
+    |> Ash.read()
+    |> grouped()
+  end
+
+  @doc """
+  Answers `conflict` with `choice` on every item of `run`'s source host that waits for that
+  decision (`:waiting_for_decision`), as `user`, through `:decide` (`Ash.bulk_update/4`, each item
+  as `:choose` would answer it, and broadcast): those of `opts[:kinds]` alone when given, of the
+  ids `opts[:ids]` alone when given, and whose title holds `opts[:search]` or whose source id it is
+  when given. Answers how many it decided.
+  """
+  @spec decide_waiting(map(), map(), String.t(), String.t(), keyword()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def decide_waiting(run, user, conflict, choice, opts \\ []) do
+    run
+    |> waiting_query(user, opts[:search])
+    |> Ash.Query.filter(waiting_conflict == ^conflict)
+    |> narrowed(:kinds, opts[:kinds])
+    |> narrowed(:ids, opts[:ids])
+    |> MishkaCmsMigration.decide_items(conflict, choice,
+      actor: user,
+      tenant: run.site_id,
+      bulk_options: [
+        strategy: :stream,
+        notify?: true,
+        return_records?: true,
+        return_errors?: true
+      ]
+    )
+    |> bulk_decided(conflict, choice)
+  end
+
+  defp waiting_query(run, user, search),
+    do:
+      __MODULE__
+      |> Ash.Query.for_read(:waiting_for_decision, %{source_host: run.source_host},
+        actor: user,
+        tenant: run.site_id
+      )
+      |> searched(search)
+
+  defp searched(query, search) when search in [nil, ""], do: query
+
+  defp searched(query, search) do
+    text = String.trim(search)
+    lower = String.downcase(text)
+    Ash.Query.filter(query, contains(string_downcase(title), ^lower) or source_id == ^text)
+  end
+
+  defp narrowed(query, _field, nil), do: query
+  defp narrowed(query, :kinds, kinds), do: Ash.Query.filter(query, source_kind in ^kinds)
+  defp narrowed(query, :ids, ids), do: Ash.Query.filter(query, id in ^ids)
+
+  defp grouped({:ok, rows}),
+    do:
+      {:ok,
+       rows
+       |> Enum.map(
+         &%{
+           kind: &1.source_kind,
+           conflict: &1.waiting_conflict,
+           count: &1.calculations.waiting_count
+         }
+       )
+       |> Enum.sort_by(&{-&1.count, &1.conflict, &1.kind})}
+
+  defp grouped({:error, error}), do: {:error, error}
+
+  defp bulk_decided(%Ash.BulkResult{status: :success, records: records}, conflict, choice),
+    do: {:ok, Enum.count(records || [], &decided_as?(&1, conflict, choice))}
+
+  defp bulk_decided(%Ash.BulkResult{errors: errors}, _conflict, _choice),
+    do: {:error, Ash.Error.to_error_class(errors)}
+
+  defp decided_as?(%{left_out: true}, _conflict, "leave_out"), do: true
+  defp decided_as?(%{decisions: decisions}, conflict, choice), do: decisions[conflict] == choice
 
   @doc "Every plan as a `{words, plan}` pair, in the order the report counts outcomes."
   @spec plan_options() :: [{String.t(), atom()}]
   def plan_options, do: Enum.map(@outcomes, &{plan_word(&1), &1})
 
   defp pill(assigns) do
+    assigns =
+      assigns
+      |> Map.put_new(:chain, nil)
+      |> Map.put_new(:item_id, nil)
+      |> Map.put(:items_table, @items_table)
+
     ~H"""
     <div class="min-w-0">
       <span
@@ -1482,9 +1793,55 @@ defmodule MishkaCmsMigration.MigrationItem do
       >
         {@reason}
       </div>
+      <div
+        :if={@chain}
+        data-role="item-waits-chain"
+        class="mt-[5px] flex flex-wrap items-center gap-x-1 gap-y-1"
+      >
+        <%= for {node, index} <- Enum.with_index(@chain) do %>
+          <span :if={index > 0} class="text-[10px] text-[#c9c6bf]" aria-hidden="true">›</span>
+          <button
+            type="button"
+            data-role="item-waits-node"
+            data-source-id={node.source_id}
+            data-standing={standing(node)}
+            title={standing_word(standing(node))}
+            phx-click={
+              Phoenix.LiveView.JS.push("expand_row", value: %{id: @item_id}, target: @items_table)
+            }
+            class="inline-flex max-w-[140px] items-center gap-1 rounded-[6px] border border-[#ecebe6] bg-white px-1.5 py-[1px] text-[10.5px] font-semibold text-[#3a382f] hover:border-[#c3c1f0]"
+          >
+            <span class={["size-[6px] flex-none rounded-full", standing_dot(standing(node))]}></span>
+            <span class="truncate">{node.title || "#" <> node.source_id}</span>
+          </button>
+        <% end %>
+      </div>
     </div>
     """
   end
+
+  defp waits_chain(%{ancestors: [_ | _] = ancestors} = item, :plan_reason),
+    do: item.reason |> parent_part() |> plan_chain(item, ancestors)
+
+  defp waits_chain(%{ancestors: [_ | _] = ancestors} = item, :reason),
+    do: item |> waits_for_parent() |> chained(parent_part(item.reason), ancestors)
+
+  defp waits_chain(_item, _field), do: nil
+
+  defp plan_chain(nil, item, ancestors),
+    do: item |> waits_for_parent() |> chained(parent_part(item.plan_reason), ancestors)
+
+  defp plan_chain(_import_says_it, _item, _ancestors), do: nil
+
+  defp chained(nil, _part, _ancestors), do: nil
+  defp chained(_waits, nil, _ancestors), do: nil
+  defp chained(_waits, _part, ancestors), do: ancestors
+
+  defp standing_dot(:undecided), do: "bg-[#d99a00]"
+  defp standing_dot(:imported), do: "bg-[#177a53]"
+  defp standing_dot(:connected), do: "bg-[#5b57d6]"
+  defp standing_dot(:not_listed), do: "bg-[#c0473d]"
+  defp standing_dot(_not_imported_or_left_out), do: "bg-[#bcb9b2]"
 
   defp chosen_words(:leave_out, count),
     do: dngettext("mishka_gervaz", "%{count} item left out.", "%{count} items left out.", count)
@@ -1620,6 +1977,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp choice_word("draft_pages", "keep"),
     do: dgettext("mishka_gervaz", "Leave those links out of the menu")
 
+  defp choice_word("parent_missing", "import"),
+    do: dgettext("mishka_gervaz", "Import it without its parent, at the top level")
+
+  defp choice_word("parent_missing", "keep"),
+    do: dgettext("mishka_gervaz", "Wait until its parent is imported")
+
   defp choice_word("draft_pages", "import"),
     do: dgettext("mishka_gervaz", "Publish the linked pages")
 
@@ -1696,6 +2059,16 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp decided_conflict(false, decisions), do: decisions |> Map.keys() |> Enum.min(fn -> nil end)
   defp decided_conflict(true, _decisions), do: nil
+
+  defp parent_conflict(item), do: item |> waits_for_parent() |> parent_conflict_of()
+
+  defp parent_conflict_of(nil), do: nil
+  defp parent_conflict_of(_reason), do: @parent_conflict
+
+  defp parent_part(nil), do: nil
+
+  defp parent_part(reason),
+    do: reason |> String.split("; ") |> Enum.find(&(code(&1) in @parent_waits))
 
   defp code(nil), do: nil
   defp code(reason), do: reason |> String.split(": ", parts: 2) |> hd()

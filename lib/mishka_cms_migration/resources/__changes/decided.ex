@@ -9,6 +9,11 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
   under that conflict and brings the item back, so every later dry run and import follows it;
   `"leave_out"` leaves the item out instead.
 
+  The conflict is the one the action's `conflict` argument names, one of the item's open conflicts
+  (`MishkaCmsMigration.MigrationItem.conflicts/1`), such as `"parent_missing"` for Import anyway on
+  an item that waits for its parent, or the item's first (`MishkaCmsMigration.MigrationItem.conflict/1`)
+  when it names none; one that is not open on the item is as none.
+
   Given as the action's `decision` argument, the choice of one item's Decide…, a choice the
   conflict does not offer (`MishkaCmsMigration.MigrationItem.choices/1`), any choice on an item
   that waits on none, and any choice on an item whose decision already took effect
@@ -29,6 +34,15 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
       update :decide_keep do
         change {MishkaCmsMigration.Resources.Changes.Decided, choice: "keep"}
       end
+
+  With `bulk: true` the `decision` and `conflict` arguments are answered the same way, for the
+  items of a group the Decisions panel decides at once.
+
+      update :decide do
+        argument :conflict, :string
+        argument :decision, :string
+        change {MishkaCmsMigration.Resources.Changes.Decided, bulk: true}
+      end
   """
 
   use Ash.Resource.Change
@@ -48,12 +62,16 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
   @impl true
   def change(changeset, opts, _context) do
     choice = opts[:choice] || Ash.Changeset.get_argument(changeset, :decision)
+    conflict = changeset |> Ash.Changeset.get_argument(:conflict) |> open(changeset.data)
 
     changeset.data
     |> MigrationItem.settled?()
-    |> answer(MigrationItem.conflict(changeset.data), choice, changeset.data)
-    |> settled(changeset, opts[:choice])
+    |> answer(conflict, choice, changeset.data)
+    |> settled(changeset, opts[:choice] || opts[:bulk])
   end
+
+  defp open(nil, item), do: MigrationItem.conflict(item)
+  defp open(conflict, item), do: Enum.find(MigrationItem.conflicts(item), &(&1 == conflict))
 
   defp answer(_settled, _conflict, nil, _item), do: :none
   defp answer(true, _conflict, _choice, _item), do: {:error, @took_effect}

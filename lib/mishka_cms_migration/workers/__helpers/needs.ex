@@ -89,16 +89,34 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   @spec parent(struct() | nil, String.t()) :: String.t()
   def parent(nil, id), do: "parent_not_listed: " <> id
 
-  def parent(%MigrationItem{} = parent, _id),
-    do: parent_reason(MigrationItem.undecided?(parent)) <> named(parent)
+  def parent(%MigrationItem{} = parent, id),
+    do: parent_reason(MigrationItem.undecided?(parent)) <> parent_name(parent, id)
 
   defp parent_reason(true), do: "parent_undecided: "
   defp parent_reason(false), do: "parent_missing: "
 
-  defp named(%MigrationItem{title: title, source_id: id}) when is_binary(title) and title != "",
-    do: "#{title} (##{id})"
+  @doc """
+  The parent `id` as the Items page shows it, given its item as the runs recorded it: its title and
+  source id, `"Team (#25)"`, or its source id alone, `"#25"`, for one with no title or no item.
+  """
+  @spec parent_name(struct() | nil, String.t()) :: String.t()
+  def parent_name(%MigrationItem{title: title, source_id: id}, _id)
+      when is_binary(title) and title != "",
+      do: "#{title} (##{id})"
 
-  defp named(%MigrationItem{source_id: id}), do: "#" <> id
+  def parent_name(_parent, id), do: "#" <> id
+
+  @doc """
+  `reason`, why an item of a job of picked items waits (`call/3`'s `waits`), without its parent's
+  part: what still holds an item an admin decided to import without its parent
+  (`MishkaCmsMigration.MigrationItem.without_parent?/1`), `nil` when nothing else does.
+  """
+  @spec without_parent(String.t()) :: String.t() | nil
+  def without_parent(reason),
+    do: reason |> String.split("; ") |> Enum.reject(&parent_part?/1) |> reason()
+
+  defp parent_part?(part),
+    do: String.starts_with?(part, ~w(parent_undecided: parent_missing: parent_not_listed:))
 
   defp parents(%{picked: nil}, _kind, _items, _found), do: %{}
 

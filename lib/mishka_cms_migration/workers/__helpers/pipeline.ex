@@ -74,8 +74,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   left as it is. Each page is decided as a whole run's is, so an admin's choices and the run's
   options hold, after its needs are read (`MishkaCmsMigration.Workers.Helpers.Needs`): an item the
   walk would create or update while its parent, or what its record points at, has no CMS record
-  yet is skipped with the reason, and one under a parent an admin left out is skipped as
-  `"parent_left_out"`. It saves no progress, empties no plan, and once walked hands its report to
+  yet is skipped with the reason, unless it is only its parent and an admin decided to import the
+  item without it (`MishkaCmsMigration.MigrationItem.without_parent?/1`), and one under a parent an
+  admin left out is skipped as `"parent_left_out"`. It saves no progress, empties no plan, and once walked hands its report to
   `MishkaCmsMigration.Report.merge/2` and the run to `:finish_items`; an import of picked items
   hands its own report to `migration:import:finished`. What fails a whole run fails a job of picked
   items only in part: a kind the source cannot answer, or that raises, fails its picked items
@@ -422,9 +423,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   end
 
   defp waited(_source_id, plan, reason) when elem(plan, 0) in [:created, :updated, :restored],
-    do: {:skipped, reason}
+    do: plan |> elem(3) |> MigrationItem.without_parent?() |> still_waits(reason) |> held(plan)
 
   defp waited(_source_id, plan, _reason), do: plan
+
+  defp still_waits(true, reason), do: Needs.without_parent(reason)
+  defp still_waits(false, reason), do: reason
+
+  defp held(nil, plan), do: plan
+  defp held(reason, _plan), do: {:skipped, reason}
 
   defp place(state, plans, {:ok, item}, placed),
     do: hold(state, {item, Map.fetch!(plans, item.source_id)}, placed)

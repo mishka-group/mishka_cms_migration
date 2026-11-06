@@ -53,6 +53,8 @@ defmodule MishkaCmsMigration.Report do
       parent: the parent waits for an admin's decision, was never written, was skipped or failed,
       or the source does not list it. `<parent>` names it as the Items page shows it,
       `"Team (#25)"` (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`).
+      An admin's Import anyway (`MishkaCmsMigration.MigrationItem`'s `"parent_missing"` answered
+      with `"import"`) writes it without its parent instead, noted `"without_parent: <parent>"`.
     * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
       of the plugins of that event, or of `migration:content:convert` for an item with a piece to
       convert, is not loaded; `"plugins_failed"` when one of them raised or answered something that
