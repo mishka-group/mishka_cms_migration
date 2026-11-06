@@ -101,7 +101,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     * `decide_node` answers the conflict an item waits on with a choice (`:choose` with its
       `conflict`), "Decided. The next dry run and import follow your decision.";
     * `decide_branch` answers the same conflict with one choice on the branch's items that wait for
-      it (`MishkaCmsMigration.MigrationItem.decide_waiting/5`), "3 items decided.";
+      it (`MishkaCmsMigration.MigrationItem.decide_waiting/5`), "3 items decided.", and draws the
+      rows, the branch and the Decisions panel again once;
     * `import_node` imports one item, as Import this item does, and `import_branch` the branch's
       items not imported yet, parents first, as Import the picked items does; each then says what
       came of the expanded item once its job settles it;
@@ -115,7 +116,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   Above the table, the Decisions panel (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions`)
   groups what waits for a decision and decides a group at once; the page tells it of every item's
-  broadcast, so it reads the groups again.
+  broadcast, so it reads the groups again. A group's decision is one update that broadcasts no item,
+  so once it is done the panel tells the page (`:items_decided`), which reloads the table's rows
+  once and draws the expanded branch again.
 
   Who may open it is the sidebar's declaration (`MishkaCmsMigrationWeb.SidebarMenu`), the Migration
   page's permission, which `MishkaCmsCore.Sidebar.PageGuard` reads on every mount.
@@ -244,6 +247,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   def handle_info({:put_flash, kind, message}, socket),
     do: {:noreply, put_flash(socket, kind, message)}
 
+  def handle_info(:items_decided, socket), do: {:noreply, redrawn(socket)}
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
@@ -333,14 +338,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   defp own_item({:error, error}, _run), do: {:error, error}
   defp own_item(_other, _run), do: {:error, :not_found}
 
-  defp branch_decided({:ok, count}, socket),
-    do:
-      {:noreply,
-       put_flash(
-         socket,
-         :info,
-         ngettext("%{count} item decided.", "%{count} items decided.", count)
-       )}
+  defp branch_decided({:ok, count}, socket) do
+    send_update(Decisions, id: @decisions_id, refresh: true)
+
+    {:noreply,
+     socket
+     |> redrawn()
+     |> put_flash(:info, ngettext("%{count} item decided.", "%{count} items decided.", count))}
+  end
 
   defp branch_decided({:error, reason}, socket), do: {:noreply, refused(socket, :decide, reason)}
 
@@ -354,6 +359,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
        do: expand(socket, id)
 
   defp branch_changed(socket, _item), do: socket
+
+  defp redrawn(socket) do
+    send_update(MishkaGervaz.Table.Web.Live, id: @table_id, gervaz_refresh: true)
+    redraw_branch(socket)
+  end
+
+  defp redraw_branch(%{assigns: %{branch: %{id: id}}} = socket), do: expand(socket, id)
+  defp redraw_branch(socket), do: socket
 
   defp picked(socket, ids, action, step, awaited \\ nil) do
     user = socket.assigns.current_user

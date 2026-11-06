@@ -41,18 +41,24 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
         change {MishkaCmsMigration.Resources.Changes.Decided, choice: "keep"}
       end
 
-  With `bulk: true` the `decision` and `conflict` arguments are answered the same way, for the
-  items of a group the Decisions panel decides at once.
+  With `bulk: true` the `decision` and `conflict` arguments answer every item of the update at once,
+  atomically: the choice is merged into `decisions` under the conflict in the database, or
+  `"leave_out"` leaves them out, in one `UPDATE` for a group the Decisions panel decides. The action
+  narrows the items to those that wait for that decision, so every one of them is open on the
+  conflict; a choice the conflict does not offer is refused on `decision`.
 
       update :decide do
         argument :conflict, :string
         argument :decision, :string
+        change filter(expr(waits_for_decision and waiting_conflict == ^arg(:conflict)))
         change {MishkaCmsMigration.Resources.Changes.Decided, bulk: true}
       end
   """
 
   use Ash.Resource.Change
   use Gettext, backend: MishkaCmsCore.Gettext
+
+  import Ash.Expr
 
   alias Ash.Error.Changes.InvalidArgument
   alias MishkaCmsMigration.MigrationItem
@@ -76,6 +82,33 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
     |> answer(conflict, choice, changeset.data)
     |> settled(changeset, opts[:choice] || opts[:bulk])
   end
+
+  @impl true
+  def atomic(changeset, opts, _context) do
+    conflict = Ash.Changeset.get_argument(changeset, :conflict)
+    choice = Ash.Changeset.get_argument(changeset, :decision)
+
+    atomically(opts[:bulk], conflict, choice, choice in MigrationItem.choices(conflict))
+  end
+
+  defp atomically(true, _conflict, "leave_out", true), do: {:atomic, %{left_out: true}}
+
+  defp atomically(true, conflict, choice, true),
+    do:
+      {:atomic,
+       %{
+         decisions:
+           {:atomic,
+            expr(
+              fragment("? || jsonb_build_object(?::text, ?::text)", decisions, ^conflict, ^choice)
+            )}
+       }}
+
+  defp atomically(true, _conflict, _choice, false),
+    do: {:error, InvalidArgument.exception(field: :decision, message: @not_offered)}
+
+  defp atomically(_one_item, _conflict, _choice, _offered),
+    do: {:not_atomic, "a decision on one item reads the conflicts open on it"}
 
   defp open(nil, item), do: MigrationItem.conflict(item)
   defp open(conflict, item), do: Enum.find(MigrationItem.conflicts(item), &(&1 == conflict))

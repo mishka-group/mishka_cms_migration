@@ -357,6 +357,37 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     settled(view)
   end
 
+  # How many UPDATEs of the items the repository runs from now on, in any process, read once.
+  defp updates_counted do
+    test = self()
+    handler = "items-updates-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler,
+      [:mishka_cms_migration, :repo, :query],
+      &__MODULE__.items_update/4,
+      {test, handler}
+    )
+
+    fn ->
+      :telemetry.detach(handler)
+      counted(handler, 0)
+    end
+  end
+
+  @doc false
+  def items_update(_event, _measurements, %{query: query}, {test, handler}) do
+    if query =~ ~s|UPDATE "mishka_cms_migration_items"|, do: send(test, {:items_update, handler})
+  end
+
+  defp counted(handler, count) do
+    receive do
+      {:items_update, ^handler} -> counted(handler, count + 1)
+    after
+      0 -> count
+    end
+  end
+
   describe "the cancelled run alert" do
     test "is between the filters and the table of a cancelled run, and not on a run that is done",
          %{conn: conn, site: site, admin: admin, run: run} do
@@ -1303,17 +1334,51 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
              |> parts(group <> ~s| [data-role="decision-choice"][data-recommended="true"]|)
              |> LazyHTML.attribute("data-choice") == ["import"]
 
+      assert view
+             |> parts(group <> ~s| [data-role="decision-choice"]|)
+             |> LazyHTML.attribute("phx-disable-with")
+             |> Enum.all?(&(&1 == ""))
+
+      updates = updates_counted()
+
       view
       |> element(group <> ~s| [data-role="decision-choice"][data-choice="import"]|)
       |> render_click()
 
       panel_settled(view)
 
+      assert updates.() == 1
       assert Admin.flashes(view) =~ "#{waiting} items decided."
       assert {:ok, rest} = MigrationItem.waiting_groups(later, admin)
       refute Enum.any?(rest, &(&1.conflict == "language_unknown"))
       assert %{decisions: %{"language_unknown" => "import"}} = page(site, "128")
+      assert plan_of(view, page(site, "128")) == "decided"
       refute has_element?(view, group)
+    end
+
+    test "says so in one line once nothing waits any more, instead of vanishing",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      view = open!(conn, admin, later)
+      panel_settled(view)
+      refute has_element?(view, ~s|[data-role="decisions-done"]|)
+
+      for _group <- 1..10, has_element?(view, ~s|[data-role="decision-group"]|) do
+        view
+        |> element(~s|[data-role="decision-group"]:first-child [data-recommended="true"]|)
+        |> render_click()
+
+        panel_settled(view)
+      end
+
+      assert {:ok, []} = MigrationItem.waiting_groups(later, admin)
+      refute has_element?(view, ~s|[data-role="decisions"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="decisions-done"]|,
+               "Nothing needs your decision now."
+             )
     end
 
     test "Advanced decides only the rules that are on, narrowed by a title, once its counts are previewed",
@@ -1340,6 +1405,20 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert view |> parts(~s|[data-role="decision-preview"]|) |> LazyHTML.attribute("data-count") ==
                ["2"]
+
+      assert view
+             |> parts(~s|[data-role="decision-preview-rule"]|)
+             |> LazyHTML.attribute("data-key") == ["page:language_unknown"]
+
+      off = Enum.reject(groups, &(&1.kind == "page" and &1.conflict == "language_unknown"))
+
+      for group <- off do
+        assert has_element?(
+                 view,
+                 ~s|[data-role="decision-rule"][data-key="#{group.kind}:#{group.conflict}"]|,
+                 "off, not counted"
+               )
+      end
 
       view |> element(~s|[data-role="decision-apply"]|) |> render_click()
       panel_settled(view)

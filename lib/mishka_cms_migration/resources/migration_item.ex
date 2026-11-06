@@ -76,13 +76,14 @@ defmodule MishkaCmsMigration.MigrationItem do
   import write it without its parent while the parent has none, at the top level, and Wait for its
   parent (`"keep"`) takes that back. `:choose` answers the conflict its `conflict` argument names.
 
-  `:decide` answers one conflict with one choice on every item of a query it is open on, and leaves
-  the others as they are: what the Items page's Decisions panel runs for a whole group of what
-  waits (`:waiting_for_decision`, read grouped by `waiting_groups/3`, decided by
-  `decide_waiting/5`).
+  `:decide` answers one conflict with one choice on every item of a query that waits for that
+  decision (`waits_for_decision`, of that `waiting_conflict`), in one atomic update, and leaves the
+  others as they are: what the Items page's Decisions panel runs for a whole group of what waits
+  (`:waiting_for_decision`, read grouped by `waiting_groups/3`, decided by `decide_waiting/5`). It
+  checks once, not per item, that no run of the site is running.
 
   The master actions (`:master_leave_out`, `:master_bring_back`, `:master_choose`,
-  `:master_decide_keep`, `:master_decide_import`, `:master_decide`) do the same on any site.
+  `:master_decide_keep`, `:master_decide_import`) do the same on any site.
 
   A left-out item takes what hangs on it along (`MishkaCmsMigration.Workers.Helpers.Pipeline`): the
   items under it in the source, such as a category's categories, a page's pages and a comment's
@@ -833,13 +834,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
       pagination keyset?: true, required?: false
 
-      filter expr(
-               source_host == ^arg(:source_host) and not left_out and is_nil(mapped_id) and
-                 ((plan == :undecided and not is_nil(plan_reason)) or
-                    ((is_nil(plan) or plan in [:created, :updated]) and outcome == :undecided and
-                       not is_nil(reason))) and
-                 not fragment("jsonb_exists(?, ?)", decisions, waiting_conflict)
-             )
+      filter expr(source_host == ^arg(:source_host) and waits_for_decision)
 
       description "The items of a source host that wait for a decision no admin has made"
     end
@@ -1043,33 +1038,17 @@ defmodule MishkaCmsMigration.MigrationItem do
 
     update :decide do
       accept []
-      require_atomic? false
 
       argument :conflict, :string, allow_nil?: false
       argument :decision, :string, allow_nil?: false
 
       validate {TenantContext, require_master: false}
-      validate SiteIdle, before_action?: true
+      validate SiteIdle
 
+      change filter(expr(waits_for_decision and waiting_conflict == ^arg(:conflict)))
       change {Decided, bulk: true}
 
-      description "Answers one conflict with one choice on every item it is open on, leaving the rest"
-    end
-
-    update :master_decide do
-      accept []
-      multitenancy :bypass
-      require_atomic? false
-
-      argument :conflict, :string, allow_nil?: false
-      argument :decision, :string, allow_nil?: false
-
-      validate {TenantContext, require_master: true}
-      validate SiteIdle, before_action?: true
-
-      change {Decided, bulk: true}
-
-      description "Answers one conflict with one choice on items of any site (masters)"
+      description "Answers one conflict with one choice on every item that waits for it, in one update"
     end
 
     create :record_plan do
@@ -1334,6 +1313,20 @@ defmodule MishkaCmsMigration.MigrationItem do
       constraints items: [instance_of: __MODULE__]
 
       description "The items above the item at the source, the top one first, nil for one with no parent"
+    end
+
+    calculate :waits_for_decision,
+              :boolean,
+              expr(
+                not left_out and is_nil(mapped_id) and
+                  ((plan == :undecided and not is_nil(plan_reason)) or
+                     ((is_nil(plan) or plan in [:created, :updated]) and outcome == :undecided and
+                        not is_nil(reason))) and
+                  not fragment("jsonb_exists(?, ?)", decisions, waiting_conflict)
+              ) do
+      public? true
+
+      description "Whether the item waits for a decision no admin has made, as `undecided?/1` says it"
     end
 
     calculate :waiting_conflict,
@@ -1695,10 +1688,14 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   @doc """
   Answers `conflict` with `choice` on every item of `run`'s source host that waits for that
-  decision (`:waiting_for_decision`), as `user`, through `:decide` (`Ash.bulk_update/4`, each item
-  as `:choose` would answer it, and broadcast): those of `opts[:kinds]` alone when given, of the
-  ids `opts[:ids]` alone when given, and whose title holds `opts[:search]` or whose source id it is
-  when given. Answers how many it decided.
+  decision (`:waiting_for_decision`), as `user`, through `:decide` as one atomic update
+  (`Ash.bulk_update/4`, each item as `:choose` would answer it): those of `opts[:kinds]` alone
+  when given, of the ids `opts[:ids]` alone when given, and whose title holds `opts[:search]` or
+  whose source id it is when given. Answers how many it decided.
+
+  A few queries whatever the number of items: the check that no run of the site is running, and
+  the update, which answers the ids it changed. The items are not broadcast one by one: the caller
+  draws them again once, as the Items page does.
   """
   @spec decide_waiting(map(), map(), String.t(), String.t(), keyword()) ::
           {:ok, non_neg_integer()} | {:error, term()}
@@ -1712,13 +1709,14 @@ defmodule MishkaCmsMigration.MigrationItem do
       actor: user,
       tenant: run.site_id,
       bulk_options: [
-        strategy: :stream,
-        notify?: true,
+        strategy: :atomic,
+        notify?: false,
         return_records?: true,
+        select: [:id],
         return_errors?: true
       ]
     )
-    |> bulk_decided(conflict, choice)
+    |> bulk_decided()
   end
 
   defp waiting_query(run, user, search),
@@ -1757,14 +1755,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp grouped({:error, error}), do: {:error, error}
 
-  defp bulk_decided(%Ash.BulkResult{status: :success, records: records}, conflict, choice),
-    do: {:ok, Enum.count(records || [], &decided_as?(&1, conflict, choice))}
+  defp bulk_decided(%Ash.BulkResult{status: :success, records: records}),
+    do: {:ok, length(records || [])}
 
-  defp bulk_decided(%Ash.BulkResult{errors: errors}, _conflict, _choice),
+  defp bulk_decided(%Ash.BulkResult{errors: errors}),
     do: {:error, Ash.Error.to_error_class(errors)}
-
-  defp decided_as?(%{left_out: true}, _conflict, "leave_out"), do: true
-  defp decided_as?(%{decisions: decisions}, conflict, choice), do: decisions[conflict] == choice
 
   @doc "Every plan as a `{words, plan}` pair, in the order the report counts outcomes."
   @spec plan_options() :: [{String.t(), atom()}]

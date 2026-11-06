@@ -19,25 +19,33 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
   wait for it and of which kinds ("1,668 items: 120 pages, 1,400 posts…"), and its choices in
   words, the recommended one first and marked so (`MishkaCmsMigration.MigrationItem.choice_options/1`).
   A choice asks first, "Answer 1,668 items with “Import it in the site's main language”? …", then
-  decides them all (`MishkaCmsMigration.MigrationItem.decide_waiting/5`); a flash says how many.
-  Show them narrows the table to what waits for a decision (the Plan filter).
+  decides them all (`MishkaCmsMigration.MigrationItem.decide_waiting/5`, one update whatever their
+  number); a flash says how many, and the page is told once (`:items_decided`) to draw the rows
+  again. Show them narrows the table to what waits for a decision (the Plan filter).
 
   ## Advanced
 
   One rule for each kind and conflict, each with its own choice and a switch to include it, and an
   optional text that narrows every rule to the items whose title holds it, or whose source id it
-  is. Preview counts reads, in one query, how many items each rule would decide; Apply asks first,
-  then decides each included rule's items with its choice.
+  is. Preview counts reads, in one query, how many items each rule would decide, and shows the
+  rules that are on alone, each with its count, and their total; a rule that is off says so. Apply
+  asks first, then decides each included rule's items with its choice.
 
   A decision holds for every later dry run and import and imports nothing: the panel's foot says
   that the next import writes them, parents before their children. Every decision runs as the
   signed-in admin, on the run's site, under the items' own policies and their check that no run of
   the site is running (`MishkaCmsMigration.Resources.Validations.SiteIdle`); one refused is said in
-  a flash.
+  a flash. While the run's own dry run or import runs, the choices are disabled and the panel says
+  why. A button that asks first is disabled while its event is in flight, so a second click never
+  asks twice. Once nothing waits any more, the panel says so in one line.
+
+  `choice/1` draws a choice as this panel does, the recommended one starred, marked so and in the
+  primary style, for Where it sits (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch`) too.
 
   Every part carries a `data-role` (`decisions`, `decision-group` with `data-conflict`,
   `decision-choice` with `data-choice` and `data-recommended`, `decision-rule` with `data-key`,
-  `decision-preview`, `decision-apply`), so a test reads it without reading its markup.
+  `decision-preview`, `decision-preview-rule`, `decision-apply`, `decisions-busy`,
+  `decisions-done`), so a test reads it without reading its markup.
   """
 
   use Phoenix.LiveComponent
@@ -56,6 +64,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
       {:ok,
        assign(socket,
          groups: nil,
+         seen?: false,
          reading?: false,
          stale?: false,
          applying?: false,
@@ -106,13 +115,18 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
 
   @impl true
   def handle_async(:groups, {:ok, {:ok, groups}}, socket),
-    do: {:noreply, socket |> assign(groups: groups, reading?: false) |> read_again()}
+    do:
+      {:noreply,
+       socket
+       |> assign(groups: groups, reading?: false, seen?: socket.assigns.seen? or groups != [])
+       |> read_again()}
 
   def handle_async(:groups, _failed, socket),
     do: {:noreply, socket |> assign(reading?: false) |> read_again()}
 
   def handle_async(:apply, {:ok, result}, socket) do
     send(self(), {:put_flash, flash_kind(result), applied_words(result)})
+    send(self(), :items_decided)
     {:noreply, socket |> assign(applying?: false, stale?: false, preview: nil) |> read()}
   end
 
@@ -121,16 +135,56 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
     {:noreply, socket |> assign(applying?: false, stale?: false) |> read()}
   end
 
+  attr :recommended, :boolean, default: false, doc: "the conflict's recommended choice"
+  attr :size, :atom, default: :normal, values: [:normal, :small]
+  attr :rest, :global, include: ~w(disabled)
+  slot :inner_block, required: true
+
+  @doc """
+  A choice of a decision as a button, the recommended one first starred, marked "(recommended)" and
+  in the primary style, the others in the secondary one; `size: :small` for a choice beside an item,
+  as Where it sits draws them. Its `data-recommended` says which it is.
+  """
+  def choice(assigns) do
+    ~H"""
+    <button
+      type="button"
+      data-recommended={if(@recommended, do: "true", else: "false")}
+      class={choice_class(@recommended, @size)}
+      {@rest}
+    >
+      <MishkaCmsCore.CoreComponents.icon
+        :if={@recommended}
+        name="hero-star"
+        class={if(@size == :small, do: "size-[11px]", else: "size-[13px]")}
+      />
+      {render_slot(@inner_block)}
+      <span :if={@recommended} class="text-[10.5px] font-semibold opacity-80">
+        {gettext("(recommended)")}
+      </span>
+    </button>
+    """
+  end
+
   @impl true
   def render(assigns) do
     assigns =
       assign(assigns,
         conflicts: conflicts(assigns.groups),
-        total: Enum.sum(Enum.map(assigns.groups || [], & &1.count))
+        total: Enum.sum(Enum.map(assigns.groups || [], & &1.count)),
+        busy?: assigns.run.status in [:dry_running, :importing]
       )
 
     ~H"""
     <div id={@id}>
+      <p
+        :if={@total == 0 and @seen? and @groups != nil}
+        data-role="decisions-done"
+        class="mb-[22px] flex items-center gap-2 rounded-[12px] border border-[#ecebe6] bg-white px-4 py-3 text-[12.5px] font-semibold text-[#177a53]"
+      >
+        <MishkaCmsCore.CoreComponents.icon name="hero-check-circle" class="size-[15px]" />
+        {gettext("Nothing needs your decision now.")}
+      </p>
       <section
         :if={@total > 0}
         data-role="decisions"
@@ -183,7 +237,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
           data-role="decisions-applying"
           class="m-0 mt-3 text-[12.5px] font-semibold text-[#5b57d6]"
         >
-          {gettext("Deciding… The rows change as each item is decided.")}
+          {gettext("Deciding… The rows are drawn again once every item is decided.")}
+        </p>
+        <p
+          :if={@busy?}
+          data-role="decisions-busy"
+          class="m-0 mt-3 text-[12.5px] font-semibold text-[#8a5a00]"
+        >
+          {gettext("A dry run or an import of this run is running. Decide once it is done.")}
         </p>
 
         <div :if={@mode == :simple} class="mt-3 grid gap-2">
@@ -203,33 +264,24 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
               )}
             </p>
             <div class="mt-2.5 flex flex-wrap items-center gap-2">
-              <button
+              <.choice
                 :for={
                   {{word, choice}, index} <-
                     Enum.with_index(MigrationItem.choice_options(group.conflict))
                 }
-                type="button"
+                recommended={index == 0}
                 data-role="decision-choice"
                 data-choice={choice}
-                data-recommended={index == 0 && "true"}
-                disabled={@applying?}
+                disabled={@applying? or @busy?}
                 phx-click="decide_group"
                 phx-value-conflict={group.conflict}
                 phx-value-choice={choice}
                 phx-target={@myself}
+                phx-disable-with=""
                 data-confirm={confirm_words(group.count, word)}
-                class={choice_class(index == 0)}
               >
-                <MishkaCmsCore.CoreComponents.icon
-                  :if={index == 0}
-                  name="hero-star"
-                  class="size-[13px]"
-                />
                 {word}
-                <span :if={index == 0} class="text-[10.5px] font-semibold opacity-80">
-                  {gettext("(recommended)")}
-                </span>
-              </button>
+              </.choice>
               <button
                 type="button"
                 data-role="decision-show"
@@ -274,7 +326,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
               />
               <div class="min-w-0">
                 <div class="text-[12.5px] font-bold text-[#1b1a18]">
-                  {MigrationRun.kind_label(group.kind)} · {counted_now(@preview, group)}
+                  {MigrationRun.kind_label(group.kind)} · {counted_now(@preview, @rules, group)}
                 </div>
                 <div class="truncate text-[11.5px] font-medium text-[#7c7a75]">
                   {MigrationRun.reason_label(group.conflict, group.kind)}
@@ -288,18 +340,34 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
               />
             </div>
           </div>
-          <p
+          <div
             :if={@preview}
             data-role="decision-preview"
             data-count={previewed(@preview, @groups, @rules)}
-            class="m-0 text-[12.5px] font-semibold text-[#3a382f]"
+            class="grid gap-1 rounded-[10px] border border-[#e4e3f8] bg-[#f7f7fd] px-3 py-2"
           >
-            {ngettext(
-              "These rules decide %{count} item.",
-              "These rules decide %{count} items.",
-              previewed(@preview, @groups, @rules)
-            )}
-          </p>
+            <p class="m-0 text-[12.5px] font-semibold text-[#3a382f]">
+              {ngettext(
+                "These rules decide %{count} item.",
+                "These rules decide %{count} items.",
+                previewed(@preview, @groups, @rules)
+              )}
+            </p>
+            <ul class="m-0 grid list-none gap-0.5 p-0">
+              <li
+                :for={group <- Enum.filter(@groups, &rule(@rules, &1).on)}
+                data-role="decision-preview-rule"
+                data-key={key(group)}
+                data-count={Map.get(@preview, key(group), 0)}
+                class="text-[12px] font-medium text-[#5c5a54]"
+              >
+                {MigrationRun.kind_label(group.kind)} · {MigrationRun.reason_label(
+                  group.conflict,
+                  group.kind
+                )}: {kind_count(group.kind, Map.get(@preview, key(group), 0))}
+              </li>
+            </ul>
+          </div>
           <div class="flex flex-wrap items-center gap-2">
             <button
               type="submit"
@@ -311,9 +379,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
             <button
               type="button"
               data-role="decision-apply"
-              disabled={@applying?}
+              disabled={@applying? or @busy?}
               phx-click="apply_rules"
               phx-target={@myself}
+              phx-disable-with=""
               data-confirm={
                 gettext(
                   "Decide the items of every rule that is on, each with its choice? It holds for every later dry run and import."
@@ -399,8 +468,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
   defp kind_count(kind, 1), do: "1 " <> MigrationRun.kind_one(kind)
   defp kind_count(kind, count), do: "#{count} " <> MigrationRun.kind_nouns([kind])
 
-  defp counted_now(nil, group), do: kind_count(group.kind, group.count)
-  defp counted_now(preview, group), do: kind_count(group.kind, Map.get(preview, key(group), 0))
+  defp counted_now(nil, _rules, group), do: kind_count(group.kind, group.count)
+
+  defp counted_now(preview, rules, group),
+    do: rules |> rule(group) |> Map.fetch!(:on) |> previewed_count(preview, group)
+
+  defp previewed_count(true, preview, group),
+    do: kind_count(group.kind, Map.get(preview, key(group), 0))
+
+  defp previewed_count(false, _preview, _group), do: gettext("off, not counted")
 
   defp previewed(preview, groups, rules),
     do:
@@ -469,11 +545,19 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
     socket
   end
 
-  defp choice_class(true),
+  defp choice_class(true, :normal),
     do:
       "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] bg-[#5b57d6] px-3 text-[12px] font-bold text-white transition-colors hover:bg-[#4f4bcc] disabled:opacity-50"
 
-  defp choice_class(false),
+  defp choice_class(false, :normal),
     do:
       "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] border border-[#ecebe6] bg-white px-3 text-[12px] font-bold text-[#3a382f] transition-colors hover:bg-[#f7f6f3] disabled:opacity-50"
+
+  defp choice_class(true, :small),
+    do:
+      "inline-flex h-[26px] items-center gap-1 rounded-[8px] bg-[#5b57d6] px-2.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-[#4f4bcc] disabled:opacity-50"
+
+  defp choice_class(false, :small),
+    do:
+      "inline-flex h-[26px] items-center rounded-[8px] border border-[#ecebe6] bg-white px-2.5 text-[11.5px] font-semibold text-[#3a382f] transition-colors hover:border-[#c3c1f0] hover:bg-[#f4f3fd] disabled:opacity-50"
 end
