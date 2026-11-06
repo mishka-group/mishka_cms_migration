@@ -4,3 +4,6 @@
 
 # The application password and the admin login that seed.sh generates. Local only.
 .env.local
+
+# The trial site's application password and admin login (trial.sh). Local only.
+.env.trial

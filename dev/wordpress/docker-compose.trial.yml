@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Overlay for a second, trial WordPress on http://localhost:8090, beside the 8089 one. Own project, own volumes.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.trial.yml up -d --wait
+#   ./trial.sh                       does this and seeds everything (COMPOSE_FILE is set by the script)
+
+name: mishka-wordpress-trial
+
+services:
+  wordpress:
+    ports: !override
+      - "127.0.0.1:8090:80"
+    environment:
+      WORDPRESS_CONFIG_EXTRA: |
+        define( 'WP_HOME', 'http://localhost:8090' );
+        define( 'WP_SITEURL', 'http://localhost:8090' );
+        define( 'WP_ENVIRONMENT_TYPE', 'local' );
+        define( 'DISABLE_WP_CRON', true );
+        define( 'AUTOMATIC_UPDATER_DISABLED', true );
+        define( 'DISALLOW_FILE_EDIT', true );
+
+  wp-cli:
+    environment:
+      WP_SITE_URL: http://localhost:8090
+      WP_ENV_FILE: .env.trial
+      WP_CLI_CONFIG_PATH: /seed/wp-cli.trial.yml
