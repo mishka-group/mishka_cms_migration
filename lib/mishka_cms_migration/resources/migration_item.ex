@@ -174,6 +174,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
   alias MishkaCmsMigration.Targets.Helpers.Read
   alias MishkaCmsMigration.Workers.Helpers.Needs
+  alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.Events.{BulkActionHooks, BulkActionResult}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
@@ -690,6 +691,27 @@ defmodule MishkaCmsMigration.MigrationItem do
                                fn summary, _state, socket ->
                                  MishkaCmsMigration.MigrationItem.chosen(summary, socket)
                                end
+
+        on_bulk_action_error [:leave_out, :bring_back, :decide_keep, :decide_import],
+                             fn summary, _state, socket ->
+                               MishkaCmsMigration.MigrationItem.refused_bulk(summary, socket)
+                             end
+
+        on_row_action_error :leave_out, fn reason, _state, socket ->
+          MishkaCmsMigration.MigrationItem.refused(:leave_out, reason, socket)
+        end
+
+        on_row_action_error :bring_back, fn reason, _state, socket ->
+          MishkaCmsMigration.MigrationItem.refused(:bring_back, reason, socket)
+        end
+
+        on_row_action_error :decide_keep, fn reason, _state, socket ->
+          MishkaCmsMigration.MigrationItem.refused(:decide_keep, reason, socket)
+        end
+
+        on_row_action_error :decide_import, fn reason, _state, socket ->
+          MishkaCmsMigration.MigrationItem.refused(:decide_import, reason, socket)
+        end
       end
 
       realtime do
@@ -1653,6 +1675,45 @@ defmodule MishkaCmsMigration.MigrationItem do
   end
 
   def unmapped(changeset, _context), do: changeset
+
+  @doc """
+  What the Items table says when a row's Leave out, Bring back, Keep the site as it is or Import
+  anyway (Gervaz's `on_row_action_error`) is refused only because a dry run or an import of the
+  site is running (`MishkaCmsMigration.MigrationRun.refused_while_running?/1`): an info notice,
+  "Not done. …" or "Not decided. …", in place of Gervaz's "… failed", answered `{:halt, socket}` so
+  Gervaz puts none. Any other error is left to Gervaz.
+  """
+  @spec refused(atom(), term(), Phoenix.LiveView.Socket.t()) ::
+          Phoenix.LiveView.Socket.t() | {:halt, Phoenix.LiveView.Socket.t()}
+  def refused(action, reason, socket) do
+    case MigrationRun.refused_while_running?(reason) do
+      true ->
+        words = not_done_words(action, Errors.extract_error_message(reason, MigrationRun))
+        {:halt, BulkActionHooks.put_flash(socket, :info, words)}
+
+      false ->
+        socket
+    end
+  end
+
+  @doc """
+  `refused/3` for the bulk actions (`on_bulk_action_error`): every error of `summary` must be that
+  refusal for the notice to replace Gervaz's flash.
+  """
+  @spec refused_bulk(BulkActionResult.t(), Phoenix.LiveView.Socket.t()) ::
+          Phoenix.LiveView.Socket.t() | {:halt, Phoenix.LiveView.Socket.t()}
+  def refused_bulk(
+        %BulkActionResult{action_name: action, failed_errors: [_ | _] = errors},
+        socket
+      ),
+      do: refused(action, Ash.Error.to_error_class(errors), socket)
+
+  def refused_bulk(_summary, socket), do: socket
+
+  defp not_done_words(action, why) when action in [:decide_keep, :decide_import, :decide],
+    do: dgettext("mishka_gervaz", "Not decided. %{why}", why: why)
+
+  defp not_done_words(_action, why), do: dgettext("mishka_gervaz", "Not done. %{why}", why: why)
 
   @doc """
   What the Items table says after its bulk Leave out, Bring back, Keep the site as it is or Import

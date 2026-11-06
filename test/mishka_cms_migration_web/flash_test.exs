@@ -38,6 +38,15 @@ defmodule MishkaCmsMigrationWeb.FlashTest do
     end
   end
 
+  describe "a choice refused for another reason than a running job" do
+    test "is left to Gervaz's own failure flash" do
+      socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
+
+      assert MigrationItem.refused(:leave_out, %RuntimeError{message: "boom"}, socket) == socket
+      assert MigrationItem.refused_bulk(%{failed_errors: []}, socket) == socket
+    end
+  end
+
   describe "the one flash for several items" do
     defp item(id, outcome, reason \\ nil),
       do: %MigrationItem{

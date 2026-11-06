@@ -522,13 +522,31 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
       )
 
   defp flash_kind({:ok, _count}), do: :success
+
+  defp flash_kind({:error, error, count}),
+    do: error |> MigrationRun.refused_while_running?() |> flash_kind(count)
+
   defp flash_kind(_error), do: :error
+
+  defp flash_kind(true, 0), do: :info
+  defp flash_kind(true, _some), do: :warning
+  defp flash_kind(false, _count), do: :error
 
   defp applied_words({:ok, count}),
     do: ngettext("%{count} item decided.", "%{count} items decided.", count)
 
+  defp applied_words({:error, error, 0}) do
+    case MigrationRun.refused_while_running?(error) do
+      true -> not_decided_words(error)
+      false -> applied_words({:ok, 0}) <> " " <> error_words(error)
+    end
+  end
+
   defp applied_words({:error, error, count}),
     do: applied_words({:ok, count}) <> " " <> error_words(error)
+
+  defp not_decided_words(error),
+    do: gettext("Not decided. %{why}", why: Errors.extract_error_message(error, MigrationRun))
 
   defp error_words(error),
     do:
@@ -541,7 +559,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
       )
 
   defp refused(socket, error) do
-    send(self(), {:put_flash, :error, error_words(error)})
+    case MigrationRun.refused_while_running?(error) do
+      true -> send(self(), {:put_flash, :info, not_decided_words(error)})
+      false -> send(self(), {:put_flash, :error, error_words(error)})
+    end
+
     socket
   end
 

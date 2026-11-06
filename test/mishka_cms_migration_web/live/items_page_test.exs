@@ -751,8 +751,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
       assert row_action!(view, "leave_out", tag) =~ "is running"
+      assert has_element?(view, "#flash-info", "Not done.")
+      refute has_element?(view, "#flash-error")
+      Admin.clear_flashes(view)
+
       pick!(view, tag)
       assert bulk!(view, "leave_out") =~ "is running"
+      assert has_element?(view, "#flash-info", "Not done.")
+      refute has_element?(view, "#flash-error")
 
       assert %{left_out: false} = item!(tag)
       assert plan_of(view, tag) == "created"
