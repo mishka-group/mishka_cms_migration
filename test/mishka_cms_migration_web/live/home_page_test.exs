@@ -220,6 +220,18 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       refute has_element?(view, ~s|[data-role="migration-no-source"]|)
     end
 
+    test "keep New import on one line beside a long source name", %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+      button = ~s|[data-source="wordpress_file"] [data-role="migration-new-run"]|
+
+      assert has_element?(view, button <> ".whitespace-nowrap.shrink-0")
+
+      assert has_element?(
+               view,
+               ~s|[data-source="wordpress_file"] [data-role="migration-source-name"].min-w-0|
+             )
+    end
+
     test "show WordPress and its export file, each with its own New import", %{
       conn: conn,
       site: site
@@ -413,7 +425,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       new_import!(view)
       html = submit!(view, %{"url" => "", "user" => ""}, "")
 
-      assert length(String.split(html, "Pick the site the content moves to.")) == 2
+      assert length(String.split(html, "Pick a site.")) == 2
       refute html =~ "is required"
       refute html =~ "must be present"
     end
@@ -936,7 +948,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert shown_step(view) == "from"
 
       for refusal <- [
-            "Pick the site the content moves to.",
+            "Pick a site.",
             "Enter the address.",
             "Enter the user.",
             "Enter the application password."
@@ -960,7 +972,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       searched!(view, "site-b", %{"connection" => @connection})
 
       assert has_element?(view, ~s|#{@modal} input[name="site_id"][value="#{site_b.id}"]|)
-      refute render(view) =~ "Pick the site the content moves to."
+      refute render(view) =~ "Pick a site."
 
       finish!(view, %{"connection" => @connection})
 
@@ -1908,6 +1920,34 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert reason.("post") |> LazyHTML.attribute("data-outcome") == ["failed"]
       assert reason.("post") |> LazyHTML.attribute("data-count") == ["2"]
       assert reason.("post") |> LazyHTML.text() =~ "2 failed: Timed out"
+    end
+
+    test "a dry run that would bring files says duplicate files are found only by the import",
+         %{site: site, admin: admin} do
+      report = fn entries ->
+        entries |> Enum.reduce(Report.new(), &Report.add(&2, &1)) |> Report.done()
+      end
+
+      files = [
+        Report.entry("media", "1", "Hero", :created, "same_file_checked_at_download"),
+        Report.entry("redirect", "2", "Old", :created, nil)
+      ]
+
+      no_files = [Report.entry("redirect", "2", "Old", :created, nil)]
+      run = create_run!(site, admin, %{})
+      panel = fn run -> render_component(&RunDetails.panel/1, run: run) end
+
+      shown? = fn status, entries ->
+        %{run | status: status, report: report.(entries)}
+        |> panel.()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query(~s|[data-role="run-details-duplicate-files"]|)
+        |> Enum.any?()
+      end
+
+      assert shown?.(:dry_run, files)
+      refute shown?.(:dry_run, no_files)
+      refute shown?.(:done, files)
     end
 
     test "shows an import that is done as the import's, with what it wrote", %{

@@ -363,7 +363,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   @site_settings %{"title" => :site_title, "logo" => :site_logo, "icon" => :site_icon}
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
-  @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
+  @pick_site dgettext_noop("errors", "Pick a site.")
   @type_address dgettext_noop("errors", "Type the site's address, such as https://example.com.")
   @busy dgettext_noop(
           "errors",
@@ -2473,14 +2473,24 @@ defmodule MishkaCmsMigration.MigrationRun do
   @doc """
   Why an item was skipped or failed, or what was written otherwise than the source has it (a
   `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it, each of its parts (joined by
-  `"; "`) in words. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  `"; "`) in words, as one sentence: a part after the first starts in lower case, unless it starts
+  with an abbreviation such as URL. A plugin's own reason, and what a source or the CMS answered,
+  read as they are.
   Given the item's `kind`, a reason about the item itself names it: `"deleted_in_cms"` reads "This
   page was deleted in Mishka CMS after it was imported", and without a kind, as a run's summary of
   items of every kind reads it, "Deleted in Mishka CMS after it was imported".
   """
   @spec reason_label(String.t(), String.t() | nil) :: String.t()
-  def reason_label(reason, kind \\ nil),
-    do: reason |> String.split("; ") |> Enum.map_join("; ", &said(&1, kind))
+  def reason_label(reason, kind \\ nil) do
+    [first | rest] = reason |> String.split("; ") |> Enum.map(&said(&1, kind))
+    Enum.join([first | Enum.map(rest, &lower_first/1)], "; ")
+  end
+
+  defp lower_first(<<first::utf8, second::utf8, _rest::binary>> = text)
+       when first in ?A..?Z and second not in ?A..?Z,
+       do: String.downcase(<<first::utf8>>) <> binary_part(text, 1, byte_size(text) - 1)
+
+  defp lower_first(text), do: text
 
   @doc """
   What makes the links an import writes differ from the source's addresses

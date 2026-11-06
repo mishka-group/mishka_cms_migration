@@ -69,7 +69,7 @@ defmodule MishkaCmsMigration.ReportTest do
 
   test "an entry's reason reads in words, each of its parts, and a reason of the CMS as it is" do
     assert MigrationRun.reason_label("draft_from_pending; unconverted: acme/callout, gallery") ==
-             "Pending review at the source, so a draft; Kept as text: acme/callout, gallery"
+             "Pending review at the source, so a draft; kept as text: acme/callout, gallery"
 
     assert MigrationRun.reason_label("draft_from_password") ==
              "Password-protected at the source, so a draft"

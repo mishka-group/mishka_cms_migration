@@ -24,6 +24,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     * The latest items, the report's last entries newest first, each with links to its CMS record
       when it has one (`item_paths/2`, `MishkaCmsMigration.MigrationRun.record_links/1`), and how
       many more it counted, which opens the run's Items page.
+    * After a dry run that would bring files, a note that duplicate files are found only by the
+      import, which downloads them (`MishkaCmsMigration.Targets.CmsMedia`), so one may ask for a
+      decision then that the dry run did not show.
     * When the links an import writes may not match the site's language addresses, the warning that
       says so (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.LanguageNotice`), under the head, and,
       when an import created users, the warning that their passwords cannot be carried over
@@ -103,6 +106,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         <.alert type={:warning} icon="hero-exclamation-triangle">
           <p class="m-0">
             {MigrationRun.cancelled_words(Source.file?(@run.source))}
+          </p>
+        </.alert>
+      </div>
+      <div :if={files_to_check?(@run, @report)} data-role="run-details-duplicate-files">
+        <.alert type={:info} icon="hero-document-duplicate">
+          <p class="m-0">
+            {gettext(
+              "Duplicate files are found only when importing. A file that is a copy of another then asks for your decision."
+            )}
           </p>
         </.alert>
       </div>
@@ -695,6 +707,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp shown_report(%MigrationRun{status: status}) when status in @running, do: nil
   defp shown_report(%MigrationRun{report: %{counts: _counts} = report}), do: report
   defp shown_report(_no_report), do: nil
+
+  defp files_to_check?(run, %{kinds: kinds}),
+    do: step(run) == :dry_run and Enum.any?(kinds, &(&1.kind == "media" and &1.created > 0))
+
+  defp files_to_check?(_run, _report), do: false
 
   defp step(%MigrationRun{status: status}) when status in [:importing, :done], do: :import
   defp step(%MigrationRun{status: :dry_running}), do: :dry_run

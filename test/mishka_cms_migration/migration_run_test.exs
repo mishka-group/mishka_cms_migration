@@ -291,7 +291,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert :connection in fields
       refute :source_host in fields
       assert [site_error] = Enum.filter(errors, &(Map.get(&1, :field) == :site_id))
-      assert site_error.message =~ "Pick the site"
+      assert site_error.message =~ "Pick a site"
     end
 
     test "for a master, on the site the master names", %{site: site} do
