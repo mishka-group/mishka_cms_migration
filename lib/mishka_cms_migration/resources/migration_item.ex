@@ -482,7 +482,12 @@ defmodule MishkaCmsMigration.MigrationItem do
         end
 
         filter :plan, :select do
+          virtual true
           options fn -> MishkaCmsMigration.MigrationItem.plan_options() end
+
+          apply fn query, value, _assigns ->
+            MishkaCmsMigration.MigrationItem.planned_as(query, value)
+          end
 
           ui do
             prompt dgettext_noop("mishka_gervaz", "Any plan")
@@ -1371,6 +1376,19 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "Whether the item waits for a decision no admin has made, as `undecided?/1` says it"
     end
 
+    calculate :decided_waiting,
+              :boolean,
+              expr(
+                not left_out and is_nil(mapped_id) and
+                  ((plan == :undecided and not is_nil(plan_reason)) or
+                     (is_nil(plan) and outcome == :undecided and not is_nil(reason))) and
+                  fragment("jsonb_exists(?, ?)", decisions, waiting_conflict)
+              ) do
+      public? true
+
+      description "Whether the item waits on a conflict an admin has answered, as its Plan cell says Decided"
+    end
+
     calculate :waiting_conflict,
               :string,
               expr(
@@ -1815,8 +1833,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   when given, of the ids `opts[:ids]` alone when given, and whose title holds `opts[:search]` or
   whose source id it is when given. Answers how many it decided.
 
-  A few queries whatever the number of items: the check that no run of the site is running, and
-  the update, which answers the ids it changed. The items are not broadcast one by one: the caller
+  A few queries whatever the number of items: the check that no run of the site is running, the
+  update, which answers the ids it changed, and one update of the source host's runs
+  (`MishkaCmsMigration.MigrationRun.refresh_decisions/2`), so their Result chips are drawn again. The items are not broadcast one by one: the caller
   draws them again once, as the Items page does.
   """
   @spec decide_waiting(map(), map(), String.t(), String.t(), keyword()) ::
@@ -1839,7 +1858,15 @@ defmodule MishkaCmsMigration.MigrationItem do
       ]
     )
     |> bulk_decided()
+    |> refreshed(run, user)
   end
+
+  defp refreshed({:ok, _count} = decided, run, user) do
+    MigrationRun.refresh_decisions(run, user)
+    decided
+  end
+
+  defp refreshed(failed, _run, _user), do: failed
 
   defp waiting_query(run, user, search),
     do:
@@ -1883,9 +1910,31 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp bulk_decided(%Ash.BulkResult{errors: errors}),
     do: {:error, Ash.Error.to_error_class(errors)}
 
-  @doc "Every plan as a `{words, plan}` pair, in the order the report counts outcomes."
+  @doc """
+  Every plan as a `{words, plan}` pair, in the order the report counts outcomes, then Decided: the
+  items whose waiting decision an admin answered (`decided_waiting`), which the Plan cell reads as
+  Decided although the stored plan is still `:undecided`.
+  """
   @spec plan_options() :: [{String.t(), atom()}]
-  def plan_options, do: Enum.map(@outcomes, &{plan_word(&1), &1})
+  def plan_options,
+    do:
+      Enum.map(@outcomes, &{plan_word(&1), &1}) ++
+        [{dgettext("mishka_gervaz", "Decided"), :decided}]
+
+  @doc """
+  The Plan filter: `query` narrowed to the items of the plan `value` names, or, for `"decided"`, to
+  those whose waiting decision an admin answered. No value leaves `query` as it is.
+  """
+  @spec planned_as(Ash.Query.t(), term()) :: Ash.Query.t()
+  def planned_as(query, value) when value in [nil, ""], do: query
+
+  def planned_as(query, value) when value in [:decided, "decided"],
+    do: Ash.Query.filter(query, decided_waiting)
+
+  def planned_as(query, value) do
+    plan = Enum.find(@outcomes, &(Atom.to_string(&1) == to_string(value)))
+    Ash.Query.filter(query, plan == ^plan)
+  end
 
   defp pill(assigns) do
     assigns =

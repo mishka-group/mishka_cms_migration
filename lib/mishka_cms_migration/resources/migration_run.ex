@@ -236,6 +236,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   use Gettext, backend: MishkaCmsCore.Gettext
 
+  require Ash.Query
+
   import Phoenix.Component, only: [sigil_H: 2]
   import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
@@ -253,6 +255,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     SourceFile
   }
 
+  alias MishkaCmsMigration.Resources.Calculations.Decisions
   alias MishkaCmsMigration.Resources.Validations.{Connectable, SiteIdle, SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps
@@ -477,7 +480,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       source do
         preload do
-          always [:site]
+          always [:site, :decisions]
         end
       end
 
@@ -594,7 +597,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
         column :result do
           static true
-          requires [:status, :source, :report, :progress]
+          requires [:status, :source, :report, :progress, :decisions]
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
@@ -1304,6 +1307,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       description "System-internal: saves the report a job of picked items merged and puts the run back"
     end
 
+    update :refresh_decisions do
+      accept []
+      change atomic_update(:updated_at, expr(now()))
+
+      validate {TenantContext, require_master: false}
+
+      description "Tells the runs of a source host that its items' decisions changed, so the Runs table draws their Result again"
+    end
+
     update :cancel do
       accept []
 
@@ -1543,6 +1555,14 @@ defmodule MishkaCmsMigration.MigrationRun do
       destination_attribute :run_id
       public? true
       description "The items this run's import was the last to touch"
+    end
+  end
+
+  calculations do
+    calculate :decisions, :map, Decisions do
+      public? true
+
+      description "What waits for a decision now and what an admin decided among the items of the run's source host"
     end
   end
 
@@ -1814,6 +1834,29 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon(_other), do: "hero-cube"
 
   @doc """
+  Tells the runs of `run`'s source host on its site, as `user`, that the decisions on their items
+  changed (`:refresh_decisions`): one `UPDATE` of those runs, whose broadcast makes the Runs table
+  draw their Result chips again, with what waits for a decision and what was decided now
+  (`decisions` calculation). `:ok` also when no run could be told.
+  """
+  @spec refresh_decisions(map(), map()) :: :ok
+  def refresh_decisions(%{source_host: host, site_id: site_id}, user) do
+    __MODULE__
+    |> Ash.Query.filter(source_host == ^host)
+    |> Ash.bulk_update(:refresh_decisions, %{},
+      actor: user,
+      tenant: site_id,
+      strategy: :atomic,
+      notify?: true,
+      return_records?: true,
+      return_errors?: true,
+      load: [:decisions]
+    )
+
+    :ok
+  end
+
+  @doc """
   The Runs table's Result cell for `run`, drawn in the width its column gives it: its pills and
   chips wrap onto more lines rather than widen the column.
 
@@ -1830,10 +1873,14 @@ defmodule MishkaCmsMigration.MigrationRun do
       tooltip the kind in words (`kind_label/1`). "Nothing to move" when it counted nothing, and "—" before the first
       dry run.
 
+  The waiting pill counts what waits for a decision now (`decisions`), not what the dry run
+  counted, so it reads 0 once the admin decided everything; a Decided chip (`hero-check`) beside it
+  counts the items whose waiting decision the admin answered, and is not drawn while there are none.
+
   The data the page's tests read: `data-role="run-result"` on the cell, `"run-progress"` (with
   `data-kind`, `data-done` and `data-total`), `"run-outcome"` (`data-outcome`, `data-count` and
-  `data-reason`, the shared reason as the report keeps it) and `"run-kind"` (`data-kind`,
-  `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
+  `data-reason`, the shared reason as the report keeps it), `"run-decided"` (`data-count`) and
+  `"run-kind"` (`data-kind`, `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
   needs no `style` attribute.
   """
   @spec result_cell(map()) :: Phoenix.LiveView.Rendered.t()
@@ -1889,6 +1936,17 @@ defmodule MishkaCmsMigration.MigrationRun do
           {outcome.number}<span class="sr-only">{"\u00a0" <> outcome.label}</span>
         </span>
       </div>
+      <div :if={@decided} class="flex flex-wrap gap-[4px]">
+        <span
+          data-role="run-decided"
+          data-count={@decided.count}
+          title={@decided.title}
+          class="inline-flex items-center gap-[3px] rounded-[20px] bg-[#eeedfb] px-[6px] py-[2px] text-[10px] font-bold whitespace-nowrap text-[#5b57d6]"
+        >
+          <MishkaCmsCore.CoreComponents.icon name="hero-check" class="size-[10px] flex-none" />
+          {@decided.number}<span class="sr-only">{"\u00a0" <> @decided.label}</span>
+        </span>
+      </div>
       <div :if={@kinds != []} class="flex flex-wrap gap-[3px]">
         <span
           :for={kind <- @kinds}
@@ -1908,12 +1966,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   defp result(%{status: status} = run) when status in [:dry_running, :importing],
-    do: %{progress: progress(run), outcomes: [], kinds: [], note: nil}
+    do: %{progress: progress(run), outcomes: [], decided: nil, kinds: [], note: nil}
 
-  defp result(%{report: %{kinds: kinds} = report}) do
+  defp result(%{report: %{kinds: kinds} = report} = run) do
+    decisions = decisions(run)
+
     outcomes =
       for {outcome, count} <- result_outcomes(report),
-          do: outcome_pill(outcome, count, shared_reason(report, outcome))
+          count = waiting_now(outcome, count, decisions),
+          do: outcome_pill(outcome, count, shared_reason(report, outcome, count))
 
     chips =
       for %{kind: kind} = kind_counts <- kinds,
@@ -1921,10 +1982,38 @@ defmodule MishkaCmsMigration.MigrationRun do
           count > 0,
           do: kind_chip(kind, count)
 
-    %{progress: nil, outcomes: outcomes, kinds: chips, note: nothing_to_move(outcomes)}
+    %{
+      progress: nil,
+      outcomes: outcomes,
+      decided: decided_chip(decisions),
+      kinds: chips,
+      note: nothing_to_move(outcomes)
+    }
   end
 
-  defp result(_no_report), do: %{progress: nil, outcomes: [], kinds: [], note: "—"}
+  defp result(_no_report),
+    do: %{progress: nil, outcomes: [], decided: nil, kinds: [], note: "—"}
+
+  defp decisions(%{decisions: %{waiting: _waiting, decided: _decided} = decisions}),
+    do: decisions
+
+  defp decisions(_not_loaded), do: nil
+
+  defp waiting_now(:undecided, _reported, %{waiting: waiting}), do: waiting
+  defp waiting_now(_outcome, count, _decisions), do: count
+
+  defp decided_chip(%{decided: decided}) when decided > 0 do
+    number = MishkaCmsCore.Localized.number(decided)
+
+    %{
+      count: decided,
+      number: number,
+      label: dgettext("mishka_gervaz", "decided"),
+      title: dgettext("mishka_gervaz", "%{number} decided by you", number: number)
+    }
+  end
+
+  defp decided_chip(_none), do: nil
 
   defp outcome_pill(outcome, count, reason) do
     %{
@@ -1970,6 +2059,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp shortened({text, ""}), do: text
   defp shortened({text, _rest}), do: text <> "…"
+
+  defp shared_reason(_report, :undecided, 0), do: nil
+  defp shared_reason(report, outcome, _count), do: shared_reason(report, outcome)
 
   defp shared_reason(%{entries: entries}, outcome)
        when outcome in [:skipped, :failed, :undecided] do

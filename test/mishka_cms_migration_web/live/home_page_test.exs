@@ -178,6 +178,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
   @details ~s|[data-role="run-details"]|
 
   defp outcomes(view), do: counted(view, @result, "run-outcome", "data-outcome")
+
+  defp decided(view),
+    do: view |> parts(@result, "run-decided") |> LazyHTML.attribute("data-count")
+
   defp kinds(view), do: counted(view, @result, "run-kind", "data-kind")
 
   # The parts of `role` within `scope` (the Result cells, or the expanded row), as their `key`
@@ -1541,6 +1545,51 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       refute has_element?(view, ~s|[data-role="run-details-empty"]|)
+    end
+
+    test "the Result chips show what waits for a decision now, and how many were decided, as the admin decides",
+         %{conn: conn, site: site} do
+      stub!()
+      admin = migration_admin!(site)
+
+      run =
+        %{
+          source: "wordpress",
+          connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+          secret: "app password"
+        }
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      view = open!(conn, admin)
+      assert %{"undecided" => 5} = outcomes(view)
+      assert decided(view) == []
+
+      {:ok, groups} = MishkaCmsMigration.MigrationItem.waiting_groups(run, admin)
+      [%{conflict: conflict, count: count} = group | _rest] = groups
+      choice = hd(MishkaCmsMigration.MigrationItem.choices(conflict))
+
+      assert {:ok, ^count} =
+               MishkaCmsMigration.MigrationItem.decide_waiting(run, admin, conflict, choice,
+                 kinds: [group.kind]
+               )
+
+      settled(view)
+      assert outcomes(view)["undecided"] == 5 - count
+      assert decided(view) == ["#{count}"]
+
+      for %{conflict: conflict, kind: kind} <- tl(groups) do
+        choice = hd(MishkaCmsMigration.MigrationItem.choices(conflict))
+
+        assert {:ok, _count} =
+                 MishkaCmsMigration.MigrationItem.decide_waiting(run, admin, conflict, choice,
+                   kinds: [kind]
+                 )
+      end
+
+      settled(view)
+      assert outcomes(view)["undecided"] == 0
+      assert decided(view) == ["5"]
     end
 
     test "an expanded run shows what each kind would become and why, its latest items and what the WordPress site said of itself",

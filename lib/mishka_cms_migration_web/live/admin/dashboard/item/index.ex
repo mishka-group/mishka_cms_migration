@@ -250,7 +250,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       ) do
     send_update(MishkaGervaz.Table.Web.Live, id: @table_id, pubsub_notification: notification)
     send_update(Decisions, id: @decisions_id, refresh: true)
-    {:noreply, socket |> finished(notification) |> branch_changed(notification.data)}
+
+    {:noreply,
+     socket
+     |> finished(notification)
+     |> branch_changed(notification.data)
+     |> decisions_changed()}
   end
 
   def handle_info(
@@ -287,7 +292,21 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   def handle_info(:items_decided, socket), do: {:noreply, redrawn(socket)}
 
+  def handle_info(:tell_runs, socket) do
+    MigrationRun.refresh_decisions(socket.assigns.run, socket.assigns.current_user)
+    {:noreply, assign(socket, :telling_runs?, false)}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # Tells the Runs table once for a burst of item broadcasts: the message queues behind the
+  # broadcasts already waiting, so a bulk decision costs one update of the source host's runs.
+  defp decisions_changed(%{assigns: %{telling_runs?: true}} = socket), do: socket
+
+  defp decisions_changed(socket) do
+    send(self(), :tell_runs)
+    assign(socket, :telling_runs?, true)
+  end
 
   @impl true
   def handle_event(

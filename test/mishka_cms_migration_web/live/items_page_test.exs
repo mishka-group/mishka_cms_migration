@@ -1096,6 +1096,51 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert plan_of(view, tag) == "left_out"
     end
 
+    test "the Plan filter's Decided lists the items whose waiting decision is answered, and not the ones still waiting",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      [footer, navigation] =
+        for id <- ["23", "navigation-105"],
+            do: Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", id}))
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      filter!(view, %{"plan" => "decided"})
+      assert total(view) == 0
+
+      filter!(view, %{"plan" => ""})
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      filter!(view, %{"plan" => "decided"})
+      assert [{"menu", "23", _outcome}] = rows(view)
+
+      filter!(view, %{"plan" => "undecided"})
+      assert "navigation-105" in Enum.map(rows(view), &elem(&1, 1))
+      assert navigation.plan == :undecided
+    end
+
+    test "deciding one item tells the runs of its source, with what waits and what was decided now",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      footer = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", "23"}))
+
+      waiting =
+        MigrationRun.fetch(run.id, admin) |> elem(1) |> Ash.load!([:decisions], actor: admin)
+
+      assert %{decided: 0, waiting: before} = waiting.decisions
+
+      Phoenix.PubSub.subscribe(MishkaCmsCore.PubSub, "migration_run:#{site.id}:updated")
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        payload: %Ash.Notifier.Notification{data: %{id: id, decisions: decisions}}
+      }
+
+      assert id == run.id
+      assert decisions == %{decided: 1, waiting: before - 1}
+    end
+
     test "a main menu that links pages that are not live names them, and offers to publish them or leave their links out",
          %{conn: conn, site: site, run: run} do
       admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:layout"])
