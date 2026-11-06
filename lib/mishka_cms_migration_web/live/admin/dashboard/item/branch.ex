@@ -7,34 +7,45 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
   Where an item sits at the source, drawn in its expanded row on the Items page
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index`): the item under its parents
   (`MishkaCmsMigration.MigrationItem`'s `:ancestors`), the top one first, each with where it stands
-  (`MishkaCmsMigration.MigrationItem.standing/1`): Needs your decision, Not imported yet, Imported,
-  Connected, Left out by you or Not in the source. An item with no parent draws nothing.
+  (`MishkaCmsMigration.MigrationItem.standing/1`): Needs your decision, Import failed (with why,
+  from its last import), Decided: ready to import, Not imported yet, Imported, Connected, Left out
+  by you or Not in the source. An item with no parent draws nothing.
 
   An item that waits for its parent (`MishkaCmsMigration.MigrationItem.waits_for_parent/1`) says so
-  first, with what holds it in its row's words, such as "Its parent Team (#25) needs your decision:
-  decide it and import it, then this one again."
+  first, with what holds it now, read from its parents as they are, not from what its last import
+  said: "Its parent Team (#25) needs your decision: decide it and import it, then this one again.",
+  or "About (#24), above its parent, needs your decision: …" when one higher up holds the branch.
 
   Each item of the branch has what can be done on it there, as buttons the page answers:
 
     * the choices of the decision it waits for (`decide_node`, with its id, conflict and choice),
-      the recommended one first (`MishkaCmsMigration.MigrationItem.choice_options/1`);
-    * Import it (`import_node`), for one not imported yet, once the admin confirms;
+      the recommended one first, starred and marked so (`MishkaCmsMigration.MigrationItem.choice_options/1`,
+      drawn as the Decisions panel draws a choice, `MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions.choice/1`);
+    * Import it (`import_node`), for one not imported yet, decided or whose import failed, once the
+      admin confirms;
     * Show in the list, which narrows the table to it by its title and kind (`JS.patch/1`).
 
   And for the branch as a whole:
 
     * Decide all N: one choice for every item of the branch that waits for the same decision
-      (`decide_branch`, with their ids), once the admin confirms;
+      (`decide_branch`, with their ids), once the admin confirms, the recommended one marked so;
     * Import the branch (`import_branch`): every item of it not imported yet, parents first, as a
-      job of picked items walks them, offered once nothing in it waits for a decision;
+      job of picked items walks them, offered once nothing in it waits for a decision; while one of
+      its parents does, a line says to decide them first;
     * Import anyway (`import_anyway`), for the item that waits for its parent: written now without
       it, at the top level (a page keeps its own address), once the admin confirms; Wait for its
-      parent instead (`decide_node` on `"parent_missing"` with `"keep"`) takes that back.
+      parent instead (`decide_node` on `"parent_missing"` with `"keep"`) takes that back, once the
+      admin confirms what happens to a record the import already wrote.
+
+  While the run's dry run or import runs (`busy`), the buttons that would start one or change an
+  item are disabled and a line says why. A button that asks first is disabled while its event is in
+  flight (`phx-disable-with`), so a second click never asks twice.
 
   Every part carries a `data-role` (`item-branch`, `item-branch-node` with `data-source-id` and
-  `data-standing`, `item-branch-decide`, `item-branch-import`, `item-branch-show`,
-  `item-branch-decide-all`, `item-branch-import-all`, `item-branch-import-anyway`), so a test reads
-  it without reading its markup.
+  `data-standing`, `item-branch-failed`, `item-branch-decide`, `item-branch-import`,
+  `item-branch-show`, `item-branch-decide-all`, `item-branch-import-all`,
+  `item-branch-decide-parents`, `item-branch-import-anyway`, `item-branch-busy`), so a test reads it
+  without reading its markup.
   """
 
   use Phoenix.Component
@@ -42,16 +53,20 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
   alias MishkaCmsMigration.Workers.Helpers.Needs
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions
   alias Phoenix.LiveView.JS
+
+  @importable [:not_imported, :decided, :failed]
 
   attr :item, MigrationItem, required: true, doc: "the expanded item, with its `:ancestors`"
   attr :list_path, :string, required: true, doc: "the Items page's address, to show an item in"
+  attr :busy, :boolean, default: false, doc: "whether the run's dry run or import runs now"
 
   @doc "Where `@item` sits and what can be done on its branch, or nothing for an item with no parent."
   def branch(%{item: %{ancestors: [_ | _] = ancestors} = item} = assigns) do
     nodes = ancestors ++ [item]
     waiting = Enum.filter(nodes, &(MigrationItem.standing(&1) == :undecided))
-    importable = Enum.filter(nodes, &(MigrationItem.standing(&1) == :not_imported))
+    importable = Enum.filter(nodes, &(MigrationItem.standing(&1) in @importable))
 
     assigns =
       assign(assigns,
@@ -59,6 +74,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
         waits: MigrationItem.waits_for_parent(item),
         decide_all: decide_all(waiting),
         import_all: import_all(nodes, waiting, importable),
+        parents_wait: Enum.any?(ancestors, &(MigrationItem.standing(&1) == :undecided)),
         parent: Needs.parent_name(List.last(ancestors), item.source_parent),
         without_parent: MigrationItem.without_parent?(item.decisions)
       )
@@ -87,6 +103,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           class="m-0 mt-1 text-[12.5px] font-medium text-[#6d5413]"
         >
           {MigrationRun.reason_label(@waits, @item.source_kind)}.
+        </p>
+        <p
+          :if={@busy}
+          data-role="item-branch-busy"
+          class="m-0 mt-1 text-[12.5px] font-semibold text-[#5b57d6]"
+        >
+          {gettext(
+            "A dry run or an import of this run is running. Wait until it finishes, then act on this branch."
+          )}
         </p>
       </div>
 
@@ -117,7 +142,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
             </span>
             <.standing node={node} />
             <div class="flex flex-wrap items-center gap-1.5">
-              <.node_actions node={node} item={@item} list_path={@list_path} />
+              <.node_actions node={node} item={@item} list_path={@list_path} busy={@busy} />
             </div>
           </div>
           <p
@@ -126,11 +151,18 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           >
             {gettext("The source does not list it, such as a page in the trash.")}
           </p>
+          <p
+            :if={MigrationItem.standing(node) == :failed and is_binary(node.reason)}
+            data-role="item-branch-failed"
+            class="m-0 ms-6 text-[11.5px] font-medium text-[#c0473d]"
+          >
+            {gettext("Its last import failed: %{reason}.", reason: failed_reason(node))}
+          </p>
         </li>
       </ul>
 
       <div
-        :if={@decide_all || @import_all || @waits || @without_parent}
+        :if={@decide_all || @import_all || @parents_wait || @waits || @without_parent}
         class="flex flex-wrap items-center gap-2 border-t border-[#f0efea] pt-3"
       >
         <%= if @decide_all do %>
@@ -141,15 +173,20 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
               length(@decide_all.ids)
             )}
           </span>
-          <button
-            :for={{word, choice} <- MigrationItem.choice_options(@decide_all.conflict)}
-            type="button"
+          <Decisions.choice
+            :for={
+              {{word, choice}, index} <-
+                Enum.with_index(MigrationItem.choice_options(@decide_all.conflict))
+            }
+            recommended={index == 0}
             data-role="item-branch-decide-all"
             data-choice={choice}
+            disabled={@busy}
             phx-click="decide_branch"
             phx-value-ids={Enum.join(@decide_all.ids, ",")}
             phx-value-conflict={@decide_all.conflict}
             phx-value-choice={choice}
+            phx-disable-with=""
             data-confirm={
               ngettext(
                 "Answer this item with “%{choice}”? It holds for every later dry run and import.",
@@ -158,18 +195,26 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
                 choice: word
               )
             }
-            class={button_class(:primary)}
           >
             {word}
-          </button>
+          </Decisions.choice>
         <% end %>
+        <span
+          :if={@parents_wait}
+          data-role="item-branch-decide-parents"
+          class="basis-full text-[12px] font-medium text-[#6d5413]"
+        >
+          {gettext("Decide its parents first to import the whole branch.")}
+        </span>
         <button
           :if={@import_all}
           type="button"
           data-role="item-branch-import-all"
+          disabled={@busy}
           phx-click="import_branch"
           phx-value-ids={Enum.join(Enum.map(@import_all, & &1.id), ",")}
           phx-value-item={@item.id}
+          phx-disable-with=""
           data-confirm={
             gettext("Import these %{count} items now, parents first: %{titles}?",
               count: length(@import_all),
@@ -182,11 +227,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           {gettext("Import the branch, parents first")}
         </button>
         <button
-          :if={@waits && not @without_parent && MigrationItem.standing(@item) == :not_imported}
+          :if={@waits && not @without_parent && importable?(@item)}
           type="button"
           data-role="item-branch-import-anyway"
+          disabled={@busy}
           phx-click="import_anyway"
           phx-value-id={@item.id}
+          phx-disable-with=""
           data-confirm={
             gettext(
               "Import %{title} now, without waiting for %{parent}? It is written at the top level, not under its parent (a page keeps its own address), and later imports keep it so until you choose Wait for its parent.",
@@ -209,6 +256,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           :if={@without_parent}
           type="button"
           data-role="item-branch-wait"
+          disabled={@busy}
+          phx-disable-with=""
           phx-click="decide_node"
           phx-value-id={@item.id}
           phx-value-conflict="parent_missing"
@@ -243,6 +292,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
   attr :node, :map, required: true
   attr :item, :map, required: true
   attr :list_path, :string, required: true
+  attr :busy, :boolean, required: true
 
   defp node_actions(%{node: %{id: nil}} = assigns), do: ~H""
 
@@ -256,23 +306,30 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
       )
 
     ~H"""
-    <button
-      :for={{word, choice} <- (@conflict && MigrationItem.choice_options(@conflict)) || []}
-      type="button"
+    <Decisions.choice
+      :for={
+        {{word, choice}, index} <-
+          Enum.with_index((@conflict && MigrationItem.choice_options(@conflict)) || [])
+      }
+      recommended={index == 0}
+      size={:small}
       data-role="item-branch-decide"
       data-choice={choice}
+      disabled={@busy}
       phx-click="decide_node"
       phx-value-id={@node.id}
       phx-value-conflict={@conflict}
       phx-value-choice={choice}
-      class={button_class(:choice)}
+      phx-disable-with=""
     >
       {word}
-    </button>
+    </Decisions.choice>
     <button
-      :if={@standing == :not_imported}
+      :if={importable?(@node)}
       type="button"
       data-role="item-branch-import"
+      disabled={@busy}
+      phx-disable-with=""
       phx-click="import_node"
       phx-value-id={@node.id}
       data-confirm={
@@ -302,6 +359,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
   defp title(_waits, item),
     do:
       gettext("This %{kind} waits for its parent", kind: MigrationRun.kind_one(item.source_kind))
+
+  defp importable?(item), do: MigrationItem.standing(item) in @importable
+
+  defp failed_reason(node),
+    do: node.reason |> MigrationRun.reason_label(node.source_kind) |> String.trim_trailing(".")
 
   defp wait_words(%{target_id: id} = item) when is_binary(id),
     do:
@@ -347,21 +409,26 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
 
   defp standing_class(:undecided), do: MigrationRun.outcome_class(:undecided)
   defp standing_class(:imported), do: MigrationRun.outcome_class(:created)
-  defp standing_class(:connected), do: "bg-[#eeedfb] text-[#5b57d6]"
-  defp standing_class(:not_listed), do: MigrationRun.outcome_class(:failed)
+
+  defp standing_class(standing) when standing in [:connected, :decided],
+    do: "bg-[#eeedfb] text-[#5b57d6]"
+
+  defp standing_class(standing) when standing in [:not_listed, :failed],
+    do: MigrationRun.outcome_class(:failed)
+
   defp standing_class(_not_imported_or_left_out), do: MigrationRun.outcome_class(:skipped)
 
   defp button_class(:primary),
     do:
-      "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] bg-[#5b57d6] px-3 text-[12px] font-bold text-white transition-colors hover:bg-[#4f4bcc]"
+      "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] bg-[#5b57d6] px-3 text-[12px] font-bold text-white transition-colors hover:bg-[#4f4bcc] disabled:opacity-50"
 
   defp button_class(:secondary),
     do:
-      "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] border border-[#ecebe6] bg-white px-3 text-[12px] font-bold text-[#3a382f] transition-colors hover:bg-[#f7f6f3]"
+      "inline-flex h-[30px] items-center gap-1.5 rounded-[9px] border border-[#ecebe6] bg-white px-3 text-[12px] font-bold text-[#3a382f] transition-colors hover:bg-[#f7f6f3] disabled:opacity-50"
 
   defp button_class(:choice),
     do:
-      "inline-flex h-[26px] items-center rounded-[8px] border border-[#ecebe6] bg-white px-2.5 text-[11.5px] font-semibold text-[#3a382f] transition-colors hover:border-[#c3c1f0] hover:bg-[#f4f3fd]"
+      "inline-flex h-[26px] items-center rounded-[8px] border border-[#ecebe6] bg-white px-2.5 text-[11.5px] font-semibold text-[#3a382f] transition-colors hover:border-[#c3c1f0] hover:bg-[#f4f3fd] disabled:opacity-50"
 
   defp button_class(:link),
     do:

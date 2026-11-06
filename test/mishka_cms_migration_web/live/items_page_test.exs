@@ -1206,9 +1206,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
              |> LazyHTML.attribute("data-source-id") == ["125"]
 
       expand!(view, crew)
-      assert has_element?(view, ~s|[data-role="item-branch"][data-waits="true"]|)
-      assert has_element?(view, ~s|[data-role="item-branch-waits"]|, "Our Story (#125)")
-      assert branch(view) == [{"125", "undecided"}, {"127", "not_imported"}]
+
+      assert has_element?(
+               view,
+               ~s|[data-role="item-branch"][data-waits="true"] [data-role="item-branch-waits"]|,
+               "Our Story (#125) needs your decision"
+             )
+
+      assert branch(view) == [{"125", "undecided"}, {"127", "decided"}]
       refute has_element?(view, ~s|[data-role="item-branch-import-all"]|)
 
       branch_click!(
@@ -1218,7 +1223,10 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert Admin.flashes(view) =~ "Decided"
       assert %{decisions: %{"language_unknown" => "import"}} = item!(story)
-      assert branch(view) == [{"125", "not_imported"}, {"127", "not_imported"}]
+      assert item!(crew).reason == "parent_undecided: Our Story (#125)"
+      assert branch(view) == [{"125", "decided"}, {"127", "decided"}]
+      assert has_element?(view, ~s|[data-role="item-branch-waits"]|, "is not imported yet")
+      refute has_element?(view, ~s|[data-role="item-branch-waits"]|, "needs your decision")
 
       Admin.clear_flashes(view)
       branch_click!(view, ~s|[data-role="item-branch-import-all"]|)
@@ -1238,6 +1246,34 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert %{outcome: :created, reason: nil} = item!(crew)
       assert branch(view) == [{"125", "imported"}, {"127", "imported"}]
       refute has_element?(view, ~s|#{@table} [id$="#{crew.id}"] [data-role="item-waits-node"]|)
+    end
+
+    test "marks the recommended choice, says to decide the parents first, and asks once per click",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      assert has_element?(view, ~s|[data-role="item-branch-node"][data-source-id="127"]|, "ready")
+      assert has_element?(view, ~s|[data-role="item-branch-decide-parents"]|)
+
+      assert view
+             |> parts(~s|[data-source-id="125"] [data-role="item-branch-decide"]|)
+             |> LazyHTML.attribute("data-recommended") == ["true", "false"]
+
+      assert view
+             |> parts(~s|[data-role="item-branch"] [data-confirm]|)
+             |> LazyHTML.attribute("phx-disable-with")
+             |> Enum.all?(&(&1 == ""))
+
+      branch_click!(
+        view,
+        ~s|[data-source-id="125"] [data-role="item-branch-decide"][data-recommended="true"]|
+      )
+
+      refute has_element?(view, ~s|[data-role="item-branch-decide-parents"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-import-all"][phx-disable-with]|)
     end
 
     test "Import anyway writes the item without its parent and says so; the parent waits as it was",

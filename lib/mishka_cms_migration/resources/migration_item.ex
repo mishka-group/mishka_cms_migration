@@ -173,6 +173,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaCmsMigration.Resources.Changes.Decided
   alias MishkaCmsMigration.Resources.Validations.{MappedRecord, SiteIdle}
   alias MishkaCmsMigration.Targets.Helpers.Read
+  alias MishkaCmsMigration.Workers.Helpers.Needs
   alias MishkaGervaz.Table.Web.Events.{BulkActionHooks, BulkActionResult}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
@@ -199,6 +200,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   }
   @parent_conflict "parent_missing"
   @parent_waits ["parent_undecided", "parent_missing", "parent_not_listed"]
+  @holding [:undecided, :failed, :decided, :not_imported, :not_listed]
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
   @items_table "#migration-items-table"
@@ -1420,18 +1422,44 @@ defmodule MishkaCmsMigration.MigrationItem do
       |> Enum.uniq()
 
   @doc """
-  Why `item` waits for its parent, which has no CMS record, as its last dry run or import said it
-  (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`), such as `"parent_undecided: Team (#25)"`;
-  `nil` for an item that has a CMS record, that an admin left out or mapped, and for one nothing
-  holds for its parent.
+  Why `item` waits for its parent, which has no CMS record, such as
+  `"parent_undecided: Team (#25)"`; `nil` for an item that has a CMS record, that an admin left out
+  or mapped, and for one nothing holds for its parent.
+
+  Whether it waits is what its last dry run or import said
+  (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`); what holds it is read from its parents as
+  they are now when its `:ancestors` are loaded, so it never goes stale once a parent is decided or
+  imported after the item was skipped: the top one of them that is not imported or connected
+  (`standing/1`), named as `Needs.parent/2` names the parent, or as `Needs.ancestor/2` names one
+  higher up, such as `"ancestor_undecided: About (#24)"`. Once every one of them has a record, it
+  waits for nothing. Without its ancestors the stored reason is the answer.
   """
   @spec waits_for_parent(map()) :: String.t() | nil
   def waits_for_parent(%{left_out: true}), do: nil
   def waits_for_parent(%{mapped_id: id}) when is_binary(id), do: nil
   def waits_for_parent(%{target_id: id}) when is_binary(id), do: nil
 
-  def waits_for_parent(item),
-    do: parent_part(item.plan_reason) || parent_part(item.reason)
+  def waits_for_parent(item), do: item |> stored_wait() |> waits_now(item)
+
+  defp stored_wait(item), do: parent_part(item.plan_reason) || parent_part(item.reason)
+
+  defp waits_now(nil, _item), do: nil
+
+  defp waits_now(_stored, %{ancestors: [_ | _] = ancestors}),
+    do:
+      ancestors
+      |> Enum.with_index(1)
+      |> Enum.find(fn {above, _depth} -> standing(above) in @holding end)
+      |> held_by(length(ancestors))
+
+  defp waits_now(stored, _item), do: stored
+
+  defp held_by(nil, _parent_depth), do: nil
+  defp held_by({above, depth}, depth), do: Needs.parent(listed(above), above.source_id)
+  defp held_by({above, _depth}, _parent_depth), do: Needs.ancestor(listed(above), above.source_id)
+
+  defp listed(%{id: nil}), do: nil
+  defp listed(item), do: item
 
   @doc """
   Whether an admin decided that the item is imported without its parent while the parent has no
@@ -1454,7 +1482,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   Where `item` stands, as Where it sits shows each item of a branch: `:not_listed` for one the
   source does not list (an ancestor with no `id`, `MishkaCmsMigration.Resources.Calculations.Ancestors`),
   `:left_out`, `:connected` (mapped by an admin), `:imported` (it has a CMS record), `:undecided`
-  (it waits for a decision no admin has made, `undecided?/1`) or `:not_imported`.
+  (it waits for a decision no admin has made, `undecided?/1`), `:failed` (its last import failed),
+  `:decided` (an admin decided on it, and it is ready to import) or `:not_imported`.
   """
   @spec standing(map()) :: atom()
   def standing(%{id: nil}), do: :not_listed
@@ -1462,10 +1491,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   def standing(%{mapped_id: id}) when is_binary(id), do: :connected
   def standing(%{target_id: id}) when is_binary(id), do: :imported
 
-  def standing(item), do: item |> undecided?() |> unsettled()
+  def standing(item), do: item |> undecided?() |> unsettled(item)
 
-  defp unsettled(true), do: :undecided
-  defp unsettled(false), do: :not_imported
+  defp unsettled(true, _item), do: :undecided
+  defp unsettled(false, %{outcome: :failed}), do: :failed
+  defp unsettled(false, %{decisions: decisions}) when decisions != %{}, do: :decided
+  defp unsettled(false, _item), do: :not_imported
 
   @doc "What `standing/1` says, in words, such as Needs your decision."
   @spec standing_word(atom()) :: String.t()
@@ -1474,6 +1505,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   def standing_word(:connected), do: dgettext("mishka_gervaz", "Connected")
   def standing_word(:imported), do: dgettext("mishka_gervaz", "Imported")
   def standing_word(:undecided), do: plan_word(:undecided)
+  def standing_word(:failed), do: dgettext("mishka_gervaz", "Import failed")
+  def standing_word(:decided), do: dgettext("mishka_gervaz", "Decided: ready to import")
   def standing_word(:not_imported), do: dgettext("mishka_gervaz", "Not imported yet")
 
   @doc """
@@ -1838,8 +1871,8 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp standing_dot(:undecided), do: "bg-[#d99a00]"
   defp standing_dot(:imported), do: "bg-[#177a53]"
-  defp standing_dot(:connected), do: "bg-[#5b57d6]"
-  defp standing_dot(:not_listed), do: "bg-[#c0473d]"
+  defp standing_dot(standing) when standing in [:connected, :decided], do: "bg-[#5b57d6]"
+  defp standing_dot(standing) when standing in [:not_listed, :failed], do: "bg-[#c0473d]"
   defp standing_dot(_not_imported_or_left_out), do: "bg-[#bcb9b2]"
 
   defp chosen_words(:leave_out, count),

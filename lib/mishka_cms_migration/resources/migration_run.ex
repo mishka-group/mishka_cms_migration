@@ -2147,6 +2147,30 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("parent_missing"),
     do: dgettext("mishka_gervaz", "Its parent has no record in Mishka CMS yet")
 
+  defp said("ancestor_undecided: " <> above),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "%{above}, above its parent, needs your decision: decide it, then import the branch, parents first",
+        above: above
+      )
+
+  defp said("ancestor_missing: " <> above),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "%{above}, above its parent, is not imported yet: import the branch, parents first",
+        above: above
+      )
+
+  defp said("ancestor_not_listed: " <> id),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The source does not list #%{id}, above its parent: restore it there, then import the branch",
+        id: id
+      )
+
   defp said("without_parent: " <> parent),
     do:
       dgettext("mishka_gervaz", "Imported without its parent %{parent}, as you decided",

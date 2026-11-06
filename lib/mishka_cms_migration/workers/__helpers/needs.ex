@@ -96,6 +96,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   defp parent_reason(false), do: "parent_missing: "
 
   @doc """
+  Why an item waits for `id`, an item higher up its branch than its parent, which has no CMS record,
+  as `parent/2` says it of a parent: `"ancestor_undecided: <name>"`, `"ancestor_missing: <name>"`
+  or `"ancestor_not_listed: <id>"` (`MishkaCmsMigration.MigrationRun.reason_label/2`), given that
+  item as the runs recorded it, or `nil` for one the source does not list. What
+  `MishkaCmsMigration.MigrationItem.waits_for_parent/1` says when a grandparent, or one above it,
+  is what holds the branch.
+  """
+  @spec ancestor(struct() | nil, String.t()) :: String.t()
+  def ancestor(nil, id), do: "ancestor_not_listed: " <> id
+
+  def ancestor(%MigrationItem{} = above, id),
+    do: ancestor_reason(MigrationItem.undecided?(above)) <> parent_name(above, id)
+
+  defp ancestor_reason(true), do: "ancestor_undecided: "
+  defp ancestor_reason(false), do: "ancestor_missing: "
+
+  @doc """
   The parent `id` as the Items page shows it, given its item as the runs recorded it: its title and
   source id, `"Team (#25)"`, or its source id alone, `"#25"`, for one with no title or no item.
   """

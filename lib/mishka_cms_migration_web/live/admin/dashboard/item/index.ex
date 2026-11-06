@@ -321,13 +321,17 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   defp decide(socket, id, conflict, choice) do
     %{run: run, current_user: user} = socket.assigns
 
-    with {:ok, %MigrationItem{} = item} <- own_item(MigrationItem.fetch(id, user), run) do
+    with {:ok, %MigrationItem{} = item} <-
+           id |> MigrationItem.fetch(user, read_with(conflict)) |> own_item(run) do
       MishkaCmsMigration.decide_item(item, choice, %{conflict: conflict},
         actor: user,
         tenant: run.site_id
       )
     end
   end
+
+  defp read_with("parent_missing"), do: [:ancestors]
+  defp read_with(_conflict), do: []
 
   defp own_item({:ok, %MigrationItem{site_id: site, source_host: host} = item}, %{
          site_id: site,
@@ -474,7 +478,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       })
 
   defp expanded({:ok, %MigrationItem{} = item}, socket) do
-    html = details_html(item, path(socket, MigrationRun.items_path(socket.assigns.run)))
+    %{run: run} = socket.assigns
+    html = details_html(item, path(socket, MigrationRun.items_path(run)), busy?(run))
     send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: html)
     assign(socket, :branch, branch_of(item))
   end
@@ -494,12 +499,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp branch_of(_item), do: nil
 
-  defp details_html(item, list_path) do
-    assigns = %{item: item, json: json(item), list_path: list_path}
+  defp busy?(%MigrationRun{status: status}), do: status in [:dry_running, :importing]
+
+  defp details_html(item, list_path, busy) do
+    assigns = %{item: item, json: json(item), list_path: list_path, busy: busy}
 
     ~H"""
     <section data-role="item-details" data-item-id={@item.id} class="grid gap-3">
-      <Branch.branch item={@item} list_path={@list_path} />
+      <Branch.branch item={@item} list_path={@list_path} busy={@busy} />
       <PasswordNotice.item item={@item} />
       <p data-role="item-details-note" class="m-0 text-[12px] font-medium text-[#7c7a75]">
         {gettext(
