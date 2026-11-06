@@ -43,36 +43,35 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps do
 
   @doc """
   Moves on from Where from only once the connection is filled and the source answers it (see the
-  module doc); every other step moves on as Gervaz's step handler moves it.
+  module doc); every other step moves on as Gervaz's step handler moves it. A refused Where from
+  shows every error it has at once: a blank site beside a blank connection key. The connection is
+  tried only once nothing else on the step is refused.
   """
   @spec advance(map(), Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def advance(%{current_step: :from} = state, socket) do
-    with true <- can_advance?(state, :from),
-         {field, messages} <- refusal(state, socket) do
-      state =
-        State.update(state,
-          step_states: Map.put(state.step_states, :from, :error),
-          errors: Map.put(state.errors, field, messages)
-        )
+    case refusal(state, socket, can_advance?(state, :from)) do
+      nil ->
+        super(state, socket)
 
-      Phoenix.Component.assign(socket, :form_state, state)
-    else
-      _fine_or_refused_by_its_fields -> super(state, socket)
+      {field, messages} ->
+        state = StepHandler.refused(state, :from)
+        state = State.update(state, errors: Map.put(state.errors, field, messages))
+        Phoenix.Component.assign(socket, :form_state, state)
     end
   end
 
   def advance(state, socket), do: super(state, socket)
 
-  defp refusal(%{defaults: %{source: id}} = state, socket) when is_binary(id) do
+  defp refusal(%{defaults: %{source: id}} = state, socket, fields_fine?) when is_binary(id) do
     case Source.fetch(id) do
-      {:ok, source} -> refusal(source, source.file?(), state, socket)
+      {:ok, source} -> refusal(source, source.file?(), state, socket, fields_fine?)
       {:error, :not_installed} -> nil
     end
   end
 
-  defp refusal(_state, _socket), do: nil
+  defp refusal(_state, _socket, _fields_fine?), do: nil
 
-  defp refusal(source, true = _file?, state, socket) do
+  defp refusal(source, true = _file?, state, socket, _fields_fine?) do
     upload = UploadHelpers.namespaced_upload_name(:file, state.static.id)
 
     case socket.assigns[:uploads] do
@@ -81,12 +80,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps do
     end
   end
 
-  defp refusal(source, false, state, _socket) do
+  defp refusal(source, false, state, _socket, fields_fine?) do
     connection = state |> params() |> Map.get("connection") |> map()
 
-    case blank_keys(source, connection) do
-      [] -> connected(source, connection, state)
-      blank -> {:connection, Enum.map(blank, &enter/1)}
+    case {blank_keys(source, connection), fields_fine?} do
+      {[], true} -> connected(source, connection, state)
+      {[], false} -> nil
+      {blank, _fields_fine?} -> {:connection, Enum.map(blank, &enter/1)}
     end
   end
 
