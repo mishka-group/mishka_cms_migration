@@ -17,8 +17,8 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.Languages
-  alias MishkaCmsCore.Test.Admin
   alias MishkaCmsCore.Runtime.States.SiteState
+  alias MishkaCmsCore.Test.Admin
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
 
   @admin [
