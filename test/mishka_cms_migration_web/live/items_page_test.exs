@@ -248,6 +248,12 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     settled(view)
   end
 
+  defp decision_value(view),
+    do:
+      view
+      |> parts(~s|#migration-item-map-modal input[type="hidden"][name="decision"]|)
+      |> LazyHTML.attribute("value")
+
   # What Decide… offers, once its field is focused, by label.
   defp decision_choices(view) do
     view |> element(@decision_field) |> render_focus()
@@ -559,6 +565,24 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       end
     end
 
+    test "fits its columns beside the sidebar on a 1280px screen, so Actions covers none of them",
+         %{conn: conn, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+
+      [style] = view |> parts(~s|[style*="grid-template-columns"]|) |> LazyHTML.attribute("style")
+
+      least =
+        ~r/(?:minmax\((\d+)px|(?<![\w(,])(\d+)px)/
+        |> Regex.scan(style, capture: :all_but_first)
+        |> Enum.map(fn parts ->
+          parts |> Enum.reject(&(&1 == "")) |> hd() |> String.to_integer()
+        end)
+        |> Enum.sum()
+
+      # 1280px less the 266px sidebar and the page's padding.
+      assert least <= 900
+    end
+
     test "says in words why an item was skipped", %{
       conn: conn,
       site: site,
@@ -646,6 +670,35 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       filter!(view, %{"plan" => "", "this_run" => "true"})
       assert total(view) == 0
     end
+
+    test "says what the last dry run would do before an import, and what it planned once an import met the item",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.plan == :created))
+      assert tag.outcome in [:created, :updated, :skipped]
+
+      for template <- ["", "&items_template=item_tree"] do
+        view = open!(conn, admin, run, "?items_filter_source_kind=tag" <> template)
+
+        plan =
+          view
+          |> parts(
+            ~s|[id$="#{tag.id}"] [data-role="item-plan"], | <>
+              ~s|[data-item-id="#{tag.id}"] > div [data-role="item-plan"]|
+          )
+          |> LazyHTML.text()
+
+        refute plan =~ MigrationItem.plan_word(:created)
+        assert plan =~ MigrationItem.planned_word(:created)
+      end
+
+      fresh =
+        site
+        |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+        |> dry_run!(admin)
+
+      view = open!(conn, admin, fresh)
+      assert texts(view, "item-plan") |> Enum.join() =~ MigrationItem.plan_word(:created)
+    end
   end
 
   describe "leaving out" do
@@ -664,14 +717,17 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       row_action!(view, "leave_out", tag)
 
       assert %{left_out: true} = item!(tag)
+      assert has_element?(view, "#flash-success", "Left out: #{tag.title}.")
       assert plan_of(view, tag) == "left_out"
       refute has_element?(view, row_button("leave_out", tag))
       settled(other_tab)
       assert plan_of(other_tab, tag) == "left_out"
 
+      Admin.clear_flashes(view)
       row_action!(view, "bring_back", tag)
 
       assert %{left_out: false} = item!(tag)
+      assert has_element?(view, "#flash-success", "Brought back: #{tag.title}.")
       assert plan_of(view, tag) == "created"
       settled(other_tab)
       assert plan_of(other_tab, tag) == "created"
@@ -1117,6 +1173,48 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       filter!(view, %{"plan" => "undecided"})
       assert "navigation-105" in Enum.map(rows(view), &elem(&1, 1))
       assert navigation.plan == :undecided
+    end
+
+    test "Decide… on a decided item opens with the current choice picked", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      footer = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", "23"}))
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      row_action!(view, "decide", footer)
+      assert decision_value(view) in [[], [""]]
+      decide!(view, "footer")
+
+      row_action!(view, "decide", footer)
+      assert decision_value(view) == ["footer"]
+    end
+
+    test "the Plan filter's Needs your decision lists an item only its last import left waiting, and Would create does not",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.plan == :created))
+
+      MigrationItem
+      |> Ash.Changeset.for_create(:record_outcome, %{
+        source_host: tag.source_host,
+        source_kind: "tag",
+        source_id: tag.source_id,
+        run_id: run.id,
+        outcome: :undecided,
+        reason: "same_file: Hero image"
+      })
+      |> Ash.create!(tenant: site.id, authorize?: false)
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=tag")
+      assert plan_of(view, tag) == "undecided"
+
+      filter!(view, %{"plan" => "undecided"})
+      assert {"tag", tag.source_id, "undecided"} in rows(view)
+
+      filter!(view, %{"plan" => "created"})
+      refute Enum.any?(rows(view), &(elem(&1, 1) == tag.source_id))
     end
 
     test "deciding one item tells the runs of its source, with what waits and what was decided now",
@@ -1837,6 +1935,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert total(view) == length(matching)
       assert length(matching) in 1..(length(items) - 1)
       assert Enum.sort(rows(view)) == Enum.sort(kept(matching))
+    end
+
+    test "search the source id as the rows show it, with or without its #", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      post = Enum.find(stored(site), &(&1.source_kind == "post"))
+
+      filter!(view, %{"search" => post.source_id})
+      plain = rows(view)
+      assert {"post", post.source_id, to_string(post.outcome)} in plain
+
+      filter!(view, %{"search" => "#" <> post.source_id})
+      assert rows(view) == plain
     end
 
     test "narrow the items to the ones this run met last", %{

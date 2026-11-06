@@ -105,8 +105,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   row, lists as a Gervaz table every item of the run's source host on the run's site, whichever
   run met it last; its "Imported by this run" filter narrows them to the ones this run's import met
   last. Each row shows the item's kind (`MishkaCmsMigration.MigrationRun.kind_label/1`), its title
-  with its source id under it, its Plan (`plan_cell/1`): what the last dry run would do with it, as
-  a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/2`), its Last
+  with its source id under it, its Plan (`plan_cell/1`): what the last dry run would do with it,
+  or what it planned once an import met the item, as a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/2`), its Last
   import (`last_import_cell/1`): what the last import did with it, the same way, or Not imported,
   links to its CMS record (`record_paths`, below) and when a run or a choice last changed it. It
   filters by kind, plan and last import, searches the title and the source id, and keeps them and
@@ -178,6 +178,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   alias MishkaGervaz.Table.Web.Events.{BulkActionHooks, BulkActionResult}
 
   @outcomes MishkaCmsMigration.Report.outcomes()
+  @planned_keys Enum.map(@outcomes -- [:undecided], &Atom.to_string/1)
   @mappable ["category", "tag"]
   @choices %{
     "site_has_own" => ["keep", "import"],
@@ -307,7 +308,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           sortable true
 
           ui do
-            width "minmax(120px,0.8fr)"
+            width "minmax(92px,0.8fr)"
           end
 
           render fn kind ->
@@ -336,7 +337,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           sort_field [:title]
 
           ui do
-            width "minmax(160px,1.6fr)"
+            width "minmax(140px,1.6fr)"
           end
 
           render fn item ->
@@ -383,7 +384,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "Plan") end
 
           ui do
-            width "minmax(150px,1.3fr)"
+            width "minmax(120px,1.3fr)"
           end
 
           render fn item -> MishkaCmsMigration.MigrationItem.plan_cell(item) end
@@ -410,7 +411,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "Last import") end
 
           ui do
-            width "minmax(150px,1.3fr)"
+            width "minmax(130px,1.3fr)"
           end
 
           render fn item -> MishkaCmsMigration.MigrationItem.last_import_cell(item) end
@@ -422,7 +423,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "CMS record") end
 
           ui do
-            width "minmax(96px,0.6fr)"
+            width "minmax(72px,0.6fr)"
           end
 
           render fn item ->
@@ -443,7 +444,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           sort_field [:updated_at]
 
           ui do
-            width "minmax(116px,0.7fr)"
+            width "minmax(92px,0.7fr)"
           end
 
           render fn item ->
@@ -465,6 +466,10 @@ defmodule MishkaCmsMigration.MigrationItem do
       filters do
         filter :search, :text do
           fields [:title, :source_id]
+
+          apply fn query, value, _assigns ->
+            MishkaCmsMigration.MigrationItem.searched(query, value)
+          end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Search") end
@@ -702,6 +707,10 @@ defmodule MishkaCmsMigration.MigrationItem do
                                MishkaCmsMigration.MigrationItem.refused_bulk(summary, socket)
                              end
 
+        on_row_action_success [:leave_out, :bring_back], fn item, _state, socket ->
+          MishkaCmsMigration.MigrationItem.chosen_row(item, socket)
+        end
+
         on_row_action_error :leave_out, fn reason, _state, socket ->
           MishkaCmsMigration.MigrationItem.refused(:leave_out, reason, socket)
         end
@@ -775,6 +784,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           mode :search
           options fn state -> MishkaCmsMigration.MigrationItem.decision_options(state) end
           visible fn state -> MishkaCmsMigration.MigrationItem.decision_options(state) != [] end
+          derive_value fn item -> MishkaCmsMigration.MigrationItem.current_decision(item) end
 
           ui do
             label fn -> dgettext("mishka_gervaz", "Your decision") end
@@ -1627,6 +1637,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   def decision_options(_state), do: []
 
   @doc """
+  The choice the Decide… form opens with for `item`: the one its options mark as current
+  (`decision_options/1`), `nil` for an item no admin decided yet.
+  """
+  @spec current_decision(map()) :: String.t() | nil
+  def current_decision(item), do: item |> conflict() |> current_choice(item)
+
+  @doc """
   Why the item the Decide… form has loaded waits for a decision, shown above its choices: the
   reason its Plan cell gives, in the same words (`MishkaCmsMigration.MigrationRun.reason_label/2`),
   such as "This tag was deleted in Mishka CMS after it was imported", or the conflict an admin
@@ -1754,8 +1771,27 @@ defmodule MishkaCmsMigration.MigrationItem do
     do: BulkActionHooks.put_flash(socket, :success, chosen_words(action, count))
 
   @doc """
-  The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
-  (`data-role="item-plan"`, its `data-plan` the plan, or `connected` for an item the dry run
+  What the Items table says after a row's Leave out or Bring back changed `item`: Left out: or
+  Brought back: and the item's title, in a flash, as the bulk ones say how many (`chosen/2`).
+  """
+  @spec chosen_row(map(), Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def chosen_row(item, socket),
+    do: BulkActionHooks.put_flash(socket, :success, chosen_row_words(item))
+
+  defp chosen_row_words(%{left_out: true, title: title}) when is_binary(title) and title != "",
+    do: dgettext("mishka_gervaz", "Left out: %{title}.", title: title)
+
+  defp chosen_row_words(%{left_out: true}), do: chosen_words(:leave_out, 1)
+
+  defp chosen_row_words(%{title: title}) when is_binary(title) and title != "",
+    do: dgettext("mishka_gervaz", "Brought back: %{title}.", title: title)
+
+  defp chosen_row_words(_item), do: chosen_words(:bring_back, 1)
+
+  @doc """
+  The Items table's Plan cell for `item`: what the last dry run would do with it, such as Would
+  create, or, once an import met the item, what it planned, such as Planned: create
+  (`planned_word/1`), as a pill (`data-role="item-plan"`, its `data-plan` the plan, or `connected` for an item the dry run
   connected to a record the CMS already held), the reason in words under it
   (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/2`, which names
   the item's kind where the reason is about the item itself). A dash before
@@ -1807,7 +1843,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   What waits for a decision no admin has made among the items of `run`'s source host on its site
   (`:waiting_for_decision`, `undecided?/1`), read as `user`: `%{kind: kind, conflict: conflict,
   count: count}` for each kind and conflict, the largest first. `search` narrows them to the items
-  whose title holds it, whatever its case, or whose source id it is. One query, whatever the number
+  whose title holds it, whatever its case, or whose source id it is, with or without a leading `#`. One query, whatever the number
   of items: each kind and conflict is one row, with its count.
   """
   @spec waiting_groups(map(), map(), String.t() | nil) :: {:ok, [map()]} | {:error, term()}
@@ -1875,12 +1911,37 @@ defmodule MishkaCmsMigration.MigrationItem do
         actor: user,
         tenant: run.site_id
       )
-      |> searched(search)
+      |> waiting_searched(search)
 
-  defp searched(query, search) when search in [nil, ""], do: query
+  @doc """
+  The Items table's search: `query` narrowed to the items whose title holds `search`, in any case,
+  or whose source id holds it. A leading `#` is dropped, as the rows show a source id as `#157`.
+  No search leaves `query` as it is.
+  """
+  @spec searched(Ash.Query.t(), String.t() | nil) :: Ash.Query.t()
+  def searched(query, search) when is_binary(search),
+    do: search |> search_text() |> search_for(query)
 
-  defp searched(query, search) do
-    text = String.trim(search)
+  def searched(query, _search), do: query
+
+  defp search_for("", query), do: query
+
+  defp search_for(text, query) do
+    lower = String.downcase(text)
+
+    Ash.Query.filter(
+      query,
+      contains(string_downcase(title), ^lower) or contains(source_id, ^text)
+    )
+  end
+
+  defp search_text(search),
+    do: search |> String.trim() |> String.trim_leading("#") |> String.trim()
+
+  defp waiting_searched(query, search) when search in [nil, ""], do: query
+
+  defp waiting_searched(query, search) do
+    text = search_text(search)
     lower = String.downcase(text)
     Ash.Query.filter(query, contains(string_downcase(title), ^lower) or source_id == ^text)
   end
@@ -1922,8 +1983,11 @@ defmodule MishkaCmsMigration.MigrationItem do
         [{dgettext("mishka_gervaz", "Decided"), :decided}]
 
   @doc """
-  The Plan filter: `query` narrowed to the items of the plan `value` names, or, for `"decided"`, to
-  those whose waiting decision an admin answered. No value leaves `query` as it is.
+  The Plan filter: `query` narrowed to the items whose Plan cell reads as `value` says
+  (`plan_cell/1`). `"undecided"` keeps the items that wait for a decision no admin has made
+  (`waits_for_decision`), also those only their last import left waiting, `"decided"` those whose
+  waiting decision an admin answered (`decided_waiting`), and any other plan the items of that plan
+  that wait for nothing. No value leaves `query` as it is.
   """
   @spec planned_as(Ash.Query.t(), term()) :: Ash.Query.t()
   def planned_as(query, value) when value in [nil, ""], do: query
@@ -1931,9 +1995,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   def planned_as(query, value) when value in [:decided, "decided"],
     do: Ash.Query.filter(query, decided_waiting)
 
+  def planned_as(query, value) when value in [:undecided, "undecided"],
+    do: Ash.Query.filter(query, waits_for_decision)
+
   def planned_as(query, value) do
     plan = Enum.find(@outcomes, &(Atom.to_string(&1) == to_string(value)))
-    Ash.Query.filter(query, plan == ^plan)
+    Ash.Query.filter(query, plan == ^plan and not waits_for_decision)
   end
 
   defp pill(assigns) do
@@ -1950,7 +2017,7 @@ defmodule MishkaCmsMigration.MigrationItem do
         data-plan={@role == "item-plan" && @key}
         data-outcome={@role == "item-outcome" && @key}
         class={[
-          "inline-flex w-fit items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
+          "inline-flex w-fit max-w-full items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold",
           @class
         ]}
       >
@@ -2266,8 +2333,11 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: nil
     }
 
-  defp as_planned(%{plan: plan, plan_reason: reason} = item),
+  defp as_planned(%{plan: plan, plan_reason: reason, outcome: nil} = item),
     do: said(plan, plan_word(plan), reason, item.source_kind)
+
+  defp as_planned(%{plan: plan, plan_reason: reason} = item),
+    do: said(plan, planned_word(plan), reason, item.source_kind)
 
   defp imported(%{outcome: nil}), do: none("", dgettext("mishka_gervaz", "Not imported"))
 
@@ -2297,6 +2367,9 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp planned_now(%{key: "decided", reason: choice}),
     do: dgettext("mishka_gervaz", "Now decided: %{choice}", choice: choice)
 
+  defp planned_now(%{key: key}) when key in @planned_keys,
+    do: planned_now(%{word: key |> String.to_existing_atom() |> plan_word()})
+
   defp planned_now(%{word: word}), do: dgettext("mishka_gervaz", "Now: %{plan}", plan: word)
 
   defp said(key, word, reason, kind),
@@ -2321,4 +2394,16 @@ defmodule MishkaCmsMigration.MigrationItem do
   def plan_word(:skipped), do: dgettext("mishka_gervaz", "Would skip")
   def plan_word(:failed), do: dgettext("mishka_gervaz", "Would fail")
   def plan_word(:undecided), do: dgettext("mishka_gervaz", "Needs your decision")
+
+  @doc """
+  What a plan says in words once an import has met the item, as history, such as Planned: create
+  for `:created`: the Plan cell then shows what the last dry run planned, and the Last import cell
+  what was done.
+  """
+  @spec planned_word(atom()) :: String.t()
+  def planned_word(:created), do: dgettext("mishka_gervaz", "Planned: create")
+  def planned_word(:updated), do: dgettext("mishka_gervaz", "Planned: update")
+  def planned_word(:skipped), do: dgettext("mishka_gervaz", "Planned: skip")
+  def planned_word(:failed), do: dgettext("mishka_gervaz", "Planned: fail")
+  def planned_word(:undecided), do: plan_word(:undecided)
 end

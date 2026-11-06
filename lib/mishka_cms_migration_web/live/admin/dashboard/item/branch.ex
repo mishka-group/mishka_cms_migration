@@ -281,7 +281,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
 
     ~H"""
     <span class={[
-      "inline-flex w-fit items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold whitespace-nowrap",
+      "inline-flex w-fit max-w-full items-center gap-[5px] rounded-[20px] px-[10px] py-[3px] text-[10px] font-bold",
       standing_class(@standing)
     ]}>
       {MigrationItem.standing_word(@standing)}
