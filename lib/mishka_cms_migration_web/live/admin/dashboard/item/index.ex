@@ -287,10 +287,25 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp decide_node(socket, id, conflict, choice),
-    do: socket |> decide(id, conflict, choice) |> node_decided(socket)
+    do: socket |> decide(id, conflict, choice) |> node_decided(socket, {conflict, choice})
 
-  defp node_decided({:ok, item}, socket), do: put_flash(socket, :info, saved_words(item))
-  defp node_decided({:error, reason}, socket), do: refused(socket, :decide, reason)
+  defp node_decided({:ok, item}, socket, {"parent_missing", "keep"}),
+    do: put_flash(socket, :info, waits_again_words(item))
+
+  defp node_decided({:ok, item}, socket, _answer), do: put_flash(socket, :info, saved_words(item))
+  defp node_decided({:error, reason}, socket, _answer), do: refused(socket, :decide, reason)
+
+  defp waits_again_words(%MigrationItem{target_id: id}) when is_binary(id),
+    do:
+      gettext(
+        "It waits for its parent again. What the import wrote stays where it is until the source changes it; the next import then writes it under its parent, once its parent is imported."
+      )
+
+  defp waits_again_words(_item),
+    do:
+      gettext(
+        "It waits for its parent again: the next import writes it once its parent is imported."
+      )
 
   defp imported_anyway({:ok, _item}, socket, id),
     do: picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)

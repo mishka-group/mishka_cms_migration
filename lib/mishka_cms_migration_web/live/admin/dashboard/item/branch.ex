@@ -213,6 +213,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           phx-value-id={@item.id}
           phx-value-conflict="parent_missing"
           phx-value-choice="keep"
+          data-confirm={wait_words(@item)}
           class={button_class(:secondary)}
         >
           {gettext("Wait for its parent instead")}
@@ -301,6 +302,20 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
   defp title(_waits, item),
     do:
       gettext("This %{kind} waits for its parent", kind: MigrationRun.kind_one(item.source_kind))
+
+  defp wait_words(%{target_id: id} = item) when is_binary(id),
+    do:
+      gettext(
+        "Wait for its parent instead? %{title} stays where the import wrote it until the source changes it; the next import then writes it under its parent, once its parent is imported.",
+        title: item.title || "#" <> item.source_id
+      )
+
+  defp wait_words(item),
+    do:
+      gettext(
+        "Wait for its parent instead? The next import writes %{title} once its parent is imported, not before.",
+        title: item.title || "#" <> item.source_id
+      )
 
   defp decide_all([_, _ | _] = waiting),
     do: waiting |> Enum.map(&MigrationItem.conflict/1) |> Enum.uniq() |> same_way(waiting)

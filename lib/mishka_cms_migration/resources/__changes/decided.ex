@@ -14,6 +14,12 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
   an item that waits for its parent, or the item's first (`MishkaCmsMigration.MigrationItem.conflict/1`)
   when it names none; one that is not open on the item is as none.
 
+  Import anyway and Wait for its parent (`"parent_missing"`) can be changed at any time, also once
+  an import wrote the item without its parent: neither moves the record the import wrote. Taken
+  back, the item waits for its parent again, and its record stays where the import wrote it until
+  the source changes the item; the next import that writes it again places it under its parent,
+  once the parent has a record.
+
   Given as the action's `decision` argument, the choice of one item's Decide…, a choice the
   conflict does not offer (`MishkaCmsMigration.MigrationItem.choices/1`), any choice on an item
   that waits on none, and any choice on an item whose decision already took effect
@@ -58,20 +64,24 @@ defmodule MishkaCmsMigration.Resources.Changes.Decided do
                  "Your decision already took effect: the import wrote or connected this item by it, so it stays."
                )
   @not_offered dgettext_noop("errors", "Pick one of the choices this item offers.")
+  @parent "parent_missing"
 
   @impl true
   def change(changeset, opts, _context) do
     choice = opts[:choice] || Ash.Changeset.get_argument(changeset, :decision)
     conflict = changeset |> Ash.Changeset.get_argument(:conflict) |> open(changeset.data)
 
-    changeset.data
-    |> MigrationItem.settled?()
+    conflict
+    |> took_effect?(changeset.data)
     |> answer(conflict, choice, changeset.data)
     |> settled(changeset, opts[:choice] || opts[:bulk])
   end
 
   defp open(nil, item), do: MigrationItem.conflict(item)
   defp open(conflict, item), do: Enum.find(MigrationItem.conflicts(item), &(&1 == conflict))
+
+  defp took_effect?(@parent, _item), do: false
+  defp took_effect?(_conflict, item), do: MigrationItem.settled?(item)
 
   defp answer(_settled, _conflict, nil, _item), do: :none
   defp answer(true, _conflict, _choice, _item), do: {:error, @took_effect}

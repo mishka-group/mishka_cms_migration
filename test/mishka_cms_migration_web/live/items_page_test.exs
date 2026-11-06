@@ -1226,6 +1226,22 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert %{outcome: :created, reason: "without_parent: Our Story (#125)"} = item!(crew)
       assert %{target_id: nil, decisions: %{}} = item!(page(site, "125"))
       assert branch(view) == [{"125", "undecided"}, {"127", "imported"}]
+
+      wait = ~s|[data-role="item-branch-wait"]|
+      assert view |> parts(wait) |> LazyHTML.attribute("data-confirm") |> hd() =~ "stays where"
+
+      Admin.clear_flashes(view)
+      branch_click!(view, wait)
+
+      assert Admin.flashes(view) =~ "It waits for its parent again"
+      assert Admin.flashes(view) =~ "stays where it is"
+      refute Admin.flashes(view) =~ "failed"
+      assert %{decisions: %{"parent_missing" => "keep"}, target_id: page_id} = item!(crew)
+
+      assert %{title: "Our Crew"} =
+               Ash.get!(MishkaCmsCore.Runtime.Page, page_id, tenant: site.id, authorize?: false)
+
+      refute has_element?(view, wait)
     end
 
     test "an item whose parent the list does not hold is drawn under it in the Map view, which says it waits",

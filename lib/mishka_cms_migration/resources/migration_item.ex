@@ -1415,12 +1415,16 @@ defmodule MishkaCmsMigration.MigrationItem do
   Every conflict an admin may answer on `item` now: the one it waits on (`conflict/1`), and
   `"parent_missing"` while it waits for its parent (`waits_for_parent/1`), which Import anyway
   answers with `"import"`: the import writes it without its parent while the parent has no CMS
-  record, and Wait for its parent (`"keep"`) undoes that. `:choose` answers the one its `conflict`
-  names, the first when it names none.
+  record, and Wait for its parent (`"keep"`) undoes that, also once an import wrote the item so
+  (`without_parent?/1`). `:choose` answers the one its `conflict` names, the first when it names
+  none.
   """
   @spec conflicts(map()) :: [String.t()]
   def conflicts(item),
-    do: [conflict(item), parent_conflict(item)] |> Enum.reject(&is_nil/1) |> Enum.uniq()
+    do:
+      [conflict(item), parent_conflict(item), parent_decided(item.decisions)]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
 
   @doc """
   Why `item` waits for its parent, which has no CMS record, as its last dry run or import said it
@@ -2064,6 +2068,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp parent_conflict_of(nil), do: nil
   defp parent_conflict_of(_reason), do: @parent_conflict
+
+  defp parent_decided(%{@parent_conflict => _choice}), do: @parent_conflict
+  defp parent_decided(_decisions), do: nil
 
   defp parent_part(nil), do: nil
 
