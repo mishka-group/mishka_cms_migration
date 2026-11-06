@@ -20,8 +20,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
   Leave out and Bring back.
 
   The tree is drawn from the rows the table has loaded (`keep_loaded_records`), as a LiveView stream
-  holds no nesting; Load more adds the next page to it. The filters, the bulk actions, the
-  switcher, the states and the pagination are Gervaz's own (`MishkaGervaz.Table.Templates.Shared`).
+  holds no nesting; Load more adds the next page to it. An item whose parent the table has not
+  loaded, such as one the filters keep out, is drawn under its parents all the same, from what is
+  read of the items above it with its page (`MishkaCmsMigration.MigrationItem`'s `:ancestors`):
+  each of them is a lighter node (`data-ghost`), with where it stands
+  (`MishkaCmsMigration.MigrationItem.standing/1`) and its row actions, and none is picked with the
+  checkboxes; one the source does not list says Not in the source. An item that waits for its
+  parent says so under its title (`item-tree-waits`, `MishkaCmsMigration.MigrationItem.waits_for_parent/1`).
+  The filters, the bulk actions, the switcher, the states and the pagination are Gervaz's own
+  (`MishkaGervaz.Table.Templates.Shared`).
 
   Every part carries a `data-role` (`item-tree`, `item-tree-kind` with `data-kind`,
   `item-tree-node` with `data-item-id`, `data-source-id` and `data-parent`, `item-tree-children`,
@@ -63,7 +70,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
       assigns
       |> assign(:show_checkboxes, checkboxes?(static, state))
       |> assign(:show_filters, Enum.any?(static.filters, &accessible?(&1, state)))
-      |> assign(:kinds, kinds(state.loaded_records))
+      |> assign_kinds(state.loaded_records)
       |> assign_new(:filter_actions, fn -> nil end)
 
     ~H"""
@@ -108,6 +115,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
             <.render_item
               :for={node <- nodes}
               node={node}
+              ghosts={@ghosts}
               static={@static}
               state={@state}
               show_checkboxes={@show_checkboxes}
@@ -132,13 +140,20 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
   def render_item(assigns) do
     {record, below} = assigns.node
 
+    ghost? =
+      assigns
+      |> Map.get(:ghosts, MapSet.new())
+      |> MapSet.member?({record.source_kind, record.source_id})
+
     assigns =
       assign(assigns,
         record: record,
         below: below,
-        dom: "item-tree-#{record.id}",
-        checked: Shared.record_checked?(assigns.state, record.id),
-        actions: Shared.non_accordion_actions(assigns.static.row_actions)
+        ghost?: ghost?,
+        dom: dom_id(record, ghost?),
+        checked: not ghost? and Shared.record_checked?(assigns.state, record.id),
+        actions: Shared.non_accordion_actions(assigns.static.row_actions),
+        waits: MigrationItem.waits_for_parent(record)
       )
 
     ~H"""
@@ -149,11 +164,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
       data-item-id={@record.id}
       data-source-id={@record.source_id}
       data-parent={@record.source_parent}
+      data-ghost={@ghost? && "true"}
       class="min-w-0"
     >
       <div class={[
         "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-[11px] px-3 py-2 transition-colors hover:bg-[#faf9f6]",
-        @checked && "bg-[#f7f7fd]"
+        @checked && "bg-[#f7f7fd]",
+        @ghost? && "border border-dashed border-[#e4e2dc] bg-[#fcfcfa]"
       ]}>
         <button
           :if={@below != []}
@@ -170,8 +187,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
           <MishkaCmsCore.CoreComponents.icon name="hero-chevron-down" class="size-[13px]" />
         </button>
         <span :if={@below == []} class="size-[22px] flex-none" aria-hidden="true"></span>
+        <span :if={@show_checkboxes and @ghost?} class="size-4 flex-none" aria-hidden="true"></span>
         <.dynamic_component
-          :if={@show_checkboxes}
+          :if={@show_checkboxes and not @ghost?}
           module={@static.ui_adapter}
           function={:checkbox}
           name="select_row"
@@ -196,9 +214,31 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
           >
             {"#" <> @record.source_id}
           </div>
+          <div
+            :if={@waits}
+            data-role="item-tree-waits"
+            class="mt-[3px] flex items-center gap-1 text-[11px] font-semibold text-[#8a5a00]"
+          >
+            <MishkaCmsCore.CoreComponents.icon name="hero-pause-circle" class="size-[12px]" />
+            {MigrationRun.reason_label(@waits, @record.source_kind)}
+          </div>
         </div>
-        <div class="min-w-[150px] max-w-[320px]">{MigrationItem.plan_cell(@record)}</div>
+        <div :if={not @ghost?} class="min-w-[150px] max-w-[320px]">
+          {MigrationItem.plan_cell(@record, chain: false)}
+        </div>
+        <div :if={@ghost?} class="min-w-[150px] max-w-[320px]">
+          <span
+            data-role="item-tree-standing"
+            class="inline-flex w-fit items-center rounded-[20px] bg-[#f2f1ec] px-[10px] py-[3px] text-[10px] font-bold text-[#6d6a63] whitespace-nowrap"
+          >
+            {MigrationItem.standing_word(MigrationItem.standing(@record))}
+          </span>
+          <div class="mt-[4px] text-[11px] font-medium text-[#a8a5a0]">
+            {dgettext("mishka_gervaz", "Not in this list: shown for the items under it")}
+          </div>
+        </div>
         <Shared.render_row_actions
+          :if={@record.id}
           row_actions={@actions}
           record={@record}
           static={@static}
@@ -216,6 +256,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
         <.render_item
           :for={node <- @below}
           node={node}
+          ghosts={@ghosts}
           static={@static}
           state={@state}
           show_checkboxes={@show_checkboxes}
@@ -230,6 +271,26 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
     do:
       :select in static.features and static.bulk_actions != [] and
         Shared.has_visible_bulk_actions?(static.bulk_actions, state.archive_status)
+
+  defp assign_kinds(assigns, records) do
+    loaded = MapSet.new(records, &{&1.source_kind, &1.source_id})
+
+    ghosts =
+      records
+      |> Enum.flat_map(&above/1)
+      |> Enum.reject(&MapSet.member?(loaded, {&1.source_kind, &1.source_id}))
+      |> Enum.uniq_by(&{&1.source_kind, &1.source_id})
+
+    assigns
+    |> assign(:kinds, kinds(records ++ ghosts))
+    |> assign(:ghosts, MapSet.new(ghosts, &{&1.source_kind, &1.source_id}))
+  end
+
+  defp above(%{ancestors: ancestors}) when is_list(ancestors), do: ancestors
+  defp above(_record), do: []
+
+  defp dom_id(%{id: id}, false), do: "item-tree-#{id}"
+  defp dom_id(record, true), do: "item-tree-above-#{record.source_kind}-#{record.source_id}"
 
   defp kinds(records) do
     order =
@@ -249,7 +310,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
     {grown, seen} = grown(roots, children, MapSet.new())
 
     {looped, _seen} =
-      records |> Enum.reject(&MapSet.member?(seen, &1.id)) |> grown(children, seen)
+      records |> Enum.reject(&MapSet.member?(seen, &1.source_id)) |> grown(children, seen)
 
     grown ++ looped
   end
@@ -259,7 +320,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
 
   defp grown(records, children, seen) do
     Enum.flat_map_reduce(records, seen, fn record, seen ->
-      case MapSet.member?(seen, record.id) do
+      case MapSet.member?(seen, record.source_id) do
         true ->
           {[], seen}
 
@@ -267,7 +328,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Tree do
           {below, seen} =
             children
             |> Map.get(record.source_id, [])
-            |> grown(children, MapSet.put(seen, record.id))
+            |> grown(children, MapSet.put(seen, record.source_id))
 
           {[{record, below}], seen}
       end

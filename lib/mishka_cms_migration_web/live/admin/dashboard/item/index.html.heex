@@ -50,6 +50,14 @@ SPDX-License-Identifier: Apache-2.0
 
   <LanguageNotice.warning run={@run} class="mb-[22px]" />
 
+  <.live_component
+    module={MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions}
+    id="migration-item-decisions"
+    run={@run}
+    current_user={@current_user}
+    list_path={path(@socket, MishkaCmsMigration.MigrationRun.items_path(@run))}
+  />
+
   <.modal id="migration-item-map-modal">
     <.live_component
       module={MishkaGervaz.Form.Web.Live}

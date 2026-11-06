@@ -83,11 +83,39 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   (`items_template`), so a reload shows the same one. Map categories, in the head, opens the page
   in the Map view on the categories (`items_template=item_tree` and the kind filter).
 
-  An expanded row (`{:expand_row, id}`) shows, for the item of a user an import created, the warning
-  that their password cannot be carried over (`PasswordNotice`), and what is kept of the item as JSON: its stored
-  attributes and its `extra`, the source's fields the CMS has no home for, with the value of
+  An expanded row (`{:expand_row, id}`) shows, for an item with a parent, where it sits
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch`): the item under its parents, read with
+  it in one more query (`MishkaCmsMigration.MigrationItem`'s `:ancestors`), each with where it
+  stands and what can be done on it there, and, for an item that waits for its parent, that it
+  waits and for what. Then, for the item of a user an import created, the warning that their
+  password cannot be carried over (`PasswordNotice`), and what is kept of the item as JSON: its
+  stored attributes and its `extra`, the source's fields the CMS has no home for, with the value of
   anything named like a secret hidden. The item's content and its other fields are not kept, and
   the row says so.
+
+  ## Where it sits
+
+  The branch's buttons reach this page as events, each run as the signed-in admin on the run's
+  site, on an item of the run's site and source host alone, and each said in a flash:
+
+    * `decide_node` answers the conflict an item waits on with a choice (`:choose` with its
+      `conflict`), "Decided. The next dry run and import follow your decision.";
+    * `decide_branch` answers the same conflict with one choice on the branch's items that wait for
+      it (`MishkaCmsMigration.MigrationItem.decide_waiting/5`), "3 items decided.";
+    * `import_node` imports one item, as Import this item does, and `import_branch` the branch's
+      items not imported yet, parents first, as Import the picked items does; each then says what
+      came of the expanded item once its job settles it;
+    * `import_anyway` decides that the expanded item is imported without its parent
+      (`"parent_missing"` answered with `"import"`) and imports it.
+
+  While a row is expanded, the broadcast of any item of its branch draws the branch again, so it
+  shows each item where it stands now.
+
+  ## Decisions
+
+  Above the table, the Decisions panel (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions`)
+  groups what waits for a decision and decides a group at once; the page tells it of every item's
+  broadcast, so it reads the groups again.
 
   Who may open it is the sidebar's declaration (`MishkaCmsMigrationWeb.SidebarMenu`), the Migration
   page's permission, which `MishkaCmsCore.Sidebar.PageGuard` reads on every mount.
@@ -96,11 +124,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   use MishkaCmsCore.ExtensionLiveView
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.{Branch, Decisions}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
   alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
 
   @table_id "migration-items-table"
+  @decisions_id "migration-item-decisions"
   @map_modal "migration-item-map-modal"
   @kept [
     :source_host,
@@ -140,7 +170,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
            run: run,
            source: Source.label(run.source),
            url_state: nil,
-           awaiting: %{}
+           awaiting: %{},
+           branch: nil
          )}
 
       _unreadable ->
@@ -169,10 +200,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   end
 
   @impl true
-  def handle_info({:expand_row, id}, socket) do
-    id |> MigrationItem.fetch(socket.assigns.current_user) |> expanded()
-    {:noreply, socket}
-  end
+  def handle_info({:expand_row, id}, socket),
+    do: {:noreply, expand(socket, id)}
 
   def handle_info({:form_saved, :update, %MigrationItem{} = item}, socket) do
     {:noreply, socket |> close_map() |> put_flash(:info, saved_words(item))}
@@ -188,7 +217,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
         socket
       ) do
     send_update(MishkaGervaz.Table.Web.Live, id: @table_id, pubsub_notification: notification)
-    {:noreply, finished(socket, notification)}
+    send_update(Decisions, id: @decisions_id, refresh: true)
+    {:noreply, socket |> finished(notification) |> branch_changed(notification.data)}
   end
 
   def handle_info({:row_action, "dry_run_item", %{"id" => id}}, socket),
@@ -216,22 +246,119 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp picked(socket, ids, action, step) do
+  @impl true
+  def handle_event(
+        "decide_node",
+        %{"id" => id, "conflict" => conflict, "choice" => choice},
+        socket
+      ),
+      do: {:noreply, decide_node(socket, id, conflict, choice)}
+
+  def handle_event(
+        "decide_branch",
+        %{"ids" => ids, "conflict" => conflict, "choice" => choice},
+        socket
+      ) do
+    %{run: run, current_user: user} = socket.assigns
+
+    run
+    |> MigrationItem.decide_waiting(user, conflict, choice, ids: String.split(ids, ","))
+    |> branch_decided(socket)
+  end
+
+  def handle_event("import_node", %{"id" => id}, socket),
+    do: {:noreply, picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)}
+
+  def handle_event("import_branch", %{"ids" => ids, "item" => item_id}, socket),
+    do:
+      {:noreply,
+       picked(
+         socket,
+         String.split(ids, ","),
+         &MishkaCmsMigration.import_items/3,
+         :import_picked,
+         item_id
+       )}
+
+  def handle_event("import_anyway", %{"id" => id}, socket),
+    do:
+      {:noreply, socket |> decide(id, "parent_missing", "import") |> imported_anyway(socket, id)}
+
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp decide_node(socket, id, conflict, choice),
+    do: socket |> decide(id, conflict, choice) |> node_decided(socket)
+
+  defp node_decided({:ok, item}, socket), do: put_flash(socket, :info, saved_words(item))
+  defp node_decided({:error, reason}, socket), do: refused(socket, :decide, reason)
+
+  defp imported_anyway({:ok, _item}, socket, id),
+    do: picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)
+
+  defp imported_anyway({:error, reason}, socket, _id),
+    do: refused(socket, :import_anyway, reason)
+
+  defp decide(socket, id, conflict, choice) do
+    %{run: run, current_user: user} = socket.assigns
+
+    with {:ok, %MigrationItem{} = item} <- own_item(MigrationItem.fetch(id, user), run) do
+      MishkaCmsMigration.decide_item(item, choice, %{conflict: conflict},
+        actor: user,
+        tenant: run.site_id
+      )
+    end
+  end
+
+  defp own_item({:ok, %MigrationItem{site_id: site, source_host: host} = item}, %{
+         site_id: site,
+         source_host: host
+       }),
+       do: {:ok, item}
+
+  defp own_item({:error, error}, _run), do: {:error, error}
+  defp own_item(_other, _run), do: {:error, :not_found}
+
+  defp branch_decided({:ok, count}, socket),
+    do:
+      {:noreply,
+       put_flash(
+         socket,
+         :info,
+         ngettext("%{count} item decided.", "%{count} items decided.", count)
+       )}
+
+  defp branch_decided({:error, reason}, socket), do: {:noreply, refused(socket, :decide, reason)}
+
+  defp expand(socket, id) do
+    user = socket.assigns.current_user
+    id |> MigrationItem.fetch(user, [:ancestors]) |> expanded(socket)
+  end
+
+  defp branch_changed(%{assigns: %{branch: %{id: id, ids: ids}}} = socket, %{id: changed})
+       when is_map_key(ids, changed),
+       do: expand(socket, id)
+
+  defp branch_changed(socket, _item), do: socket
+
+  defp picked(socket, ids, action, step, awaited \\ nil) do
     user = socket.assigns.current_user
 
     with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(socket.assigns.run.id, user),
          {:ok, _run} <- action.(run, ids, actor: user, tenant: run.site_id) do
-      socket |> awaiting(ids, step) |> put_flash(:info, started(step, length(ids)))
+      socket |> awaiting(ids, step, awaited) |> put_flash(:info, started(step, length(ids)))
     else
       {:ok, nil} -> refused(socket, step, :not_found)
       {:error, reason} -> refused(socket, step, reason)
     end
   end
 
-  defp awaiting(socket, [id], step) when step in [:dry_run, :import],
+  defp awaiting(socket, [id], step, nil) when step in [:dry_run, :import],
     do: update(socket, :awaiting, &Map.put(&1, id, step))
 
-  defp awaiting(socket, _ids, _step), do: socket
+  defp awaiting(socket, _ids, :import_picked, id) when is_binary(id),
+    do: update(socket, :awaiting, &Map.put(&1, id, :import))
+
+  defp awaiting(socket, _ids, _step, _awaited), do: socket
 
   defp finished(socket, notification),
     do: notification |> MigrationItem.picked?() |> finished(notification.data, socket)
@@ -298,6 +425,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   defp label(:dry_run), do: gettext("Dry run this item")
   defp label(:import), do: gettext("Import this item")
   defp label(:import_picked), do: gettext("Import the picked items")
+  defp label(:import_anyway), do: gettext("Import anyway")
+  defp label(:decide), do: gettext("Decide")
 
   defp saved_words(item), do: item |> MigrationItem.conflict() |> saved_words(item)
 
@@ -316,20 +445,33 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
         js: Jason.encode!(MishkaCmsCore.CoreComponents.hide_modal(@map_modal).ops)
       })
 
-  defp expanded({:ok, %MigrationItem{} = item}),
-    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: details_html(item))
+  defp expanded({:ok, %MigrationItem{} = item}, socket) do
+    html = details_html(item, path(socket, MigrationRun.items_path(socket.assigns.run)))
+    send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_html: html)
+    assign(socket, :branch, branch_of(item))
+  end
 
-  defp expanded({:ok, nil}),
-    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: :not_found)
+  defp expanded({:ok, nil}, socket) do
+    send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: :not_found)
+    assign(socket, :branch, nil)
+  end
 
-  defp expanded({:error, reason}),
-    do: send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
+  defp expanded({:error, reason}, socket) do
+    send_update(MishkaGervaz.Table.Web.Live, id: @table_id, expanded_error: reason)
+    assign(socket, :branch, nil)
+  end
 
-  defp details_html(item) do
-    assigns = %{item: item, json: json(item)}
+  defp branch_of(%MigrationItem{ancestors: [_ | _] = ancestors} = item),
+    do: %{id: item.id, ids: Map.new([item | ancestors], &{&1.id, true})}
+
+  defp branch_of(_item), do: nil
+
+  defp details_html(item, list_path) do
+    assigns = %{item: item, json: json(item), list_path: list_path}
 
     ~H"""
     <section data-role="item-details" data-item-id={@item.id} class="grid gap-3">
+      <Branch.branch item={@item} list_path={@list_path} />
       <PasswordNotice.item item={@item} />
       <p data-role="item-details-note" class="m-0 text-[12px] font-medium text-[#7c7a75]">
         {gettext(
