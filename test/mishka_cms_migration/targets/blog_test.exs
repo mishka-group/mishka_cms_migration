@@ -21,12 +21,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   import Phoenix.LiveViewTest, only: [render_component: 2]
   import Swoosh.TestAssertions
 
-  alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, Tag}
+  alias MishkaBlog.{Blogger, BlogPost, Collection, Comment, PostTag, Tag}
   alias MishkaCmsCore.Accounts.User
   alias MishkaCmsCore.PlainText
   alias MishkaCmsCore.Runtime.{Languages, Redirect, Redirects, Seo, Setting}
   alias MishkaCmsCore.Settings
-  alias MishkaCmsMigration.{Events, MigrationItem}
+  alias MishkaCmsMigration.{Events, MigrationItem, MigrationRun}
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.{BlogTag, PostRedirect}
@@ -653,6 +653,78 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert {:updated, _note} = outcomes(run, "post")[@every_block]
       refute is_map_key(blog(Tag, site), "Gutenberg")
       assert named_by(site, "Every core block in one post") == ["WordPress"]
+    end
+  end
+
+  describe "a record an admin deleted for good in the CMS" do
+    setup %{site: site, admin: admin} do
+      imported!(site, admin)
+      gutenberg = blog(Tag, site)["Gutenberg"]
+      delete_for_good!(gutenberg, site, admin)
+      change_in_wordpress!("post")
+      %{gutenberg: gutenberg}
+    end
+
+    # The Blog deletes a tag for good only once no post names it, so its posts' links go first,
+    # through the links' own action, which leaves the posts as the import wrote them.
+    defp delete_for_good!(tag, site, admin) do
+      PostTag
+      |> Ash.read!(authorize?: false)
+      |> Enum.filter(&(&1.tag_id == tag.id))
+      |> Ash.bulk_destroy!(:destroy, %{}, authorize?: false, strategy: :stream)
+
+      Ash.destroy!(tag, action: :permanent_destroy, actor: admin, tenant: site.id)
+    end
+
+    test "waits for the admin's decision on a second run, and a post that names it waits for that decision too, in the dry run as well",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:undecided, "deleted_in_cms"}
+      assert outcomes(run, "post")[@every_block] == {:skipped, "waits_for: tag"}
+
+      run = import!(run, admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:undecided, "deleted_in_cms"}
+      assert outcomes(run, "post")[@every_block] == {:skipped, "waits_for: tag"}
+      assert counts(run, "post").failed == 0
+
+      item = item!(site, "tag", @gutenberg)
+      assert MigrationItem.conflict(item) == "deleted_in_cms"
+
+      assert MigrationRun.reason_label(item.reason, item.source_kind) ==
+               "This tag was deleted in Mishka CMS after it was imported: import it again, or leave it out"
+
+      refute is_map_key(blog(Tag, site), "Gutenberg")
+    end
+
+    test "Import it again creates the tag anew, the posts that name it are written with it, and a run after that leaves it unchanged",
+         %{site: site, admin: admin, gutenberg: gutenberg} do
+      imported!(site, admin)
+      decide!(site, admin, [{"tag", @gutenberg}], "import")
+
+      run = imported!(site, admin)
+      assert {:created, _note} = outcomes(run, "tag")[@gutenberg]
+      assert {:updated, _note} = outcomes(run, "post")[@every_block]
+
+      again = blog(Tag, site)["Gutenberg"]
+      refute again.id == gutenberg.id
+      assert item!(site, "tag", @gutenberg).target_id == again.id
+      assert named_by(site, "Every core block in one post") == ["Gutenberg", "WordPress"]
+
+      assert outcomes(imported!(site, admin), "tag")[@gutenberg] == {:skipped, "unchanged"}
+    end
+
+    test "Leave it out keeps the tag deleted, and the posts that name it are written without it",
+         %{site: site, admin: admin} do
+      imported!(site, admin)
+      decide!(site, admin, [{"tag", @gutenberg}], "keep")
+
+      run = imported!(site, admin)
+      assert outcomes(run, "tag")[@gutenberg] == {:skipped, "target_missing"}
+      assert {:updated, _note} = outcomes(run, "post")[@every_block]
+      refute is_map_key(blog(Tag, site), "Gutenberg")
+      assert named_by(site, "Every core block in one post") == ["WordPress"]
+
+      assert outcomes(imported!(site, admin), "tag")[@gutenberg] == {:skipped, "target_missing"}
     end
   end
 

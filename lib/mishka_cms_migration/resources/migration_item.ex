@@ -92,7 +92,7 @@ defmodule MishkaCmsMigration.MigrationItem do
   run met it last; its "Imported by this run" filter narrows them to the ones this run's import met
   last. Each row shows the item's kind (`MishkaCmsMigration.MigrationRun.kind_label/1`), its title
   with its source id under it, its Plan (`plan_cell/1`): what the last dry run would do with it, as
-  a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/1`), its Last
+  a pill with its reason in words (`MishkaCmsMigration.MigrationRun.reason_label/2`), its Last
   import (`last_import_cell/1`): what the last import did with it, the same way, or Not imported,
   links to its CMS record (`record_paths`, below) and when a run or a choice last changed it. It
   filters by kind, plan and last import, searches the title and the source id, and keeps them and
@@ -171,7 +171,8 @@ defmodule MishkaCmsMigration.MigrationItem do
     "scripts" => ["import", "trust"],
     "language_missing" => ["import", "leave_out"],
     "language_unknown" => ["import", "keep"],
-    "archived_in_cms" => ["import", "leave_out"]
+    "archived_in_cms" => ["import", "leave_out"],
+    "deleted_in_cms" => ["import", "keep"]
   }
   @bulk_choices %{decide_keep: "keep", decide_import: "import"}
   @map_modal "migration-item-map-modal"
@@ -325,6 +326,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           static true
 
           requires [
+            :source_kind,
             :plan,
             :plan_reason,
             :outcome,
@@ -346,7 +348,7 @@ defmodule MishkaCmsMigration.MigrationItem do
 
         column :result do
           static true
-          requires [:outcome, :reason]
+          requires [:source_kind, :outcome, :reason]
           label fn -> dgettext("mishka_gervaz", "Last import") end
 
           ui do
@@ -1271,7 +1273,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
   `"import"` and `"leave_out"`, or, for scripts, `"import"` (remove them) and `"trust"` (keep
-  them), which no bulk choice makes; none for `nil` or a conflict this extension does not know.
+  them), which no bulk choice makes; none for `nil` or a conflict this extension does not know. A
+  record deleted for good in the CMS (`"deleted_in_cms"`) offers Import it again (`"import"`) and
+  Leave it out (`"keep"`): the site stays as it is, and the item is skipped as deleted on every
+  later run, not left out by the admin, so it is not asked again.
   """
   @spec choices(String.t() | nil) :: [String.t()]
   def choices(conflict), do: Map.get(@choices, conflict, [])
@@ -1362,7 +1367,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
   (`data-role="item-plan"`, its `data-plan` the plan, or `connected` for an item the dry run
   connected to a record the CMS already held), the reason in words under it
-  (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/1`). A dash before
+  (`data-role="item-plan-reason"`, `MishkaCmsMigration.MigrationRun.reason_label/2`, which names
+  the item's kind where the reason is about the item itself). A dash before
   the item's first dry run. An admin's choice is shown before the plan: Left out by you
   (`left_out`) for an item left out, Brought back for one brought back since the last dry run
   left it out, and Decided (`data-plan="decided"`), with the choice in words, for an item whose
@@ -1386,8 +1392,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   @spec last_import_cell(map()) :: Phoenix.LiveView.Rendered.t()
   def last_import_cell(item),
     do:
-      item.outcome
-      |> imported(item.reason)
+      item
+      |> imported()
       |> Map.merge(%{role: "item-outcome", reason_role: "item-reason"})
       |> pill()
 
@@ -1476,6 +1482,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("archived_in_cms", "leave_out"),
     do: dgettext("mishka_gervaz", "Leave it archived, and import what names it without it")
+
+  defp choice_word("deleted_in_cms", "import"), do: dgettext("mishka_gervaz", "Import it again")
+  defp choice_word("deleted_in_cms", "keep"), do: dgettext("mishka_gervaz", "Leave it out")
 
   defp choice_word("unsupported_widgets", "import"),
     do: dgettext("mishka_gervaz", "Import with the fallback HTML for those parts")
@@ -1586,15 +1595,15 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: dgettext("mishka_gervaz", "Mapped by you to %{name}", name: name)
     }
 
-  defp planned(%{mapped_id: id}) when is_binary(id),
-    do: said(:skipped, plan_word(:skipped), "mapped_missing")
+  defp planned(%{mapped_id: id} = item) when is_binary(id),
+    do: said(:skipped, plan_word(:skipped), "mapped_missing", item.source_kind)
 
   defp planned(item), do: item |> waits_on() |> waiting(item)
 
   defp waiting(nil, item), do: as_planned(item)
-  defp waiting(reason, item), do: reason |> code() |> waiting(reason, item.decisions)
+  defp waiting(reason, item), do: reason |> code() |> waiting(reason, item)
 
-  defp waiting(conflict, reason, decisions) when is_map_key(decisions, conflict),
+  defp waiting(conflict, reason, %{decisions: decisions}) when is_map_key(decisions, conflict),
     do: %{
       key: "decided",
       word: dgettext("mishka_gervaz", "Decided"),
@@ -1603,7 +1612,8 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: choice_word(conflict, Map.fetch!(decisions, conflict), reason)
     }
 
-  defp waiting(_conflict, reason, _decisions), do: said(:undecided, plan_word(:undecided), reason)
+  defp waiting(_conflict, reason, item),
+    do: said(:undecided, plan_word(:undecided), reason, item.source_kind)
 
   defp waits_on(%{plan: :undecided, plan_reason: reason}) when is_binary(reason), do: reason
 
@@ -1650,18 +1660,21 @@ defmodule MishkaCmsMigration.MigrationItem do
       reason: nil
     }
 
-  defp as_planned(%{plan: plan, plan_reason: reason}), do: said(plan, plan_word(plan), reason)
+  defp as_planned(%{plan: plan, plan_reason: reason} = item),
+    do: said(plan, plan_word(plan), reason, item.source_kind)
 
-  defp imported(nil, _reason), do: none("", dgettext("mishka_gervaz", "Not imported"))
-  defp imported(outcome, reason), do: said(outcome, MigrationRun.outcome_word(outcome), reason)
+  defp imported(%{outcome: nil}), do: none("", dgettext("mishka_gervaz", "Not imported"))
 
-  defp said(key, word, reason),
+  defp imported(%{outcome: outcome} = item),
+    do: said(outcome, MigrationRun.outcome_word(outcome), item.reason, item.source_kind)
+
+  defp said(key, word, reason, kind),
     do: %{
       key: to_string(key),
       word: word,
       class: MigrationRun.outcome_class(key),
       icon: MigrationRun.outcome_icon(key),
-      reason: reason && MigrationRun.reason_label(reason)
+      reason: reason && MigrationRun.reason_label(reason, kind)
     }
 
   defp none(key, word),

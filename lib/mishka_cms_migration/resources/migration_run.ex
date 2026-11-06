@@ -1843,6 +1843,19 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("menu"), do: dgettext("mishka_gervaz", "menus")
   defp kind_noun(kind), do: kind
 
+  defp kind_one("user"), do: dgettext("mishka_gervaz", "user")
+  defp kind_one("category"), do: dgettext("mishka_gervaz", "category")
+  defp kind_one("tag"), do: dgettext("mishka_gervaz", "tag")
+  defp kind_one("media"), do: dgettext("mishka_gervaz", "file")
+  defp kind_one("setting"), do: dgettext("mishka_gervaz", "setting")
+  defp kind_one("stylesheet"), do: dgettext("mishka_gervaz", "stylesheet")
+  defp kind_one("page"), do: dgettext("mishka_gervaz", "page")
+  defp kind_one("post"), do: dgettext("mishka_gervaz", "post")
+  defp kind_one("comment"), do: dgettext("mishka_gervaz", "comment")
+  defp kind_one("post_redirect"), do: dgettext("mishka_gervaz", "redirect")
+  defp kind_one("menu"), do: dgettext("mishka_gervaz", "menu")
+  defp kind_one(kind), do: kind
+
   @doc false
   def switch(field, "true"), do: {:ok, field, true}
   def switch(field, "false"), do: {:ok, field, false}
@@ -2069,9 +2082,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   Why an item was skipped or failed, or what was written otherwise than the source has it (a
   `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it, each of its parts (joined by
   `"; "`) in words. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  Given the item's `kind`, a reason about the item itself names it: `"deleted_in_cms"` reads "This
+  page was deleted in Mishka CMS after it was imported", and without a kind, as a run's summary of
+  items of every kind reads it, "Deleted in Mishka CMS after it was imported".
   """
-  @spec reason_label(String.t()) :: String.t()
-  def reason_label(reason), do: reason |> String.split("; ") |> Enum.map_join("; ", &said/1)
+  @spec reason_label(String.t(), String.t() | nil) :: String.t()
+  def reason_label(reason, kind \\ nil),
+    do: reason |> String.split("; ") |> Enum.map_join("; ", &said(&1, kind))
 
   @doc """
   What makes the links an import writes differ from the source's addresses
@@ -2084,6 +2101,23 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   def language_cause("prefix_all"),
     do: dgettext("mishka_gervaz", "the site gives every language a prefix")
+
+  defp said("deleted_in_cms", nil),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Deleted in Mishka CMS after it was imported: import it again, or leave it out"
+      )
+
+  defp said("deleted_in_cms", kind),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "This %{kind} was deleted in Mishka CMS after it was imported: import it again, or leave it out",
+        kind: kind_one(kind)
+      )
+
+  defp said(reason, _kind), do: said(reason)
 
   defp said("no_target"), do: dgettext("mishka_gervaz", "Nothing imports these yet")
   defp said("unchanged"), do: dgettext("mishka_gervaz", "Unchanged")

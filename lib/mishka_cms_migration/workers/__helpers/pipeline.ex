@@ -23,9 +23,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   (`MishkaCmsMigration.MigrationRun`'s `:record_progress`: the kind and the counts so far), and the
   run's own Ash notifier broadcasts it on `"migration_run:<site_id>:updated"`.
 
-  An item that points at a CMS record an admin archived, such as a post at its tag, waits for the
-  admin's decision on that record (`MishkaCmsMigration.Workers.Helpers.Needs`), skipped as
-  `"waits_for: <kinds>"`, once the record's own kind, walked first, met it.
+  An item that points at a CMS record an admin archived or deleted for good, such as a post at its
+  tag, waits for the admin's decision on that record (`MishkaCmsMigration.Workers.Helpers.Needs`),
+  skipped as `"waits_for: <kinds>"`, once the record's own kind, walked first, met it.
 
   An item that sits under another of its kind (`MishkaCmsMigration.Source.Item`'s `parent`) waits
   until that parent is settled, on the same page or a later one, whichever the source lists first,
@@ -36,9 +36,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   A parent an admin left out takes its children with it: an item whose parent was settled as
   `"left_out_by_admin"` or `"parent_left_out"` is skipped as `"parent_left_out"`, in a dry run and
   in an import, however deep it sits and whatever its own plan was, unless the admin chose for the
-  item itself (left it out, or mapped it to a CMS record) or its CMS record is archived and waits
-  for the admin's decision, which what points at it waits for too. Its CMS record, if an earlier import wrote
-  one, is kept. An item under one an admin mapped goes under the record it was mapped to.
+  item itself (left it out, or mapped it to a CMS record) or its CMS record is archived or deleted
+  for good and waits for the admin's decision, which what points at it waits for too. Its CMS
+  record, if an earlier import wrote one, is kept. An item under one an admin mapped goes under the
+  record it was mapped to.
 
   A source id met again in the same kind, on the same page or a later one, is skipped as
   `"duplicate_in_source"` and not recorded: the first row with that id is the one written and
@@ -124,6 +125,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   alias MishkaCmsMigration.Workers.Helpers.{Decision, Needs, Writer}
 
   @max_pages 10_000
+  @record_conflicts Decision.record_conflicts()
   @picked %{picked_items?: true}
   @refused [:unauthorized, :unreadable_secret, :no_file, :unreadable_file]
 
@@ -443,7 +445,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp under_left_out({:skipped, "left_out_by_admin"} = plan), do: plan
   defp under_left_out({:mapped, _target, _record} = plan), do: plan
   defp under_left_out({:skipped, "mapped_missing"} = plan), do: plan
-  defp under_left_out({:undecided, "archived_in_cms"} = plan), do: plan
+  defp under_left_out({:undecided, conflict} = plan) when conflict in @record_conflicts, do: plan
   defp under_left_out(_plan), do: {:skipped, "parent_left_out"}
 
   defp settle_tree(state, {item, plan}, {report, walk}) do

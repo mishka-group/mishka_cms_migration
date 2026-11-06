@@ -52,7 +52,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     and so without an author an admin left out. One whose record an admin archived in the CMS, which
     the Blog would refuse to link, holds the post (`"waits_for: <kinds>"`) until the admin decides
     on it (`"archived_in_cms"`, `MishkaCmsMigration.Workers.Helpers.Decision`): Restore it, and the
-    post is written with it, or Leave it archived, and the post is written without it.
+    post is written with it, or Leave it archived, and the post is written without it. One whose
+    record an admin deleted for good holds it the same way (`"deleted_in_cms"`): Import it again,
+    and the post is written with the new record, or Leave it out, and the post is written without
+    it, as the last import that met it left it, `"target_missing"`.
 
     Its author, categories, tags, featured file and the files of its content are what it needs
     (`needs/1`): Import this item writes a post alone only once each of them has a CMS record, or
@@ -355,7 +358,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         )
         |> Enum.flat_map(&target_id/1)
 
+    defp target_id(%{reason: "target_missing"}), do: []
     defp target_id(%{target_id: id, left_out: false}) when is_binary(id), do: [id]
-    defp target_id(_never_written_or_left_out), do: []
+    defp target_id(_never_written_left_out_or_deleted), do: []
   end
 end

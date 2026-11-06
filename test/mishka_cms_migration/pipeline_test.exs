@@ -333,7 +333,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert Enum.find(redirects(site), &(&1.id == edited.id)).to == "/kept-by-admin"
     end
 
-    test "does not bring back a row archived or deleted in the CMS after the import: an archived one waits for the admin's decision",
+    test "does not bring back a row archived or deleted in the CMS after the import: each waits for the admin's decision",
          %{site: site, admin: admin} do
       migrate!(site, admin, %{"redirect" => @rows})
       deleted = Enum.find(redirects(site), &(&1.from_path == "/old-one"))
@@ -348,7 +348,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       Ash.destroy!(deleted, action: :permanent_destroy, actor: admin, tenant: site.id)
       run = migrate!(site, admin, %{"redirect" => changed})
 
-      assert %{"1" => {:skipped, "target_missing"}} = outcomes(run)
+      assert %{"1" => {:undecided, "deleted_in_cms"}} = outcomes(run)
       refute Enum.any?(redirects(site), &(&1.from_path == "/old-one"))
     end
 
@@ -557,6 +557,98 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       assert %{"1" => {:created, nil}} = outcomes(run)
       assert [%{from_path: "/loop", to: "/fixed"}] = redirects(site)
+    end
+  end
+
+  describe "a row an admin deleted for good in the CMS" do
+    setup %{site: site, admin: admin} do
+      migrate!(site, admin, %{"redirect" => @rows})
+      deleted = Enum.find(redirects(site), &(&1.from_path == "/old-one"))
+      Ash.destroy!(deleted, action: :permanent_destroy, actor: admin, tenant: site.id)
+      %{deleted: deleted}
+    end
+
+    defp deleted_item(site), do: Enum.find(items(site), &(&1.source_id == "1"))
+
+    defp decide_deleted!(site, admin, choice),
+      do:
+        site
+        |> deleted_item()
+        |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
+
+    defp said(cell), do: Phoenix.LiveViewTest.rendered_to_string(cell)
+
+    defp old_ones(site), do: Enum.filter(redirects(site), &(&1.from_path == "/old-one"))
+
+    test "waits for the admin's decision in a dry run and an import, and says it was deleted before the choices",
+         %{site: site, admin: admin} do
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+
+      assert %{"1" => {:undecided, "deleted_in_cms"}, "2" => {:skipped, "unchanged"}} =
+               outcomes(run)
+
+      item = deleted_item(site)
+      assert MigrationItem.conflict(item) == "deleted_in_cms"
+      assert said(MigrationItem.plan_cell(item)) =~ "Needs your decision"
+
+      assert said(MigrationItem.plan_cell(item)) =~
+               "This redirect was deleted in Mishka CMS after it was imported"
+
+      run = import!(run, admin)
+      assert %{"1" => {:undecided, "deleted_in_cms"}} = outcomes(run)
+      assert old_ones(site) == []
+
+      item = deleted_item(site)
+      assert %{outcome: :undecided, reason: "deleted_in_cms"} = item
+
+      assert said(MigrationItem.last_import_cell(item)) =~
+               "This redirect was deleted in Mishka CMS after it was imported"
+
+      assert MigrationItem.decision_options(%{form: %Phoenix.HTML.Form{data: item}}) == [
+               {"Import it again", "import"},
+               {"Leave it out", "keep"}
+             ]
+    end
+
+    test "Import it again writes it anew as a first import would, remembers the new record, and a run after that leaves it unchanged",
+         %{site: site, admin: admin, deleted: deleted} do
+      migrate!(site, admin, %{"redirect" => @rows})
+      decide_deleted!(site, admin, "import")
+
+      run = site |> create_run!(admin, %{"redirect" => @rows}) |> dry_run!(admin)
+      assert %{"1" => {:created, nil}} = outcomes(run)
+      assert old_ones(site) == []
+
+      assert %{"1" => {:created, nil}} = outcomes(import!(run, admin))
+      assert [%{id: id, to: "/one"}] = old_ones(site)
+      refute id == deleted.id
+      assert deleted_item(site).target_id == id
+
+      assert %{"1" => {:skipped, "unchanged"}} =
+               outcomes(migrate!(site, admin, %{"redirect" => @rows}))
+
+      assert [%{id: ^id}] = old_ones(site)
+    end
+
+    test "Leave it out keeps it deleted on every later run, whatever the source changed, and asks no more",
+         %{site: site, admin: admin} do
+      migrate!(site, admin, %{"redirect" => @rows})
+      decide_deleted!(site, admin, "keep")
+      changed = List.replace_at(@rows, 0, %{"id" => 1, "from" => "/old-one", "to" => "/again"})
+
+      for _run <- 1..2 do
+        assert %{"1" => {:skipped, "target_missing"}} =
+                 outcomes(migrate!(site, admin, %{"redirect" => changed}))
+      end
+
+      assert old_ones(site) == []
+
+      item = deleted_item(site)
+      refute item.left_out
+      assert MigrationItem.conflict(item) == nil
+
+      assert said(MigrationItem.plan_cell(item)) =~
+               MishkaCmsMigration.MigrationRun.reason_label("target_missing")
     end
   end
 
