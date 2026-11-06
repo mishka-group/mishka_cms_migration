@@ -850,6 +850,141 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     end
   end
 
+  describe "the New import's Site" do
+    @modal "#migration-run-form-modal"
+    @search ~s|#migration-run-form-modal input[name="_search_site_id"]|
+    @connection %{"url" => "http://localhost:8089", "user" => "admin", "secret" => "app password"}
+
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      stub!()
+
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      site_a = create_site!(name: "site-a", host: "a.test")
+      site_b = create_site!(name: "site-b", host: "b.test")
+      %{master: master, site_a: site_a, site_b: site_b}
+    end
+
+    defp sites_listed(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|#{@modal} [role="option"]|)
+      |> LazyHTML.attribute("phx-value-label")
+      |> Enum.sort()
+    end
+
+    # What the browser sends when text enters the Site search box, typed or pasted: the form's
+    # change, aimed at the box, carrying every input of the form.
+    defp searched!(view, text, form \\ %{}) do
+      view
+      |> form("#{@modal} form", %{"_search_site_id" => text, "form" => form})
+      |> render_change(%{"_target" => ["_search_site_id"]})
+    end
+
+    test "narrows the list to the sites the text names, typed or pasted", %{
+      conn: conn,
+      master: master
+    } do
+      view = open!(conn, master)
+      new_import!(view)
+      view |> element(@search) |> render_focus()
+
+      assert sites_listed(view) == ["localhost", "site-a", "site-b"]
+
+      searched!(view, "localhost")
+      assert sites_listed(view) == ["localhost"]
+
+      searched!(view, "site")
+      assert sites_listed(view) == ["site-a", "site-b"]
+    end
+
+    test "keeps the window open when the page sends Languages in another shape", %{
+      conn: conn,
+      master: master
+    } do
+      view = open!(conn, master)
+      new_import!(view)
+
+      view
+      |> element("#{@modal} form")
+      |> render_change(%{
+        "_search_site_id" => "loc",
+        "_target" => ["_search_site_id"],
+        "form" => %{"language" => %{"one_language" => "", "_unused_one_language" => ""}}
+      })
+
+      assert shown_step(view) == "from"
+      assert has_element?(view, @search)
+    end
+
+    test "Next with nothing filled shows a master every refusal of the step at once", %{
+      conn: conn,
+      master: master
+    } do
+      view = open!(conn, master)
+      new_import!(view)
+
+      html = next!(view, %{"connection" => %{"url" => "", "user" => "", "secret" => ""}})
+
+      assert shown_step(view) == "from"
+
+      for refusal <- [
+            "Pick the site the content moves to.",
+            "Enter the address.",
+            "Enter the user.",
+            "Enter the application password."
+          ],
+          do: assert(html =~ refusal)
+
+      refute_received {:wordpress_request, _conn}
+    end
+
+    test "a site picked with the mouse after a search stays picked, and the run goes to it", %{
+      conn: conn,
+      master: master,
+      site_b: site_b
+    } do
+      view = open!(conn, master)
+      new_import!(view)
+      view |> element(@search) |> render_focus()
+      searched!(view, "site-b")
+
+      view |> element(~s|#{@modal} [role="option"][phx-value-label="site-b"]|) |> render_click()
+      searched!(view, "site-b", %{"connection" => @connection})
+
+      assert has_element?(view, ~s|#{@modal} input[name="site_id"][value="#{site_b.id}"]|)
+      refute render(view) =~ "Pick the site the content moves to."
+
+      finish!(view, %{"connection" => @connection})
+
+      assert [run] = Ash.read!(MigrationRun, tenant: site_b.id, authorize?: false)
+      assert run.site_id == site_b.id
+    end
+
+    test "is never shown to a site admin, whose run goes to their own site even when a site is sent",
+         %{conn: conn, site: site, site_b: site_b} do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      refute has_element?(view, @search)
+      refute has_element?(view, ~s|#{@modal} [name*="site_id"]|)
+
+      view
+      |> form("#{@modal} form", %{"form" => %{"connection" => @connection}})
+      |> render_submit(%{"site_id" => site_b.id, "form" => %{"site_id" => site_b.id}})
+
+      finish!(view, %{"connection" => @connection})
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      assert run.site_id == site.id
+      assert Ash.read!(MigrationRun, tenant: site_b.id, authorize?: false) == []
+    end
+  end
+
   describe "the WordPress export file's New import" do
     @describetag :tmp_dir
 
