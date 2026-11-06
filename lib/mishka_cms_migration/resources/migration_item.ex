@@ -1482,8 +1482,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   Where `item` stands, as Where it sits shows each item of a branch: `:not_listed` for one the
   source does not list (an ancestor with no `id`, `MishkaCmsMigration.Resources.Calculations.Ancestors`),
   `:left_out`, `:connected` (mapped by an admin), `:imported` (it has a CMS record), `:undecided`
-  (it waits for a decision no admin has made, `undecided?/1`), `:failed` (its last import failed),
-  `:decided` (an admin decided on it, and it is ready to import) or `:not_imported`.
+  (it waits for a decision no admin has made, `undecided?/1`), `:decided` (an admin decided on it,
+  and it is ready to import, also when its last import failed, since the next import follows the
+  decision; Where it sits says under it why that import failed), `:failed` (its last import failed,
+  and nothing on it is decided) or `:not_imported`.
   """
   @spec standing(map()) :: atom()
   def standing(%{id: nil}), do: :not_listed
@@ -1494,8 +1496,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   def standing(item), do: item |> undecided?() |> unsettled(item)
 
   defp unsettled(true, _item), do: :undecided
-  defp unsettled(false, %{outcome: :failed}), do: :failed
   defp unsettled(false, %{decisions: decisions}) when decisions != %{}, do: :decided
+  defp unsettled(false, %{outcome: :failed}), do: :failed
   defp unsettled(false, _item), do: :not_imported
 
   @doc "What `standing/1` says, in words, such as Needs your decision."

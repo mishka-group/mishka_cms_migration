@@ -1295,8 +1295,9 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       refute Admin.flashes(view) =~ "Import of Our Crew"
 
-      assert branch(view) == [{"125", "failed"}, {"127", "decided"}]
+      assert branch(view) == [{"125", "decided"}, {"127", "decided"}]
       assert has_element?(view, ~s|[data-source-id="125"] [data-role="item-branch-failed"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-node"][data-source-id="125"]|, "ready")
       refute has_element?(view, ~s|[data-role="item-branch-busy"]|)
       assert %{outcome: :skipped, reason: "parent_missing: Our Story (#125)"} = item!(crew)
     end

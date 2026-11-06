@@ -9,7 +9,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
   (`MishkaCmsMigration.MigrationItem`'s `:ancestors`), the top one first, each with where it stands
   (`MishkaCmsMigration.MigrationItem.standing/1`): Needs your decision, Import failed (with why,
   from its last import), Decided: ready to import, Not imported yet, Imported, Connected, Left out
-  by you or Not in the source. An item with no parent draws nothing.
+  by you or Not in the source. A decided item whose last import failed says why under it too. An
+  item with no parent draws nothing.
 
   An item that waits for its parent (`MishkaCmsMigration.MigrationItem.waits_for_parent/1`) says so
   first, with what holds it now, read from its parents as they are, not from what its last import
@@ -152,7 +153,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
             {gettext("The source does not list it, such as a page in the trash.")}
           </p>
           <p
-            :if={MigrationItem.standing(node) == :failed and is_binary(node.reason)}
+            :if={failure_noted?(node)}
             data-role="item-branch-failed"
             class="m-0 ms-6 text-[11.5px] font-medium text-[#c0473d]"
           >
@@ -360,6 +361,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
       gettext("This %{kind} waits for its parent", kind: MigrationRun.kind_one(item.source_kind))
 
   defp importable?(item), do: MigrationItem.standing(item) in @importable
+
+  defp failure_noted?(%{outcome: :failed, reason: reason} = node) when is_binary(reason),
+    do: MigrationItem.standing(node) in [:failed, :decided]
+
+  defp failure_noted?(_node), do: false
 
   defp failed_reason(node),
     do: node.reason |> MigrationRun.reason_label(node.source_kind) |> String.trim_trailing(".")

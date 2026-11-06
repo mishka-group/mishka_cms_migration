@@ -89,5 +89,30 @@ defmodule MishkaCmsMigration.MigrationItemTest do
       assert MigrationItem.standing(undecided("1")) == :undecided
       assert MigrationItem.standing_word(:decided) =~ "ready to import"
     end
+
+    test "is decided once an admin answers what a dry run found after its import failed" do
+      failed =
+        item("24", %{
+          outcome: :failed,
+          reason: "path: The page “About” at /:lang/about already answers at /about.",
+          plan: :undecided,
+          plan_reason: "slug_taken: About"
+        })
+
+      assert MigrationItem.standing(failed) == :undecided
+
+      assert MigrationItem.standing(%{failed | decisions: %{"slug_taken" => "keep"}}) ==
+               :decided
+
+      assert MigrationItem.standing(
+               item("24", %{
+                 outcome: :failed,
+                 reason: "path: taken",
+                 plan: :skipped,
+                 plan_reason: "connected",
+                 decisions: %{"slug_taken" => "keep"}
+               })
+             ) == :decided
+    end
   end
 end
