@@ -51,6 +51,17 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   your decision: decide it and import it, then this one again.", an error flash for a failure. The
   page keeps only the ids it waits on, and reads nothing for it.
 
+  Import the picked items, and Import the branch, say what came of all of them in one flash once
+  the job has settled the last one, or once the run is back from its import, whichever is first
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary`): "Import of 3 items: About failed: …;
+  Team and أميرة حداد skipped: their parent was not imported." Nothing is read for it either.
+
+  The page follows its run's broadcasts (`"migration_run:<site_id>:updated"`), keeping only its
+  status: while the run's dry run or import runs, the Decisions panel and the expanded branch
+  disable what would change an item or start a job, and say why; anything still refused, such as
+  a row action pressed then, says what the run is doing in words
+  (`MishkaCmsMigration.Resources.Validations.Status`).
+
   ## Map to… and the Map view
 
   A category's or a tag's Map to…, in the List and in the Map view, shows the page's modal on the
@@ -105,12 +116,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       rows, the branch and the Decisions panel again once;
     * `import_node` imports one item, as Import this item does, and `import_branch` the branch's
       items not imported yet, parents first, as Import the picked items does; each then says what
-      came of the expanded item once its job settles it;
+      came of its items once its job settles them, the branch in one flash;
     * `import_anyway` decides that the expanded item is imported without its parent
       (`"parent_missing"` answered with `"import"`) and imports it.
 
   While a row is expanded, the broadcast of any item of its branch draws the branch again, so it
-  shows each item where it stands now.
+  shows each item where it stands now, as each result of a job arrives, and so does a change of
+  the run's status.
 
   ## Decisions
 
@@ -127,7 +139,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   use MishkaCmsCore.ExtensionLiveView
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
-  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.{Branch, Decisions}
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.{Branch, Decisions, Summary}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
   alias MishkaGervaz.Errors
   alias MishkaGervaz.Table.Web.UrlSync
@@ -168,14 +180,17 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     case MigrationRun.fetch(id, socket.assigns.current_user) do
       {:ok, %MigrationRun{} = run} ->
         {:ok,
-         assign(socket,
+         socket
+         |> assign(
            page_title: gettext("Items"),
            run: run,
            source: Source.label(run.source),
            url_state: nil,
            awaiting: %{},
+           batch: nil,
            branch: nil
-         )}
+         )
+         |> follow(run, connected?(socket))}
 
       _unreadable ->
         {:ok,
@@ -223,6 +238,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     send_update(Decisions, id: @decisions_id, refresh: true)
     {:noreply, socket |> finished(notification) |> branch_changed(notification.data)}
   end
+
+  def handle_info(
+        %Phoenix.Socket.Broadcast{
+          topic: "migration_run" <> _rest,
+          payload: %Ash.Notifier.Notification{data: %MigrationRun{} = moved}
+        },
+        socket
+      ),
+      do: {:noreply, run_moved(socket, moved)}
 
   def handle_info({:row_action, "dry_run_item", %{"id" => id}}, socket),
     do: {:noreply, picked(socket, [id], &MishkaCmsMigration.dry_run_items/3, :dry_run)}
@@ -274,16 +298,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   def handle_event("import_node", %{"id" => id}, socket),
     do: {:noreply, picked(socket, [id], &MishkaCmsMigration.import_items/3, :import)}
 
-  def handle_event("import_branch", %{"ids" => ids, "item" => item_id}, socket),
+  def handle_event("import_branch", %{"ids" => ids}, socket),
     do:
       {:noreply,
-       picked(
-         socket,
-         String.split(ids, ","),
-         &MishkaCmsMigration.import_items/3,
-         :import_picked,
-         item_id
-       )}
+       picked(socket, String.split(ids, ","), &MishkaCmsMigration.import_items/3, :import_picked)}
 
   def handle_event("import_anyway", %{"id" => id}, socket),
     do:
@@ -372,25 +390,23 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   defp redraw_branch(%{assigns: %{branch: %{id: id}}} = socket), do: expand(socket, id)
   defp redraw_branch(socket), do: socket
 
-  defp picked(socket, ids, action, step, awaited \\ nil) do
+  defp picked(socket, ids, action, step) do
     user = socket.assigns.current_user
 
     with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(socket.assigns.run.id, user),
          {:ok, _run} <- action.(run, ids, actor: user, tenant: run.site_id) do
-      socket |> awaiting(ids, step, awaited) |> put_flash(:info, started(step, length(ids)))
+      socket |> awaiting(ids, step) |> put_flash(:info, started(step, length(ids)))
     else
       {:ok, nil} -> refused(socket, step, :not_found)
       {:error, reason} -> refused(socket, step, reason)
     end
   end
 
-  defp awaiting(socket, [id], step, nil) when step in [:dry_run, :import],
+  defp awaiting(socket, [id], step) when step in [:dry_run, :import],
     do: update(socket, :awaiting, &Map.put(&1, id, step))
 
-  defp awaiting(socket, _ids, :import_picked, id) when is_binary(id),
-    do: update(socket, :awaiting, &Map.put(&1, id, :import))
-
-  defp awaiting(socket, _ids, _step, _awaited), do: socket
+  defp awaiting(socket, ids, :import_picked),
+    do: assign(socket, :batch, %{ids: ids, waiting: Map.new(ids, &{&1, true}), settled: %{}})
 
   defp finished(socket, notification),
     do: notification |> MigrationItem.picked?() |> finished(notification.data, socket)
@@ -405,7 +421,56 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     |> put_flash(flash_kind(result), finished_words(step, item, result, reason))
   end
 
+  defp finished(
+         true,
+         %MigrationItem{id: id} = item,
+         %{assigns: %{batch: %{waiting: waiting} = batch}} = socket
+       )
+       when is_map_key(waiting, id),
+       do:
+         socket
+         |> assign(:batch, %{
+           batch
+           | waiting: Map.delete(waiting, id),
+             settled: Map.put(batch.settled, id, item)
+         })
+         |> summed()
+
   defp finished(_picked, _item, socket), do: socket
+
+  defp summed(%{assigns: %{batch: %{waiting: waiting}}} = socket) when waiting == %{},
+    do: summarized(socket)
+
+  defp summed(socket), do: socket
+
+  defp summarized(%{assigns: %{batch: %{ids: ids, settled: settled}}} = socket) do
+    {kind, words} = Summary.call(ids, settled)
+    socket |> assign(:batch, nil) |> put_flash(kind, words)
+  end
+
+  defp summarized(socket), do: socket
+
+  defp follow(socket, run, true) do
+    socket.endpoint.subscribe("migration_run:#{run.site_id}:updated")
+    socket
+  end
+
+  defp follow(socket, _run, false), do: socket
+
+  defp run_moved(%{assigns: %{run: %{id: id, status: status}}} = socket, %{id: id, status: status}),
+       do: socket
+
+  defp run_moved(%{assigns: %{run: %{id: id} = run}} = socket, %{id: id, status: status}) do
+    socket
+    |> assign(:run, %{run | status: status})
+    |> job_ended(busy?(status))
+    |> redraw_branch()
+  end
+
+  defp run_moved(socket, _other_run), do: socket
+
+  defp job_ended(socket, false), do: summarized(socket)
+  defp job_ended(socket, true), do: socket
 
   defp result(:dry_run, item), do: {item.plan, item.plan_reason}
   defp result(:import, item), do: {item.outcome, item.reason}
@@ -499,7 +564,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp branch_of(_item), do: nil
 
-  defp busy?(%MigrationRun{status: status}), do: status in [:dry_running, :importing]
+  defp busy?(%MigrationRun{status: status}), do: busy?(status)
+  defp busy?(status), do: status in [:dry_running, :importing]
 
   defp details_html(item, list_path, busy) do
     assigns = %{item: item, json: json(item), list_path: list_path, busy: busy}

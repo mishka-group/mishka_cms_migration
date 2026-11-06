@@ -357,6 +357,20 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     settled(view)
   end
 
+  # The core refuses every page from now on, as a deployment with hand-written templates off does,
+  # so a page's import fails with the core's sentence.
+  defp pages_code_off! do
+    previous = Application.fetch_env(:mishka_cms_core, :page_code)
+    Application.put_env(:mishka_cms_core, :page_code, :off)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:mishka_cms_core, :page_code, value)
+        :error -> Application.delete_env(:mishka_cms_core, :page_code)
+      end
+    end)
+  end
+
   # How many UPDATEs of the items the repository runs from now on, in any process, read once.
   defp updates_counted do
     test = self()
@@ -828,9 +842,16 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       pick!(view, second)
 
       assert bulk!(view, "import_items") =~ "Import of 2 items started."
+      Admin.clear_flashes(view)
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
 
       assert Enum.map([first, second], &item!(&1).reason) == ["unchanged", "unchanged"]
+
+      flash = Admin.flashes(view)
+      assert flash =~ ~r/\AImport of 2 items: .+ skipped: Unchanged\.\z/
+      assert flash =~ first.title
+      assert flash =~ second.title
     end
 
     test "are refused in words while another run of the site is running, and are not offered on an item left out",
@@ -1231,10 +1252,11 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       Admin.clear_flashes(view)
       branch_click!(view, ~s|[data-role="item-branch-import-all"]|)
       assert Admin.flashes(view) =~ "Import of 2 items started."
+      Admin.clear_flashes(view)
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
       settled(view)
 
-      assert Admin.flashes(view) =~ "Import of Our Crew: Created."
+      assert Admin.flashes(view) =~ "Import of 2 items: Our Story and Our Crew created."
       assert %{outcome: :created, target_id: story_page} = item!(story)
 
       assert %{title: "Our Story"} =
@@ -1246,6 +1268,37 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert %{outcome: :created, reason: nil} = item!(crew)
       assert branch(view) == [{"125", "imported"}, {"127", "imported"}]
       refute has_element?(view, ~s|#{@table} [id$="#{crew.id}"] [data-role="item-waits-node"]|)
+    end
+
+    test "Import the branch says every item's result in one flash once its job is done, a failed parent first, and the open branch follows live",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      MishkaCmsMigration.decide_item!(page(site, "125"), "import", actor: admin, tenant: site.id)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+      pages_code_off!()
+
+      branch_click!(view, ~s|[data-role="item-branch-import-all"]|)
+      assert Admin.flashes(view) =~ "Import of 2 items started."
+      assert has_element?(view, ~s|[data-role="item-branch-busy"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-import-all"][disabled]|)
+
+      Admin.clear_flashes(view)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(view, "#flash-error")
+
+      assert Admin.flashes(view) =~
+               ~r/Import of 2 items: Our Story failed: .+; Our Crew skipped: its parent was not imported\./
+
+      refute Admin.flashes(view) =~ "Import of Our Crew"
+
+      assert branch(view) == [{"125", "failed"}, {"127", "decided"}]
+      assert has_element?(view, ~s|[data-source-id="125"] [data-role="item-branch-failed"]|)
+      refute has_element?(view, ~s|[data-role="item-branch-busy"]|)
+      assert %{outcome: :skipped, reason: "parent_missing: Our Story (#125)"} = item!(crew)
     end
 
     test "marks the recommended choice, says to decide the parents first, and asks once per click",

@@ -213,7 +213,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Branch do
           disabled={@busy}
           phx-click="import_branch"
           phx-value-ids={Enum.join(Enum.map(@import_all, & &1.id), ",")}
-          phx-value-item={@item.id}
           phx-disable-with=""
           data-confirm={
             gettext("Import these %{count} items now, parents first: %{titles}?",
