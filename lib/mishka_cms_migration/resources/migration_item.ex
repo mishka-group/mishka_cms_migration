@@ -34,7 +34,10 @@ defmodule MishkaCmsMigration.MigrationItem do
   `:record_outcome` after an item was skipped or failed, which keeps what the last write recorded.
   No import write touches the plan,
   so an item shows what the last dry run would do beside what the last import did, and none of them
-  touches an admin's choices (below). Read by whoever may read the site's runs
+  touches an admin's choices (below) but one: once `:record` gives an item a CMS record again, an
+  admin's decision on the one deleted for good (`"deleted_in_cms"`) is forgotten
+  (`:forget_deleted_decision`, right after it), so Import it again holds once and a later
+  deletion of the new record asks again. Read by whoever may read the site's runs
   (`MishkaCmsMigration.MigrationRun`).
 
   ## An admin's choices
@@ -985,6 +988,21 @@ defmodule MishkaCmsMigration.MigrationItem do
       description "System-internal: what a dry run would do with an item, keeping what imports recorded"
     end
 
+    update :forget_deleted_decision do
+      accept []
+      require_atomic? false
+
+      change fn changeset, _context ->
+        Ash.Changeset.force_change_attribute(
+          changeset,
+          :decisions,
+          Map.delete(changeset.data.decisions, "deleted_in_cms")
+        )
+      end
+
+      description "System-internal: forgets the decision on a deleted CMS record once the item has a record again"
+    end
+
     update :forget_plan do
       accept []
 
@@ -1004,7 +1022,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       forbid_if always()
     end
 
-    policy action(:forget_plan) do
+    policy action([:forget_plan, :forget_deleted_decision]) do
       forbid_if always()
     end
 

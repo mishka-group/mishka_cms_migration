@@ -94,8 +94,9 @@ defmodule MishkaCmsMigration.Report do
       item is updated, its note led by `"restored"`; what points at it waits meanwhile.
     * `"deleted_in_cms"` — the CMS record the item was written to was deleted for good, so
       anything that points at it would lose it (`MishkaCmsMigration.Workers.Helpers.Decision`).
-      Import it again creates a new record, as a first import does, and the item remembers it;
-      Leave it out skips it as `"target_missing"` from then on; what points at it waits meanwhile.
+      Import it again creates a new record, as a first import does, and the item remembers it, once:
+      should the new record be deleted too, the admin is asked again; Leave it out skips it as
+      `"target_missing"` from then on; what points at it waits meanwhile.
 
   `duplicates` counts the media files that are the same bytes as an earlier one
   (`MishkaCmsMigration.Targets.CmsMedia`): `found` the ones the run met, `merged` those an admin

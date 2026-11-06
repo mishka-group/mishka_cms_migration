@@ -42,6 +42,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   keeping the one it had for a record an admin changed before archiving it, or one the CMS already
   held.
 
+  An item that is given a CMS record again after an admin decided on the one deleted for good
+  (`"deleted_in_cms"`, `MishkaCmsMigration.Workers.Helpers.Decision`) forgets that decision right
+  after it is recorded, in the item's transaction where it has one
+  (`MishkaCmsMigration.MigrationItem`'s `:forget_deleted_decision`), one more write for that item
+  alone: Import it again holds once, and a later deletion asks again.
+
   An item connected to a record the CMS already held (`MishkaCmsMigration.Target`'s `existing/2`),
   or mapped to one by an admin, is not written: in an import it is recorded against that record,
   with no `target_updated_at`, as skipped, `"connected"`; a dry run reports it so. An item the
@@ -74,6 +80,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias MishkaCmsMigration.Workers.Helpers.Archived
 
   @restored "restored"
+  @deleted "deleted_in_cms"
 
   @doc """
   Settles `item` by `plan` and answers its entry in the report:
@@ -342,7 +349,14 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
       ),
       scope: state.scope
     )
+    |> forgotten(state)
   end
+
+  defp forgotten({:ok, %MigrationItem{decisions: decisions} = item}, state)
+       when is_map_key(decisions, @deleted),
+       do: MishkaCmsMigration.forget_item_deleted_decision(item, scope: state.scope)
+
+  defp forgotten(recorded, _state), do: recorded
 
   defp noted(%{mode: :import} = state, %Item{source_id: source_id} = item, outcome, reason)
        when is_binary(source_id) do

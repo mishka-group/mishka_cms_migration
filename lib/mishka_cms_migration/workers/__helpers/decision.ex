@@ -64,10 +64,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   `"deleted_in_cms"`, in a dry run and in an import, and what points at it waits for that decision
   too, as for an archived one. Import it again (`"import"`) is `{:created, target, nil, decisions}`:
   the item is planned as a first import plans it, the target's `existing/2` asked about it with the
-  page's other new items, and the import records the new record in place of the deleted one. Leave
-  it out (`"keep"`) is `{:skipped, "target_missing"}` on every later run, and what points at it is
-  written without it. A record an admin mapped the item to that is gone is `"mapped_missing"`
-  instead, above: the import never wrote it.
+  page's other new items, and the import records the new record in place of the deleted one and
+  forgets the decision (`MishkaCmsMigration.Workers.Helpers.Writer`), so it holds once: a later
+  deletion of the new record asks again. Leave it out (`"keep"`) is `{:skipped, "target_missing"}`
+  on every later run, and what points at it is written without it. A record an admin mapped the
+  item to that is gone is `"mapped_missing"` instead, above: the import never wrote it.
 
   `decisions` are the admin's answers to the conflicts the item met
   (`MishkaCmsMigration.MigrationItem`'s `decisions`), which the target is handed with the item

@@ -630,6 +630,22 @@ defmodule MishkaCmsMigration.PipelineTest do
       assert [%{id: ^id}] = old_ones(site)
     end
 
+    test "Import it again holds once: the new record deleted for good waits for the admin's decision again",
+         %{site: site, admin: admin} do
+      migrate!(site, admin, %{"redirect" => @rows})
+      decide_deleted!(site, admin, "import")
+      migrate!(site, admin, %{"redirect" => @rows})
+      assert deleted_item(site).decisions == %{}
+
+      [again] = old_ones(site)
+      Ash.destroy!(again, action: :permanent_destroy, actor: admin, tenant: site.id)
+
+      assert %{"1" => {:undecided, "deleted_in_cms"}} =
+               outcomes(migrate!(site, admin, %{"redirect" => @rows}))
+
+      assert old_ones(site) == []
+    end
+
     test "Leave it out keeps it deleted on every later run, whatever the source changed, and asks no more",
          %{site: site, admin: admin} do
       migrate!(site, admin, %{"redirect" => @rows})
@@ -645,7 +661,14 @@ defmodule MishkaCmsMigration.PipelineTest do
 
       item = deleted_item(site)
       refute item.left_out
+      assert item.decisions == %{"deleted_in_cms" => "keep"}
       assert MigrationItem.conflict(item) == nil
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               MishkaCmsMigration.forget_item_deleted_decision(item,
+                 actor: admin,
+                 tenant: site.id
+               )
 
       assert said(MigrationItem.plan_cell(item)) =~
                MishkaCmsMigration.MigrationRun.reason_label("target_missing")
