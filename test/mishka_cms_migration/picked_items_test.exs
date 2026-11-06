@@ -322,7 +322,9 @@ defmodule MishkaCmsMigration.PickedItemsTest do
                  step.(run, [id], actor: admin, tenant: site.id)
 
         assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
-                 "The run cannot do that while it is importing."
+                 "An import of this run is running. Wait until it finishes, then try again."
+
+        refute error.message =~ "%{"
       end
 
       assert [%{worker: "MishkaCmsMigration.Workers.ImportWorker"}] =
@@ -330,6 +332,17 @@ defmodule MishkaCmsMigration.PickedItemsTest do
 
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
       assert %{outcome: :created} = item(site, "tag", "13")
+
+      dry_running =
+        run.id
+        |> MishkaCmsMigration.get_run!(actor: admin, tenant: site.id)
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      assert {:error, %{errors: [%{field: :status} = error]}} =
+               MishkaCmsMigration.import_items(dry_running, [id], actor: admin, tenant: site.id)
+
+      assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
+               "A dry run of this run is running. Wait until it finishes, then try again."
     end
   end
 

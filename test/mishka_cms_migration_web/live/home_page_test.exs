@@ -1633,7 +1633,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       pending = create_run!(site, admin, %{})
       view = open!(conn, admin)
 
-      assert crafted!(view, "import", pending.id) =~ "The run cannot do that while it is pending."
+      assert crafted!(view, "import", pending.id) =~
+               "The run has no dry run yet. Run a dry run first."
+
       assert status(pending) == :pending
     end
   end

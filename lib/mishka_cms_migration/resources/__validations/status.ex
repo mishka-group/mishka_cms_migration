@@ -21,6 +21,11 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
   before it moved on is refused with the status it is in now.
 
       validate {MishkaCmsMigration.Resources.Validations.Status, from: [:done], as_read: true}
+
+  A refused run is an `Ash.Error.Changes.InvalidAttribute` on `status` whose message says, in
+  words, what the run is doing and what to do, such as "An import of this run is running. Wait until
+  it finishes, then try again." It names no variable, so the same sentence reads in a flash and in
+  the log, and the atomic check picks it in the database by the status the run is in.
   """
 
   use Ash.Resource.Validation
@@ -30,7 +35,23 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
 
   alias Ash.Error.Changes.InvalidAttribute
 
-  @message dgettext_noop("errors", "The run cannot do that while it is %{status}.")
+  @messages %{
+    pending: dgettext_noop("errors", "The run has no dry run yet. Run a dry run first."),
+    dry_running:
+      dgettext_noop(
+        "errors",
+        "A dry run of this run is running. Wait until it finishes, then try again."
+      ),
+    dry_run: dgettext_noop("errors", "The run's dry run is ready and waits for its import."),
+    importing:
+      dgettext_noop(
+        "errors",
+        "An import of this run is running. Wait until it finishes, then try again."
+      ),
+    done: dgettext_noop("errors", "The run's import is done. Run it again to import once more."),
+    failed: dgettext_noop("errors", "The run failed. Run it again to try once more."),
+    cancelled: dgettext_noop("errors", "The run was cancelled. Start a New import.")
+  }
 
   @impl true
   def init(opts), do: opts |> Keyword.get(:from) |> from(opts[:as_read] == true)
@@ -44,14 +65,14 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
   @impl true
   def atomic(changeset, opts, _context) do
     {:atomic, [:status], refused(opts[:from], {opts[:as_read], changeset.data.status}),
-     expr(
-       error(^InvalidAttribute, %{
-         field: :status,
-         message: ^@message,
-         vars: %{status: status}
-       })
-     )}
+     expr(error(^InvalidAttribute, %{field: :status, message: ^said()}))}
   end
+
+  defp said,
+    do:
+      Enum.reduce(@messages, nil, fn {state, message}, otherwise ->
+        expr(if status == ^state, do: ^message, else: ^otherwise)
+      end)
 
   defp refused(from, {true, read}), do: expr(status not in ^from or status != ^read)
   defp refused(from, _any_status), do: expr(status not in ^from)
@@ -66,6 +87,5 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
 
   defp allowed(status, []),
     do:
-      {:error,
-       InvalidAttribute.exception(field: :status, message: @message, vars: [status: status])}
+      {:error, InvalidAttribute.exception(field: :status, message: Map.fetch!(@messages, status))}
 end
