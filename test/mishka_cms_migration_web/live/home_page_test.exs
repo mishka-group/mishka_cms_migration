@@ -1037,6 +1037,51 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       settled(view)
       assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
     end
+
+    test "adds a new run above the runs it already shows, and follows it, without a reload", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+
+      for n <- 1..3,
+          do: create_run!(site, admin, %{}, %{source_host: "old#{n}.example.com"})
+
+      view = open!(conn, admin)
+      run = create_run!(site, admin, %{}, %{source_host: "new.example.com"})
+
+      assert settled(view) =~ "new.example.com"
+      assert render(view) =~ "old1.example.com"
+
+      dry_run!(run, admin)
+      settled(view)
+
+      assert statuses(view) == ["dry_run", "pending", "pending", "pending"]
+    end
+
+    # The status of each row the runs table shows, top to bottom.
+    defp statuses(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|#migration-runs-table [data-role="run-status"]|)
+      |> LazyHTML.attribute("data-status")
+    end
+
+    test "shows a master a new run of any site, and its status as it moves on, without a reload",
+         %{conn: conn, site: site} do
+      master = create_user_with_permissions!(["admin:dashboard:migration"])
+      view = open!(conn, master)
+      admin = migration_admin!(site)
+
+      run = create_run!(site, admin, %{})
+      assert settled(view) =~ "old.example.com"
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
+
+      dry_run!(run, admin)
+      settled(view)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_run"]|)
+    end
   end
 
   describe "a run's Result while its job runs" do
