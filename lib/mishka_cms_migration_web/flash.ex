@@ -14,10 +14,9 @@ defmodule MishkaCmsMigrationWeb.Flash do
       start after the run was saved;
     * `:error` — failed: a failed import, a run that is not there, a choice the core refused.
 
-  The core draws two kinds only, `:info` (green) and `:error` (red)
-  (`MishkaCmsCore.Layouts.flash_group/1`), so `put/3` maps `:success`, `:info` and `:warning` to
-  `:info` and `:error` to `:error` (`core_kind/1`). A page and a test keep asking for the meaning;
-  when the core draws more kinds, only `core_kind/1` changes.
+  The core draws the same four kinds (`MishkaCmsCore.Layouts.flash_group/1`): success green, info
+  blue, warning amber and error red. `put/3` puts each meaning under its own core kind
+  (`core_kind/1`), so a page and a test ask for the meaning and the admin sees its colour.
 
   `result_kind/1` is the meaning of what an item's dry run or import came to.
   """
@@ -37,12 +36,11 @@ defmodule MishkaCmsMigrationWeb.Flash do
     do: Phoenix.LiveView.put_flash(socket, core_kind(kind), message)
 
   @doc """
-  The kind the core draws a flash of `kind` with: `:error` for `:error`, `:info` for every other
-  (see the moduledoc for what the core lacks).
+  The kind the core draws a flash of `kind` with: `:success`, `:info`, `:warning` and `:error` each
+  have their own colour and icon.
   """
-  @spec core_kind(kind()) :: :info | :error
-  def core_kind(:error), do: :error
-  def core_kind(kind) when kind in [:success, :info, :warning], do: :info
+  @spec core_kind(kind()) :: kind()
+  def core_kind(kind) when kind in [:success, :info, :warning, :error], do: kind
 
   @doc """
   What a flash about one item means, by what its dry run or import came to: created and updated are

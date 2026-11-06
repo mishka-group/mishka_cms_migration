@@ -5,7 +5,7 @@
 defmodule MishkaCmsMigrationWeb.FlashTest do
   @moduledoc """
   The flashes of the migration pages by what they mean: success, info, warning and error, drawn
-  with the two kinds the core has, and the kind of the one flash that sums up several items.
+  with the four kinds the core has, and the kind of the one flash that sums up several items.
   """
   use ExUnit.Case, async: true
 
@@ -14,11 +14,10 @@ defmodule MishkaCmsMigrationWeb.FlashTest do
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary
 
   describe "the kinds" do
-    test "every meaning is drawn with a kind the core has, and only an error is red" do
+    test "every meaning is drawn with its own kind of the core" do
       assert Flash.kinds() == [:success, :info, :warning, :error]
 
-      for kind <- Flash.kinds(),
-          do: assert(Flash.core_kind(kind) == if(kind == :error, do: :error, else: :info))
+      for kind <- Flash.kinds(), do: assert(Flash.core_kind(kind) == kind)
     end
 
     test "an item's result means success when written, error when failed, and a warning otherwise" do
@@ -32,8 +31,8 @@ defmodule MishkaCmsMigrationWeb.FlashTest do
     test "put draws the meaning with the core's kind" do
       socket = %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, flash: %{}}}
 
-      assert %{assigns: %{flash: %{"info" => "Done"}}} = Flash.put(socket, :success, "Done")
-      assert %{assigns: %{flash: %{"info" => "Mind"}}} = Flash.put(socket, :warning, "Mind")
+      assert %{assigns: %{flash: %{"success" => "Done"}}} = Flash.put(socket, :success, "Done")
+      assert %{assigns: %{flash: %{"warning" => "Mind"}}} = Flash.put(socket, :warning, "Mind")
       assert %{assigns: %{flash: %{"error" => "No"}}} = Flash.put(socket, :error, "No")
     end
   end

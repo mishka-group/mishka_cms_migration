@@ -964,7 +964,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
       settled(view)
 
-      assert has_element?(view, "#flash-info", "Import of #{tag.title}: Skipped.")
+      assert has_element?(view, "#flash-warning", "Import of #{tag.title}: Skipped.")
       assert %{outcome: :skipped, reason: "unchanged"} = item!(tag)
     end
   end
