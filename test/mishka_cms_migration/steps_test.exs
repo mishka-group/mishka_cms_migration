@@ -12,6 +12,7 @@ defmodule MishkaCmsMigration.StepsTest do
   use MishkaCmsMigration.DataCase, async: false
 
   alias MishkaCmsCore.Notify.Notification
+  alias MishkaCmsMigration.Resources.Notifiers.Steps
   alias MishkaCmsMigration.Workers.{DryRunWorker, ImportWorker}
 
   @rows [
@@ -71,6 +72,15 @@ defmodule MishkaCmsMigration.StepsTest do
       for told <- [import, dry_run],
           text <- [told.title, told.body, inspect(told.metadata)],
           do: refute(text =~ "letmein")
+    end
+
+    test "counts what waited for a decision in the past tense, as the run counted it when it ended" do
+      counts = %{created: 1029, updated: 0, skipped: 74, failed: 0, undecided: 565}
+
+      for step <- [:dry_run_finished, :import_finished] do
+        assert Steps.sentence(step, %{source_host: "localhost:8090", counts: counts, reason: nil}) =~
+                 "1,029 created, 74 skipped, 565 needed your decision."
+      end
     end
 
     test "of a source with nothing to move says so", %{site: site, admin: admin} do
