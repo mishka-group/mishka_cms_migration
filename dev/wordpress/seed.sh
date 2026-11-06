@@ -18,9 +18,9 @@ fi
 # `&` in a replacement string must stay a literal `&` (URLs have them).
 shopt -u patsub_replacement 2>/dev/null || true
 
-SITE_URL=http://localhost:8089
+SITE_URL=${WP_SITE_URL:-http://localhost:8089}
 SEED=/seed
-ENV_FILE=$SEED/.env.local
+ENV_FILE=$SEED/${WP_ENV_FILE:-.env.local}
 APP_NAME="Mishka Migration"
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -535,4 +535,4 @@ done
 printf '  users=%s categories=%s tags=%s comments(all)=%s\n' \
   "$(wpu user list --format=count)" "$(wpu term list category --format=count)" "$(wpu term list post_tag --format=count)" \
   "$(wpu comment list --status=all --format=count)"
-echo "Site: $SITE_URL   Admin: admin (password in dev/wordpress/.env.local)"
+echo "Site: $SITE_URL   Admin: admin (password in dev/wordpress/${WP_ENV_FILE:-.env.local})"

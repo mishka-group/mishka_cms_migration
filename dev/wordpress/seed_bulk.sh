@@ -20,7 +20,7 @@ if [ -z "${IN_WP_CLI:-}" ]; then
 fi
 
 shopt -u patsub_replacement 2>/dev/null || true
-SITE_URL=http://localhost:8089
+SITE_URL=${WP_SITE_URL:-http://localhost:8089}
 BULK=/seed/bulk
 COMMENT_AGENT=mishka-bulk-seed
 export SITE_URL BULK

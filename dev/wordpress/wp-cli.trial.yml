@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Mishka Group contributors <https://github.com/mishka-group/mishka_cms_migration/graphs/contributors>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# WP-CLI settings for the seed and record scripts (the wp-cli container reads this file through
+# WP_CLI_CONFIG_PATH). `apache_modules` lets `wp rewrite structure --hard` write .htaccess, which
+# WP-CLI cannot detect on its own because it does not run inside Apache.
+path: /var/www/html
+url: http://localhost:8090
+apache_modules:
+  - mod_rewrite
+# Quiet: Elementor's WP-CLI logger prints every PHP notice it records (Elementor 4 raises PHP 8.4 deprecations) with
+# WP_CLI::log, to stdout, which php.ini cannot redirect; it would corrupt the CSV and porcelain output the seed scripts
+# read. Quiet drops the log lines; errors and warnings still go to stderr.
+quiet: true

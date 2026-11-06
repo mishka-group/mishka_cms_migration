@@ -160,6 +160,29 @@ cd dev/wordpress
 Fixtures are never recorded from bulk data. Record only from the curated seed, on a clean site:
 `docker compose down -v && ./seed.sh && ./seed.sh && ./record.sh`.
 
+## Trial site
+
+A second, comprehensive WordPress for testing the migration by hand, on http://localhost:8090 (admin at `/wp-admin`,
+user `admin`), beside the 8089 one and never touching it: its own compose project `mishka-wordpress-trial`, its own
+volumes (`docker-compose.trial.yml`, `wp-cli.trial.yml`). `./trial.sh` seeds it with everything above (curated seed
+twice, Elementor, Polylang, the e2e data, the bulk content; several minutes) and leaves Polylang active. The
+application password and the admin login are in `.env.trial` (git-ignored).
+
+```sh
+./trial.sh                                              # builds and fills http://localhost:8090
+export COMPOSE_FILE=docker-compose.yml:docker-compose.trial.yml
+docker compose stop                                     # stops it, keeps the site
+docker compose down -v                                  # deletes the trial site and only it
+docker compose run --rm -T wp-cli wp --user=admin plugin deactivate polylang   # Polylang off
+docker compose run --rm -T wp-cli wp --user=admin plugin activate polylang     # Polylang on
+```
+
+Run those in a shell where `COMPOSE_FILE` is set as above; without it, `docker compose` talks to the 8089 project.
+
+The WP-CLI configs set `quiet: true`: with Elementor 4 active, its WP-CLI logger prints every PHP 8.4 deprecation it
+records to stdout, which would break the CSV and porcelain reads of `seed_bulk.sh`. Errors and warnings still go to
+stderr.
+
 ## Testing approach
 
 - **Unit tests** replay the recorded responses from `test/fixtures/wordpress/` (REST bodies and headers, WXR files).
