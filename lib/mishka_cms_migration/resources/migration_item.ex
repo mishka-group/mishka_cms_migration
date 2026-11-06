@@ -340,7 +340,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           sort_field [:title]
 
           ui do
-            width "minmax(118px,1.6fr)"
+            width "minmax(108px,1.6fr)"
             class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
 
             header_class "min-w-0 cursor-pointer text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
@@ -459,7 +459,7 @@ defmodule MishkaCmsMigration.MigrationItem do
           sort_field [:updated_at]
 
           ui do
-            width "minmax(92px,0.7fr)"
+            width "minmax(102px,0.7fr)"
             class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
 
             header_class "min-w-0 cursor-pointer text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"

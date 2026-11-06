@@ -586,7 +586,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       [_checkbox, _expand, kind, _title, _plan, _result, record, updated, _actions] = tracks
       assert kind >= 126
       assert record >= 90
-      assert updated >= 92
+      assert updated >= 102
     end
 
     test "says in words why an item was skipped", %{
