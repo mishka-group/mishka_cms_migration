@@ -817,6 +817,32 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert decision_choices(view) == ["Import it again", "Leave it out"]
     end
 
+    test "Import this item, once confirmed, imports an item that waits for a decision, and one left out deleted, with a flash and its outcome",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      item =
+        Enum.find(stored(site), &(&1.source_kind == "post_redirect" and is_binary(&1.target_id)))
+
+      MishkaCmsCore.Runtime.Redirect
+      |> Ash.get!(item.target_id, tenant: site.id, authorize?: false)
+      |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
+
+      site |> later_run!(admin, run) |> dry_run!(admin)
+      view = open!(conn, admin, run, "?items_filter_source_kind=post_redirect")
+
+      assert has_element?(view, "#{item_action("import_item", item)}[data-confirm]")
+      assert item_action!(view, "import_item", item) =~ "Import of the item started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      assert %{outcome: :undecided, reason: "deleted_in_cms"} = item!(item)
+
+      settled(view)
+      row_action!(view, "decide", item)
+      decide!(view, "keep")
+
+      assert item_action!(view, "import_item", item) =~ "Import of the item started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      assert %{outcome: :skipped, reason: "target_missing"} = item!(item)
+    end
+
     test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
          %{conn: conn, site: site, admin: admin} do
       without_blog!()
