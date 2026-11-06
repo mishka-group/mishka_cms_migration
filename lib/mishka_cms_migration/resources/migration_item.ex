@@ -385,9 +385,12 @@ defmodule MishkaCmsMigration.MigrationItem do
             :source_kind,
             :outcome,
             :reason,
+            :plan,
             :plan_reason,
             :left_out,
             :mapped_id,
+            :mapped_paths,
+            :decisions,
             :target_id,
             :ancestors
           ]
@@ -1684,6 +1687,12 @@ defmodule MishkaCmsMigration.MigrationItem do
   (`data-role="item-outcome"`, its `data-outcome` the outcome), the reason in words under it
   (`data-role="item-reason"`), or Not imported (an empty `data-outcome`) for an item no import has
   met.
+
+  An import that waited for a decision reads Needs your decision while the item still waits for
+  it (`undecided?/1`). Once an admin answered that conflict, or nothing on the item waits any more,
+  it reads Waited for your decision, with what holds now in its Plan cell's words
+  (`plan_cell/1`), such as "Now decided: Header links: they show in the top bar" or "Now: Left
+  out by you". It reads nothing more than the row holds.
   """
   @spec last_import_cell(map()) :: Phoenix.LiveView.Rendered.t()
   def last_import_cell(item),
@@ -2135,8 +2144,33 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp imported(%{outcome: nil}), do: none("", dgettext("mishka_gervaz", "Not imported"))
 
+  defp imported(%{outcome: :undecided, reason: reason} = item) when is_binary(reason),
+    do: item |> waits_as_imported?(code(reason)) |> waited(item)
+
   defp imported(%{outcome: outcome} = item),
     do: said(outcome, MigrationRun.outcome_word(outcome), item.reason, item.source_kind)
+
+  defp waits_as_imported?(%{decisions: decisions}, conflict) when is_map_key(decisions, conflict),
+    do: false
+
+  defp waits_as_imported?(item, _conflict), do: undecided?(item)
+
+  defp waited(true, item),
+    do: said(:undecided, MigrationRun.outcome_word(:undecided), item.reason, item.source_kind)
+
+  defp waited(false, item),
+    do: %{
+      key: "undecided",
+      word: dgettext("mishka_gervaz", "Waited for your decision"),
+      class: "bg-[#eeedfb] text-[#5b57d6]",
+      icon: "hero-check",
+      reason: item |> planned() |> planned_now()
+    }
+
+  defp planned_now(%{key: "decided", reason: choice}),
+    do: dgettext("mishka_gervaz", "Now decided: %{choice}", choice: choice)
+
+  defp planned_now(%{word: word}), do: dgettext("mishka_gervaz", "Now: %{plan}", plan: word)
 
   defp said(key, word, reason, kind),
     do: %{

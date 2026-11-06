@@ -212,6 +212,12 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-reason"]|)
       |> LazyHTML.text()
 
+  defp last_import_of(view, item),
+    do:
+      view
+      |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-outcome"]|)
+      |> LazyHTML.text()
+
   defp plan_of(view, item) do
     view
     |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-plan"]|)
@@ -1038,6 +1044,33 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert item!(menu).decisions == %{"draft_pages" => "import"}
       assert plan_of(view, menu) == "decided"
+    end
+
+    test "an import that waited for a decision reads as waited once the item is decided or left out, as its Plan says",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      [footer, navigation] =
+        for id <- ["23", "navigation-105"],
+            do: Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", id}))
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      for menu <- [footer, navigation] do
+        assert %{outcome: :undecided} = menu
+        assert last_import_of(view, menu) =~ "Needs your decision"
+      end
+
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      assert plan_of(view, footer) == "decided"
+      refute last_import_of(view, footer) =~ "Needs your decision"
+      assert reason_of(view, footer) =~ "Footer links"
+
+      row_action!(view, "leave_out", navigation)
+
+      refute last_import_of(view, navigation) =~ "Needs your decision"
+      assert reason_of(view, navigation) =~ "Left out by you"
+      assert %{outcome: :undecided} = item!(navigation)
     end
 
     test "the picked rows are decided together, and one with nothing to decide is left as it is",
