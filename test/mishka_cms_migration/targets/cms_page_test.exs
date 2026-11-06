@@ -17,6 +17,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.{Page, Seo}
   alias MishkaCmsCore.Settings
+  alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
 
@@ -63,6 +64,8 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
         into: %{},
         do: {entry.source_id, {entry.outcome, entry.reason}}
   end
+
+  defp code(reason), do: reason |> String.split(":", parts: 2) |> hd()
 
   defp pages(site),
     do: Page |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.path, &1})
@@ -234,10 +237,27 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       create_page!(site_id: site.id, path: "/docs")
       run = imported!(site, admin)
 
-      assert %{"27" => {:undecided, "slug_taken"}, "28" => {:skipped, "parent_missing"}} =
-               outcomes(run)
+      assert %{
+               "27" => {:undecided, "slug_taken"},
+               "28" => {:skipped, "parent_undecided: Docs (#27)"}
+             } = outcomes(run)
 
       refute is_map_key(pages(site), "/docs/getting-started")
+    end
+
+    test "a page two levels under one that waits names its own parent, which waits on that one",
+         %{site: site, admin: admin} do
+      create_page!(site_id: site.id, path: "/about")
+      run = imported!(site, admin)
+
+      assert %{
+               "24" => {:undecided, "slug_taken"},
+               "25" => {:skipped, "parent_undecided: About (#24)"},
+               "26" => {:skipped, "parent_missing: Team (#25)"}
+             } = outcomes(run)
+
+      assert MigrationRun.reason_label("parent_missing: Team (#25)", "page") =~
+               "Team (#25) is not imported yet: import it first"
     end
 
     test "Connect to the existing record keeps the site's page, and writes the pages under it",
@@ -690,8 +710,11 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
 
       assert %{created: 0, updated: 0} = counts(run)
 
-      assert run |> outcomes() |> Map.values() |> Enum.uniq() |> Enum.sort() ==
-               [{:failed, "forbidden: page"}, {:skipped, "parent_missing"}]
+      assert run
+             |> outcomes()
+             |> Enum.map(fn {_id, {outcome, reason}} -> {outcome, code(reason)} end)
+             |> Enum.uniq()
+             |> Enum.sort() == [{:failed, "forbidden"}, {:skipped, "parent_missing"}]
 
       assert pages(site) == %{}
     end

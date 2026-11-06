@@ -81,7 +81,8 @@ defmodule MishkaCmsMigration.Target do
       def attrs(item, context),
         do: %{name: item.title, slug: item.attrs["slug"], parent_collection_id: context.parent_id}
 
-  An item whose parent has no CMS record is not written; it is skipped as `"parent_missing"`
+  An item whose parent has no CMS record is not written; it is skipped with a reason that names
+  the parent and what unblocks it, such as `"parent_undecided: Team (#25)"`
   (`MishkaCmsMigration.Workers.Helpers.Writer`). One whose parent an admin left out is skipped as
   `"parent_left_out"`, in a dry run too (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
 
@@ -206,10 +207,11 @@ defmodule MishkaCmsMigration.Target do
   `%{"user" => ["3"], "category" => ["4", "5"]}`. A full run walks those kinds first, so it does not
   ask. A job of picked items (Dry run this item, Import this item) brings nothing it was not asked
   for, so it asks: an item one of whose needs, or whose parent, has no CMS record yet (it was
-  never imported, failed or waits for an admin's decision) waits, skipped as `"parent_missing"`,
-  `"post_missing"` or `"waits_for: <kinds>"` (`MishkaCmsMigration.Report`), in the dry run too
-  (`MishkaCmsMigration.Workers.Helpers.Needs`). One an admin left out,
-  or an import skipped, does not hold it, as it would not in a full run. `use` answers `%{}`.
+  never imported, failed or waits for an admin's decision) waits, skipped as its named parent
+  (`"parent_missing: <parent>"` and the like), `"post_missing"` or `"waits_for: <kinds>"`
+  (`MishkaCmsMigration.Report`), in the dry run too (`MishkaCmsMigration.Workers.Helpers.Needs`).
+  One an admin left out, or an import skipped, does not hold it, as it would not in a full run.
+  `use` answers `%{}`.
 
       def needs(item), do: %{"category" => Enum.map(item.attrs["categories"] || [], &to_string/1)}
 

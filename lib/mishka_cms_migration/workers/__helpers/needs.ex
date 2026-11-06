@@ -16,12 +16,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   `call/3` answers:
 
     * `waits` — by source id, why an item waits, in the words a full import uses where it has them:
-      `"parent_missing"` for a parent, `"post_missing"` for a post (as a comment's import says),
-      and `"waits_for: <kinds>"` for the other kinds, joined by `"; "`. What it needs waits it when it
-      has no CMS record, is not left out (by an admin, or under a parent left out, as the last dry
-      run or import said, `"parent_left_out"`), and no import skipped it: it was never imported,
-      failed, or waits for a decision. The walk holds back only an item it would create or update;
-      one it leaves as it is, or an admin's choice, stands;
+      the parent named with what unblocks it (`parent/2`), `"post_missing"` for a post (as a
+      comment's import says), and `"waits_for: <kinds>"` for the other kinds, joined by `"; "`.
+      What it needs waits it when it has no CMS record, is not left out (by an admin, or under a
+      parent left out, as the last dry run or import said, `"parent_left_out"`), and no import
+      skipped it: it was never imported, failed, or waits for a decision. The walk holds back
+      only an item it would create or update; one it leaves as it is, or an admin's choice,
+      stands;
     * `parents` — the parents the earlier imports recorded, by source id, `true` for one left out
       either way: the walk settles each child at once, and skips one under a left-out parent as
       `"parent_left_out"`, however deep, as it does in a full run.
@@ -68,6 +69,36 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
       parents: parents(state, kind, items, found)
     }
   end
+
+  @doc """
+  Why an item waits for its parent `id`, which has no CMS record, given the parent's item as the
+  runs recorded it, or `nil` for one no run met, in words that name the parent and what unblocks it
+  (`MishkaCmsMigration.MigrationRun.reason_label/2`):
+
+    * `"parent_undecided: <parent>"` — the parent waits for a decision no admin has made
+      (`MishkaCmsMigration.MigrationItem.undecided?/1`): decide it and import it first;
+    * `"parent_missing: <parent>"` — the parent was never imported, or was skipped or failed:
+      import it first;
+    * `"parent_not_listed: <id>"` — the source does not list the parent, such as a page in the
+      trash.
+
+  `<parent>` is the parent's title and source id as the Items page shows them, `"Team (#25)"`, or
+  its source id alone, `"#25"`, for one with no title. The parent's item is the one the caller has
+  already read, so naming it costs no query.
+  """
+  @spec parent(struct() | nil, String.t()) :: String.t()
+  def parent(nil, id), do: "parent_not_listed: " <> id
+
+  def parent(%MigrationItem{} = parent, _id),
+    do: parent_reason(MigrationItem.undecided?(parent)) <> named(parent)
+
+  defp parent_reason(true), do: "parent_undecided: "
+  defp parent_reason(false), do: "parent_missing: "
+
+  defp named(%MigrationItem{title: title, source_id: id}) when is_binary(title) and title != "",
+    do: "#{title} (##{id})"
+
+  defp named(%MigrationItem{source_id: id}), do: "#" <> id
 
   defp parents(%{picked: nil}, _kind, _items, _found), do: %{}
 
@@ -125,7 +156,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
 
     {missing, others} = Enum.split_with(others, &is_map_key(@missing, elem(&1, 0)))
 
-    [parent_missing(parent) | Enum.map(missing, &Map.fetch!(@missing, elem(&1, 0)))]
+    [parent_waits(parent, found) | Enum.map(missing, &Map.fetch!(@missing, elem(&1, 0)))]
     |> Enum.concat([waits_for(others)])
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
@@ -161,8 +192,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   defp left_out?(%MigrationItem{plan_reason: "parent_left_out"}), do: true
   defp left_out?(_item), do: false
 
-  defp parent_missing([]), do: nil
-  defp parent_missing(_parent), do: "parent_missing"
+  defp parent_waits([], _found), do: nil
+  defp parent_waits([{_kind, id} = ref], found), do: parent(found[ref], id)
 
   defp waits_for([]), do: nil
 

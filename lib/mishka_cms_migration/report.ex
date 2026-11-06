@@ -48,8 +48,11 @@ defmodule MishkaCmsMigration.Report do
     * `"waits_for_language_urls"` — the links would not match the site's language addresses, and an
       admin decided the item waits until they do.
     * `"duplicate_in_source"` — the source listed this id of this kind before; the first is used.
-    * `"parent_missing"` — the item sits under a parent that has no CMS record (it failed, or was
-      never written), so it is left out until a run writes the parent.
+    * `"parent_undecided: <parent>"`, `"parent_missing: <parent>"` or `"parent_not_listed: <id>"` —
+      the item sits under a parent that has no CMS record, so it is left out until a run writes the
+      parent: the parent waits for an admin's decision, was never written, was skipped or failed,
+      or the source does not list it. `<parent>` names it as the Items page shows it,
+      `"Team (#25)"` (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`).
     * a plugin's own reason, from `migration:item:before_import`; `"plugins_cannot_run"` while one
       of the plugins of that event, or of `migration:content:convert` for an item with a piece to
       convert, is not loaded; `"plugins_failed"` when one of them raised or answered something that
@@ -112,7 +115,8 @@ defmodule MishkaCmsMigration.Report do
   An item a job of picked items met (`MishkaCmsMigration.Workers.Helpers.Pipeline`) waits, in a
   dry run and in an import, when what it points at has no CMS record yet:
 
-    * `"parent_missing"` — its parent, which the job was not asked for, was never imported;
+    * `"parent_undecided: <parent>"`, `"parent_missing: <parent>"` or `"parent_not_listed: <id>"`
+      — its parent, which the job was not asked for, was never imported, as above;
     * `"post_missing"` — the post it points at, such as a comment's, was never imported;
     * `"waits_for: <kinds>"` — an item of another kind it points at, such as a post's category,
       was never imported, failed or waits for an admin's decision

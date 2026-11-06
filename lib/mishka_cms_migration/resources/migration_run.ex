@@ -2125,7 +2125,30 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "Restored from the archive, as you decided")
 
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
-  defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+
+  defp said("parent_missing: " <> parent),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its parent %{parent} is not imported yet: import it first, then this one again",
+        parent: parent
+      )
+
+  defp said("parent_undecided: " <> parent),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its parent %{parent} needs your decision: decide it and import it, then this one again",
+        parent: parent
+      )
+
+  defp said("parent_not_listed: " <> id),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The source does not list its parent #%{id}: restore it there, then import this one again",
+        id: id
+      )
 
   defp said("waits_for: " <> kinds),
     do: dgettext("mishka_gervaz", "Waits until its %{kinds} are imported", kinds: nouns(kinds))

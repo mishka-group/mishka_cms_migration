@@ -403,6 +403,48 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
 
       assert %{"آخر هفته‌ای در اصفهان" => %{language: "en"}} = by(BlogPost, site, :title)
     end
+
+    test "a page decided on, two levels under one that waits, names the page it waits on and its decision, in the import and in Import this item, and is written once they are",
+         %{site: site, admin: admin} do
+      stub_rows!(fn
+        "polylang-pages" -> MishkaCmsMigration.Test.WordPress.recorded("pages")
+        recording -> MishkaCmsMigration.Test.WordPress.recorded(recording)
+      end)
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "page", "26", "import")
+      run = import!(run, admin)
+
+      assert %{
+               "24" => {:undecided, "language_unknown"},
+               "25" => {:skipped, "parent_undecided: About (#24)"},
+               "26" => {:skipped, "parent_undecided: Team (#25)"}
+             } = outcomes(run, "page")
+
+      run = import_items!(run, admin, ["26"])
+      assert %{reason: "parent_undecided: Team (#25)"} = item(site, "page", "26")
+
+      words = MigrationRun.reason_label("parent_undecided: Team (#25)", "page")
+      assert words =~ "Team (#25) needs your decision"
+
+      decide!(site, admin, "page", "25", "import")
+      run = import_items!(run, admin, ["25"])
+      assert %{reason: "parent_undecided: About (#24)"} = item(site, "page", "25")
+
+      decide!(site, admin, "page", "24", "import")
+      run = Enum.reduce(["24", "25", "26"], run, &import_items!(&2, admin, [&1]))
+
+      assert %{outcome: :created, target_id: leadership_id} = item(site, "page", "26")
+      assert %{id: ^leadership_id} = by(Page, site, :title)["Leadership"]
+      assert run.status == :done
+    end
+  end
+
+  defp import_items!(run, admin, page_ids) do
+    ids = for id <- page_ids, do: item(%{id: run.site_id}, "page", id).id
+    MishkaCmsMigration.import_items!(run, ids, actor: admin, tenant: run.site_id)
+    %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+    MishkaCmsMigration.get_run!(run.id, tenant: run.site_id, authorize?: false)
   end
 
   defp staged!(path) do

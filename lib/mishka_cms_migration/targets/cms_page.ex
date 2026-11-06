@@ -42,7 +42,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   new with another slug writes the item as a page of its own, its path's last part followed by its
   source id, `/contact-29` for `/contact` and `/home-2` for a front page whose slug is `home`, and
   the report says so (`"another_slug"`). A page under one that waits is skipped, as the walk does
-  for any item whose parent was not imported (`"parent_missing"`).
+  for any item whose parent was not imported, naming that page (`"parent_undecided: <parent>"`).
 
   A live page is also refused where the site already answers its address by a pattern, such as
   `/blog` where the Blog's `/:lang/blog` answers: the core says which page does, and the item fails

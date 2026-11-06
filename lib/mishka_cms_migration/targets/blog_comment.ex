@@ -35,7 +35,8 @@ if Code.ensure_loaded?(MishkaBlog.Comment) do
           `"page_comment"`;
         * in an import, one whose post has no Blog post, because it failed, was never written or
           an admin left it out — skipped as `"post_missing"`, as is a reply whose parent comment
-          was not written (the walk's `"parent_missing"`) or was left out (`"parent_left_out"`).
+          was not written (the walk's `"parent_missing: <parent>"` and the like) or was left out
+          (`"parent_left_out"`).
 
     A dry run writes no post, so it does not look for one: an item it plans may still be skipped
     for its post when the import runs.

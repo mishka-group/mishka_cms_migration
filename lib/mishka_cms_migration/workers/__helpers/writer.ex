@@ -64,9 +64,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
-  record's id as its context's `parent_id`. When the parent has none — it failed, was never written,
-  or the source never listed it — the item is skipped as `"parent_missing"`, so it is not written
-  out of its place, and the run that writes the parent writes it too.
+  record's id as its context's `parent_id`. When the parent has none — it waits for a decision,
+  failed, was never written, or the source never listed it — the item is skipped with a reason that
+  names the parent and what unblocks it (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`), read
+  from the parent's item this lookup already found, so it is not written out of its place, and the
+  run that writes the parent writes it too.
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason. One the CMS's policies
@@ -77,7 +79,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
-  alias MishkaCmsMigration.Workers.Helpers.Archived
+  alias MishkaCmsMigration.Workers.Helpers.{Archived, Needs}
 
   @restored "restored"
   @deleted "deleted_in_cms"
@@ -280,14 +282,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp parented(state, %Item{kind: kind, parent: parent}, context) do
     state.run.source_host
     |> MishkaCmsMigration.items_by_sources(kind, [parent], scope: state.scope)
-    |> parent_record(context)
+    |> parent_record(parent, context)
   end
 
-  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, context) when is_binary(id),
-    do: {:ok, %{context | parent_id: id}}
+  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, _parent, context)
+       when is_binary(id),
+       do: {:ok, %{context | parent_id: id}}
 
-  defp parent_record({:ok, _items}, _context), do: {:skipped, "parent_missing"}
-  defp parent_record({:error, error}, _context), do: {:error, error}
+  defp parent_record({:ok, items}, parent, _context),
+    do: {:skipped, items |> List.first() |> Needs.parent(parent)}
+
+  defp parent_record({:error, error}, _parent, _context), do: {:error, error}
 
   defp write(target, item, record, context) do
     {resource, actions} = target.writes_to(item, context)

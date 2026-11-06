@@ -1300,6 +1300,20 @@ defmodule MishkaCmsMigration.MigrationItem do
   def settled?(_item), do: false
 
   @doc """
+  Whether `item` waits for a decision no admin has made yet, as its Plan cell's Needs your decision
+  says (`plan_cell/1`): it is not left out or mapped, and the conflict it waits on is not one an
+  admin decided. What sits under it waits for that decision too
+  (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`).
+  """
+  @spec undecided?(map()) :: boolean()
+  def undecided?(%{left_out: true}), do: false
+  def undecided?(%{mapped_id: id}) when is_binary(id), do: false
+  def undecided?(item), do: item |> waits_on() |> code() |> undecided_on(item.decisions)
+
+  defp undecided_on(nil, _decisions), do: false
+  defp undecided_on(conflict, decisions), do: not is_map_key(decisions, conflict)
+
+  @doc """
   What an admin may answer `conflict` with: `"keep"` and `"import"`, `"keep"` and `"leave_out"`,
   `"import"` and `"leave_out"`, or, for scripts, `"import"` (remove them) and `"trust"` (keep
   them), which no bulk choice makes; none for `nil` or a conflict this extension does not know. A
