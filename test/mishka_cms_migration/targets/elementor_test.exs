@@ -252,7 +252,7 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
       assert css =~ "font-family:var(--font-el-primary,"
     end
 
-    test "an archived stylesheet waits for the admin's decision, Restore it brings it back inactive as the core's Restore does, and one deleted for good is reported deleted, not unchanged",
+    test "an archived stylesheet waits for the admin's decision, Restore it brings it back inactive as the core's Restore does, and one deleted for good waits for the admin's decision on that, not unchanged",
          %{site: site, admin: admin} do
       imported!(site, admin)
       [stylesheet] = stylesheets(site)
@@ -273,10 +273,10 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
 
       Ash.destroy!(stylesheet, action: :permanent_destroy, tenant: site.id, authorize?: false)
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
-      assert outcomes(run, "stylesheet") == %{"elementor" => {:skipped, "target_missing"}}
+      assert outcomes(run, "stylesheet") == %{"elementor" => {:undecided, "deleted_in_cms"}}
 
       assert outcomes(import!(run, admin), "stylesheet") == %{
-               "elementor" => {:skipped, "target_missing"}
+               "elementor" => {:undecided, "deleted_in_cms"}
              }
 
       assert stylesheets(site) == []

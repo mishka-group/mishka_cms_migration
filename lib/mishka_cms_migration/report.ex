@@ -37,8 +37,8 @@ defmodule MishkaCmsMigration.Report do
     * `"mapped_missing"` — an admin mapped the item to a CMS record that has since been deleted.
     * `"unchanged"` — the source has not changed the item since it was last written.
     * `"edited_in_cms"` — its CMS record was changed in the CMS after it was written, and is kept.
-    * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and stays
-      deleted.
+    * `"target_missing"` — its CMS record was deleted in the CMS after it was written, and an admin
+      decided to leave it out (`"deleted_in_cms"`, below), so it stays deleted.
     * `"left_out_by_admin"` too for an item whose CMS record an admin archived and decided to leave
       archived (`"archived_in_cms"`, below).
     * `"no_target"` — no target is registered for the item's kind (`MishkaCmsMigration.Target`).
@@ -92,6 +92,11 @@ defmodule MishkaCmsMigration.Report do
       writing it, or anything that points at it, would be refused
       (`MishkaCmsMigration.Workers.Helpers.Decision`). Restore it brings the record back, and the
       item is updated, its note led by `"restored"`; what points at it waits meanwhile.
+    * `"deleted_in_cms"` — the CMS record the item was written to was deleted for good, so
+      anything that points at it would lose it (`MishkaCmsMigration.Workers.Helpers.Decision`).
+      Import it again creates a new record, as a first import does, and the item remembers it, once:
+      should the new record be deleted too, the admin is asked again; Leave it out skips it as
+      `"target_missing"` from then on; what points at it waits meanwhile.
 
   `duplicates` counts the media files that are the same bytes as an earlier one
   (`MishkaCmsMigration.Targets.CmsMedia`): `found` the ones the run met, `merged` those an admin
@@ -114,7 +119,8 @@ defmodule MishkaCmsMigration.Report do
       (`MishkaCmsMigration.Target`'s `needs/1`), `<kinds>` naming those kinds, `"category, tag"`.
 
   A full run's item waits as `"waits_for: <kinds>"` too, for what it points at that waits for an
-  admin's decision on its archived CMS record (`"archived_in_cms"`).
+  admin's decision on its archived CMS record (`"archived_in_cms"`), or on one deleted for good
+  (`"deleted_in_cms"`).
 
   `counts` and `kinds` count every item. `kinds` has a count for each kind that had at least one
   item, in the order the kinds were walked; a kind the source listed nothing of has none.

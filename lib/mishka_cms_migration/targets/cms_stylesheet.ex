@@ -27,9 +27,11 @@ defmodule MishkaCmsMigration.Targets.CmsStylesheet do
 
   A re-run is held to the rules every target is: a stylesheet the source did not change is
   `"unchanged"`, one an admin changed in the CMS since is kept as the admin left it, one deleted for
-  good is `"target_missing"` and not written again, and one an admin archived waits for the admin's
-  decision (`"archived_in_cms"`, `MishkaCmsMigration.Workers.Helpers.Decision`): Restore it brings
-  it back through the Stylesheets page's own Restore, inactive until an admin activates it.
+  good waits for the admin's decision (`"deleted_in_cms"`): Import it again writes it as a first
+  import would, and Leave it out leaves it deleted (`"target_missing"`), and one an admin archived
+  waits for the admin's decision (`"archived_in_cms"`, `MishkaCmsMigration.Workers.Helpers.Decision`):
+  Restore it brings it back through the Stylesheets page's own Restore, inactive until an admin
+  activates it.
 
   ## Google fonts
 

@@ -27,21 +27,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
       `"parent_left_out"`, however deep, as it does in a full run.
 
   A full run (`picked` is `nil`) asks too, in the same one query for the page, only for what waits
-  for an admin's decision on its archived record (`"archived_in_cms"`,
-  `MishkaCmsMigration.Workers.Helpers.Decision`), as this run's dry run planned it or its import
-  left it, the walk having settled that kind first: an item it would write pointing at that record
-  is refused by the CMS, such as a post's archived tag, so it waits as `"waits_for: <kinds>"` until
-  the admin restores the record or leaves it out. Nothing else holds it, and it has no `parents`.
-  An item that waits on that decision holds a job of picked items too, whatever record it has.
+  for an admin's decision on its archived record, or on one deleted for good
+  (`MishkaCmsMigration.Workers.Helpers.Decision.record_conflicts/0`), as this run's dry run planned
+  it or its import left it, the walk having settled that kind first: an item it would write
+  pointing at that record is refused by the CMS, such as a post's archived tag, or would lose it,
+  such as a post's deleted tag, so it waits as `"waits_for: <kinds>"` until the admin restores the
+  record, imports it again or leaves it out. Nothing else holds it, and it has no `parents`. An
+  item that waits on that decision holds a job of picked items too, whatever record it has.
   """
 
   require Ash.Query
 
   alias MishkaCmsMigration.{MigrationItem, Target}
   alias MishkaCmsMigration.Source.Item
+  alias MishkaCmsMigration.Workers.Helpers.Decision
 
   @missing %{"post" => "post_missing"}
-  @archived "archived_in_cms"
+  @record_conflicts Decision.record_conflicts()
 
   @doc "What the picked `items`, a page of `kind`, need, for the walk of `state`."
   @spec call(map(), String.t(), [Item.t()]) :: %{
@@ -131,21 +133,23 @@ defmodule MishkaCmsMigration.Workers.Helpers.Needs do
   end
 
   defp waiting_on?(item, %{mode: mode, picked: picked}),
-    do: archived?(item, mode) or (is_map(picked) and missing?(item))
+    do: record_conflict?(item, mode) or (is_map(picked) and missing?(item))
 
-  defp archived?(
-         %MigrationItem{left_out: false, outcome: :undecided, reason: @archived},
+  defp record_conflict?(
+         %MigrationItem{left_out: false, outcome: :undecided, reason: conflict},
          :import
-       ),
+       )
+       when conflict in @record_conflicts,
        do: true
 
-  defp archived?(
-         %MigrationItem{left_out: false, plan: :undecided, plan_reason: @archived},
+  defp record_conflict?(
+         %MigrationItem{left_out: false, plan: :undecided, plan_reason: conflict},
          :dry_run
-       ),
+       )
+       when conflict in @record_conflicts,
        do: true
 
-  defp archived?(_item, _mode), do: false
+  defp record_conflict?(_item, _mode), do: false
 
   defp missing?(%MigrationItem{target_id: id}) when is_binary(id), do: false
   defp missing?(%MigrationItem{outcome: :skipped}), do: false

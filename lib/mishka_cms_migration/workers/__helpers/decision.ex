@@ -26,8 +26,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       the CMS record it is written over, `{:created, target, nil, decisions, prepared}`, created
       with what the target found for its write, `{:skipped, reason}`, why it is left out, or
       `{:undecided, conflict}`, a conflict on the site no admin has decided yet;
-    * the CMS record it was written to is gone, deleted for good — `{:skipped, "target_missing"}`,
-      whether or not the source changed it, and it is not written again;
+    * the CMS record it was written to is gone, deleted for good (see "A deleted record") — it
+      waits for the admin's decision, `{:undecided, "deleted_in_cms"}`, whatever the source changed;
     * its `MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2` is the one recorded —
       `{:skipped, "unchanged"}`: an item that writes links is changed, to be written again, when
       the site's language address mode changed since it was written;
@@ -56,6 +56,20 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     * `:kept` — an admin changed it before archiving it, or it is a record the CMS already held or
       the admin mapped the item to, so it is kept as the admin left it.
 
+  ## A deleted record
+
+  An item's record that is read neither among the live ones nor among the archived ones was deleted
+  for good, so it is known in the same reads, with no query of its own. There is nothing to write
+  over, and what points at it would lose it, so the item waits for the admin's decision on
+  `"deleted_in_cms"`, in a dry run and in an import, and what points at it waits for that decision
+  too, as for an archived one. Import it again (`"import"`) is `{:created, target, nil, decisions}`:
+  the item is planned as a first import plans it, the target's `existing/2` asked about it with the
+  page's other new items, and the import records the new record in place of the deleted one and
+  forgets the decision (`MishkaCmsMigration.Workers.Helpers.Writer`), so it holds once: a later
+  deletion of the new record asks again. Leave it out (`"keep"`) is `{:skipped, "target_missing"}`
+  on every later run, and what points at it is written without it. A record an admin mapped the
+  item to that is gone is `"mapped_missing"` instead, above: the import never wrote it.
+
   `decisions` are the admin's answers to the conflicts the item met
   (`MishkaCmsMigration.MigrationItem`'s `decisions`), which the target is handed with the item
   (`MishkaCmsMigration.Target.decision/3`); `existing/2` is handed those of the page's items it is
@@ -83,8 +97,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
   CMS records they were written to, and a third time when one of those records is not read, for
-  the archived ones; and its items no run has written are handed to the target's `existing/2`
-  together, once.
+  the archived ones, which tells the deleted ones too; and its items no run has written, or an
+  admin decided to import again, are handed to the target's `existing/2` together, once.
   """
 
   require Ash.Query
@@ -96,6 +110,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   @blog_kinds MishkaCmsMigration.Application.blog_kinds()
   @archived "archived_in_cms"
+  @deleted "deleted_in_cms"
 
   @typedoc "An admin's answers to the conflicts an item met, by conflict."
   @type decisions :: %{String.t() => String.t()}
@@ -119,6 +134,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   @doc "The plan for each of `items`, a page of `kind`, by source id."
   @spec call(map(), String.t(), [Item.t()]) :: %{String.t() => plan()}
   def call(state, kind, items), do: kind |> Target.fetch() |> plans(state, kind, items)
+
+  @doc """
+  The conflicts on the CMS record an item was written to, `"archived_in_cms"` and
+  `"deleted_in_cms"`: what points at the record waits for the admin's decision on them
+  (`MishkaCmsMigration.Workers.Helpers.Needs`), and an item that meets one under a parent an admin
+  left out waits for it too (`MishkaCmsMigration.Workers.Helpers.Pipeline`).
+  """
+  @spec record_conflicts() :: [String.t()]
+  def record_conflicts, do: [@archived, @deleted]
 
   defp plans({:ok, target}, state, kind, items), do: plans(state, target, kind, items)
 
@@ -230,7 +254,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   defp decide(target, known, hash, {:archived, record}),
     do: archived(target, known, record, restoring(known, hash, record))
 
-  defp decide(_target, _known, _hash, nil), do: {:skipped, "target_missing"}
+  defp decide(target, known, _hash, nil), do: deleted(target, known)
   defp decide(_target, %{content_hash: hash}, hash, _record), do: {:skipped, "unchanged"}
   defp decide(_target, %{target_updated_at: nil}, _hash, _record), do: {:skipped, "connected"}
 
@@ -268,6 +292,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     do: {:restored, target, record, decided, then}
 
   defp archived(_target, _known, _record, _then), do: {:undecided, @archived}
+
+  defp deleted(target, %{decisions: %{@deleted => "import"} = decided}),
+    do: {:created, target, nil, decided}
+
+  defp deleted(_target, %{decisions: %{@deleted => "keep"}}), do: {:skipped, "target_missing"}
+  defp deleted(_target, _known), do: {:undecided, @deleted}
 
   defp restoring(%{target_updated_at: nil}, _hash, _record), do: :kept
 
