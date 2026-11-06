@@ -17,6 +17,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   import MishkaCmsMigration.Test.WordPress, only: [stub!: 0, stub!: 1]
 
   alias MishkaCmsCore.Runtime.Languages
+  alias MishkaCmsCore.Test.Admin
   alias MishkaCmsCore.Runtime.States.SiteState
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
 
@@ -204,6 +205,12 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
     settled(view)
   end
+
+  defp reason_of(view, item),
+    do:
+      view
+      |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-reason"]|)
+      |> LazyHTML.text()
 
   defp plan_of(view, item) do
     view
@@ -656,6 +663,45 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert run_id == run.id
       assert Enum.reject(stored(site), &(&1.id == tag.id)) == others
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
+    end
+
+    test "say what came of the item once its job settled it, each time: a page under one that waits names that page, in a flash and live in its row",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      index =
+        "index"
+        |> MishkaCmsMigration.Test.WordPress.recorded()
+        |> Map.update!("namespaces", &["pll/v1" | &1])
+        |> Jason.encode!()
+
+      stub!(%{
+        "/wp-json/" => {"application/json", index},
+        "/wp-json/wp/v2/pages" => "polylang-pages"
+      })
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+      crew = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"page", "127"}))
+      MishkaCmsMigration.decide_item!(crew, "import", actor: admin, tenant: site.id)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+
+      for _click <- 1..2 do
+        item_action!(view, "import_item", crew)
+        assert Admin.flashes(view) =~ "Import of the item started."
+        assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+        settled(view)
+
+        assert Admin.flashes(view) =~ "Our Crew"
+        assert Admin.flashes(view) =~ "Skipped"
+        assert Admin.flashes(view) =~ "Our Story (#125) needs your decision"
+        assert reason_of(view, crew) =~ "Our Story (#125) needs your decision"
+        Admin.clear_flashes(view)
+      end
+
+      item_action!(view, "dry_run_item", crew)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Admin.flashes(view) =~ "Dry run of Our Crew"
+      assert Admin.flashes(view) =~ "Our Story (#125) needs your decision"
     end
 
     test "are not offered on a run whose password an earlier release cleared, and say why when asked",

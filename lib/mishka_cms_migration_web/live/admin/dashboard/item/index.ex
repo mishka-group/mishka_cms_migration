@@ -44,6 +44,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   and the admin is asked to pick the rows. Once the job has settled the items, their rows are drawn
   again from their broadcasts.
 
+  Dry run this item and Import this item then say what came of the item, each time it is pressed,
+  in the tab it was pressed in: the item's own broadcast from the job
+  (`MishkaCmsMigration.MigrationItem.picked?/1`) carries its plan or its last import, said in a
+  flash as its row says it, such as "Import of Our Crew: Skipped. Its parent Our Story (#125) needs
+  your decision: decide it and import it, then this one again.", an error flash for a failure. The
+  page keeps only the ids it waits on, and reads nothing for it.
+
   ## Map to… and the Map view
 
   A category's or a tag's Map to…, in the List and in the Map view, shows the page's modal on the
@@ -132,7 +139,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
            page_title: gettext("Items"),
            run: run,
            source: Source.label(run.source),
-           url_state: nil
+           url_state: nil,
+           awaiting: %{}
          )}
 
       _unreadable ->
@@ -180,7 +188,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
         socket
       ) do
     send_update(MishkaGervaz.Table.Web.Live, id: @table_id, pubsub_notification: notification)
-    {:noreply, socket}
+    {:noreply, finished(socket, notification)}
   end
 
   def handle_info({:row_action, "dry_run_item", %{"id" => id}}, socket),
@@ -213,12 +221,62 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
     with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(socket.assigns.run.id, user),
          {:ok, _run} <- action.(run, ids, actor: user, tenant: run.site_id) do
-      put_flash(socket, :info, started(step, length(ids)))
+      socket |> awaiting(ids, step) |> put_flash(:info, started(step, length(ids)))
     else
       {:ok, nil} -> refused(socket, step, :not_found)
       {:error, reason} -> refused(socket, step, reason)
     end
   end
+
+  defp awaiting(socket, [id], step) when step in [:dry_run, :import],
+    do: update(socket, :awaiting, &Map.put(&1, id, step))
+
+  defp awaiting(socket, _ids, _step), do: socket
+
+  defp finished(socket, notification),
+    do: notification |> MigrationItem.picked?() |> finished(notification.data, socket)
+
+  defp finished(true, %MigrationItem{id: id} = item, %{assigns: %{awaiting: awaiting}} = socket)
+       when is_map_key(awaiting, id) do
+    {step, awaiting} = Map.pop!(awaiting, id)
+    {result, reason} = result(step, item)
+
+    socket
+    |> assign(:awaiting, awaiting)
+    |> put_flash(flash_kind(result), finished_words(step, item, result, reason))
+  end
+
+  defp finished(_picked, _item, socket), do: socket
+
+  defp result(:dry_run, item), do: {item.plan, item.plan_reason}
+  defp result(:import, item), do: {item.outcome, item.reason}
+
+  defp flash_kind(:failed), do: :error
+  defp flash_kind(_result), do: :info
+
+  defp finished_words(step, item, result, nil), do: done_words(step, item, result)
+
+  defp finished_words(step, item, result, reason),
+    do:
+      done_words(step, item, result) <>
+        " " <> MigrationRun.reason_label(reason, item.source_kind) <> "."
+
+  defp done_words(:dry_run, item, plan),
+    do:
+      gettext("Dry run of %{title}: %{plan}.",
+        title: titled(item),
+        plan: MigrationItem.plan_word(plan)
+      )
+
+  defp done_words(:import, item, outcome),
+    do:
+      gettext("Import of %{title}: %{outcome}.",
+        title: titled(item),
+        outcome: MigrationRun.outcome_word(outcome)
+      )
+
+  defp titled(%MigrationItem{title: title}) when is_binary(title) and title != "", do: title
+  defp titled(_item), do: gettext("the item")
 
   defp started(:dry_run, _one), do: gettext("Dry run of the item started.")
 

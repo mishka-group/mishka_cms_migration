@@ -1740,9 +1740,14 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp none(key, word),
     do: %{key: key, word: word, class: "bg-[#f7f6f2] text-[#bcb9b2]", icon: nil, reason: nil}
 
-  defp plan_word(:created), do: dgettext("mishka_gervaz", "Would create")
-  defp plan_word(:updated), do: dgettext("mishka_gervaz", "Would update")
-  defp plan_word(:skipped), do: dgettext("mishka_gervaz", "Would skip")
-  defp plan_word(:failed), do: dgettext("mishka_gervaz", "Would fail")
-  defp plan_word(:undecided), do: dgettext("mishka_gervaz", "Needs your decision")
+  @doc """
+  What a plan says in words, as the Plan cell and the Plan filter say it, such as Would create for
+  `:created`.
+  """
+  @spec plan_word(atom()) :: String.t()
+  def plan_word(:created), do: dgettext("mishka_gervaz", "Would create")
+  def plan_word(:updated), do: dgettext("mishka_gervaz", "Would update")
+  def plan_word(:skipped), do: dgettext("mishka_gervaz", "Would skip")
+  def plan_word(:failed), do: dgettext("mishka_gervaz", "Would fail")
+  def plan_word(:undecided), do: dgettext("mishka_gervaz", "Needs your decision")
 end
