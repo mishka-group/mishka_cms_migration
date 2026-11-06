@@ -9,3 +9,7 @@ path: /var/www/html
 url: http://localhost:8090
 apache_modules:
   - mod_rewrite
+# Quiet: Elementor's WP-CLI logger prints every PHP notice it records (Elementor 4 raises PHP 8.4 deprecations) with
+# WP_CLI::log, to stdout, which php.ini cannot redirect; it would corrupt the CSV and porcelain output the seed scripts
+# read. Quiet drops the log lines; errors and warnings still go to stderr.
+quiet: true

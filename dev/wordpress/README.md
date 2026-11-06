@@ -179,6 +179,10 @@ docker compose run --rm -T wp-cli wp --user=admin plugin activate polylang     #
 
 Run those in a shell where `COMPOSE_FILE` is set as above; without it, `docker compose` talks to the 8089 project.
 
+The WP-CLI configs set `quiet: true`: with Elementor 4 active, its WP-CLI logger prints every PHP 8.4 deprecation it
+records to stdout, which would break the CSV and porcelain reads of `seed_bulk.sh`. Errors and warnings still go to
+stderr.
+
 ## Testing approach
 
 - **Unit tests** replay the recorded responses from `test/fixtures/wordpress/` (REST bodies and headers, WXR files).
