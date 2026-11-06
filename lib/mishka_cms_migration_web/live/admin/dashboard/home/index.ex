@@ -10,16 +10,19 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   PubSub notifications, which this page hands on to it.
 
   A card's New import opens the run's Gervaz form for that source in a modal: the page sends the
-  form `defaults: %{source: id}` with `reset: true`, so the form starts over empty and its
-  Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
-  secret as a masked password input, or, for a source that reads a file
-  (`MishkaCmsMigration.Source.file?/1`) such as the WordPress export file, its Export file upload
-  instead. The window is four short steps shown one at a time
+  form `defaults: %{source: id}`, so its Connection draws the keys that source asks for
+  (`MishkaCmsMigration.Source.form_fields/1`), its secret as a masked password input, or, for a
+  source that reads a file (`MishkaCmsMigration.Source.file?/1`) such as the WordPress export file,
+  its Export file upload instead. Another source's New import starts the form over for it; the same
+  source's opens it as the admin left it, answers and step kept, until a run starts or the admin
+  presses Start over. The window is Gervaz's wizard of four steps
   (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps`): where from, what to bring, languages,
-  and a review in plain words. Its Start the dry run creates the run once the source answers, or
-  reads the file, and starts the run's dry run at once, which writes nothing to the site; a run the
-  site cannot start it for, because another run of the site is running, stays Connected and a
-  warning says why. The modal then closes and the run shows in the table.
+  and a review in plain words. Its Start the dry run, which reads "Checking the source…" while it
+  runs, creates the run once the source answers, or reads the file, and starts the run's dry run at
+  once, which writes nothing to the site; a run the site cannot start it for, because another run
+  of the site is running, stays Connected and a warning says why. The modal then closes and the run
+  shows in the table. A refusal on an earlier step returns the window there and the form's error
+  flash names the step (`{:put_flash, kind, message}`).
 
   Every flash says what it means (`MishkaCmsMigrationWeb.Flash`): Dry run started and Import started
   are info, Run cancelled is a success, a step the run refuses is info, and a run that is not there
@@ -103,8 +106,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   def handle_info({:form_saved, :create, run}, socket),
     do: {:noreply, socket |> close_modal() |> connected(run)}
 
-  def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_modal(socket)}
-
   def handle_info({:row_action, "dry_run", %{"id" => id}}, socket) do
     {:noreply,
      step(
@@ -160,8 +161,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   defp new_run({:ok, source}, socket) do
     send_update(MishkaGervaz.Form.Web.Live,
       id: MishkaGervaz.Resource.Info.Form.component_id(MigrationRun),
-      defaults: %{source: source.id()},
-      reset: true
+      defaults: %{source: source.id()}
     )
 
     {:noreply, exec_modal_js(socket, MishkaCmsCore.CoreComponents.show_modal(@form_modal))}

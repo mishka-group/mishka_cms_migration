@@ -6,8 +6,8 @@ defmodule MishkaCmsMigration.Resources.Changes.Choices do
   @moduledoc """
   Folds what the New import window's steps ask apart from the run's Advanced options into the run's
   `options`: the `bring` argument (the switches of what to bring, such as `"bring_posts"` and
-  `"comments"`) and the `language` argument (a map holding `"one_language"`: the one language to put every item of an unknown or
-  unpublished language in, blank to keep the source's languages).
+  `"comments"`) and the `language` argument (the one language to put every item of an unknown or
+  unpublished language in, blank to keep the source's languages), as the run's `"one_language"`.
 
       create :create do
         argument :bring, :map
@@ -47,8 +47,7 @@ defmodule MishkaCmsMigration.Resources.Changes.Choices do
   defp asked(options, nil), do: options
   defp asked(options, language), do: Map.put(options, "one_language", language)
 
-  defp chosen(%{"one_language" => code}) when is_binary(code), do: code
-  defp chosen(%{one_language: code}) when is_binary(code), do: code
+  defp chosen(code) when is_binary(code), do: code
   defp chosen(_none), do: nil
 
   defp published(changeset, language) when language in [nil, ""], do: changeset
