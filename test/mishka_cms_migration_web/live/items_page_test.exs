@@ -1712,7 +1712,20 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       expand!(view, post)
 
       assert has_element?(view, ~s|[data-role="item-details"][data-item-id="#{post.id}"]|)
-      assert has_element?(view, ~s|[data-role="item-details-note"]|, "read from the source again")
+
+      assert has_element?(
+               view,
+               ~s|details[data-role="item-technical"]:not([open]) [data-role="item-details-note"]|,
+               "read from the source again"
+             )
+
+      assert has_element?(
+               view,
+               ~s|details[data-role="item-technical"] summary|,
+               "Technical details"
+             )
+
+      assert has_element?(view, ~s|details[data-role="item-technical"] [data-role="item-json"]|)
 
       assert %{
                "source_kind" => "post",

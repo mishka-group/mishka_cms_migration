@@ -99,10 +99,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   it in one more query (`MishkaCmsMigration.MigrationItem`'s `:ancestors`), each with where it
   stands and what can be done on it there, and, for an item that waits for its parent, that it
   waits and for what. Then, for the item of a user an import created, the warning that their
-  password cannot be carried over (`PasswordNotice`), and what is kept of the item as JSON: its
-  stored attributes and its `extra`, the source's fields the CMS has no home for, with the value of
-  anything named like a secret hidden. The item's content and its other fields are not kept, and
-  the row says so.
+  password cannot be carried over (`PasswordNotice`), and, folded under Technical details (a
+  `<details>` closed until opened), what is kept of the item as JSON: its stored attributes and its
+  `extra`, the source's fields the CMS has no home for, with the value of anything named like a
+  secret hidden. The item's content and its other fields are not kept, and the row says so.
 
   ## Where it sits
 
@@ -574,15 +574,29 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     <section data-role="item-details" data-item-id={@item.id} class="grid gap-3">
       <Branch.branch item={@item} list_path={@list_path} busy={@busy} />
       <PasswordNotice.item item={@item} />
-      <p data-role="item-details-note" class="m-0 text-[12px] font-medium text-[#7c7a75]">
-        {gettext(
-          "This is what the migration keeps of the item. Its content and its other fields, such as a post's slug, status and author, are read from the source again by each run."
-        )}
-      </p>
-      <pre
-        data-role="item-json"
-        class="m-0 max-h-[360px] overflow-auto rounded-[12px] border border-[#ecebe6] bg-[#faf9f6] p-4 font-mono text-[12px] leading-[1.55] text-[#3a382f]"
-      >{@json}</pre>
+      <details
+        data-role="item-technical"
+        class="group rounded-[12px] border border-[#ecebe6] bg-white"
+      >
+        <summary class="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[12.5px] font-bold text-[#3a382f] [&::-webkit-details-marker]:hidden">
+          <MishkaCmsCore.CoreComponents.icon
+            name="hero-chevron-right"
+            class="size-[13px] text-[#a8a5a0] transition-transform group-open:rotate-90 rtl:rotate-180 rtl:group-open:rotate-90"
+          />
+          {gettext("Technical details")}
+        </summary>
+        <div class="grid gap-3 border-t border-[#f0efea] p-4">
+          <p data-role="item-details-note" class="m-0 text-[12px] font-medium text-[#7c7a75]">
+            {gettext(
+              "This is what the migration keeps of the item. Its content and its other fields, such as a post's slug, status and author, are read from the source again by each run."
+            )}
+          </p>
+          <pre
+            data-role="item-json"
+            class="m-0 max-h-[360px] overflow-auto rounded-[12px] border border-[#ecebe6] bg-[#faf9f6] p-4 font-mono text-[12px] leading-[1.55] text-[#3a382f]"
+          >{@json}</pre>
+        </div>
+      </details>
     </section>
     """
     |> Phoenix.HTML.Safe.to_iodata()
