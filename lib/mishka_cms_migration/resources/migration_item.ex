@@ -308,7 +308,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           sortable true
 
           ui do
-            width "minmax(92px,0.8fr)"
+            width "minmax(126px,0.8fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 cursor-pointer text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn kind ->
@@ -319,11 +322,11 @@ defmodule MishkaCmsMigration.MigrationItem do
             }
 
             ~H"""
-            <span data-role="item-kind" data-kind={@kind} class="inline-flex items-center gap-[9px]">
-              <span class="grid size-[30px] flex-none place-items-center rounded-[9px] bg-[#eeedfb] text-[#5b57d6]">
-                <MishkaCmsCore.CoreComponents.icon name={@icon} class="size-[15px]" />
+            <span data-role="item-kind" data-kind={@kind} class="inline-flex min-w-0 items-center gap-[6px]">
+              <span class="grid size-[24px] flex-none place-items-center rounded-[7px] bg-[#eeedfb] text-[#5b57d6]">
+                <MishkaCmsCore.CoreComponents.icon name={@icon} class="size-[13px]" />
               </span>
-              <span class="text-[12.5px] font-semibold text-[#3a382f]">{@label}</span>
+              <span class="min-w-0 text-[12px] font-semibold text-[#3a382f]">{@label}</span>
             </span>
             """
           end
@@ -337,7 +340,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           sort_field [:title]
 
           ui do
-            width "minmax(140px,1.6fr)"
+            width "minmax(118px,1.6fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 cursor-pointer text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn item ->
@@ -384,7 +390,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "Plan") end
 
           ui do
-            width "minmax(120px,1.3fr)"
+            width "minmax(104px,1.3fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn item -> MishkaCmsMigration.MigrationItem.plan_cell(item) end
@@ -411,7 +420,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "Last import") end
 
           ui do
-            width "minmax(130px,1.3fr)"
+            width "minmax(116px,1.3fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn item -> MishkaCmsMigration.MigrationItem.last_import_cell(item) end
@@ -423,7 +435,10 @@ defmodule MishkaCmsMigration.MigrationItem do
           label fn -> dgettext("mishka_gervaz", "CMS record") end
 
           ui do
-            width "minmax(72px,0.6fr)"
+            width "minmax(90px,0.6fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn item ->
@@ -445,6 +460,9 @@ defmodule MishkaCmsMigration.MigrationItem do
 
           ui do
             width "minmax(92px,0.7fr)"
+            class "flex min-w-0 items-center px-[12px] text-sm text-foreground"
+
+            header_class "min-w-0 cursor-pointer text-start px-[12px] text-[11px] font-bold tracking-[0.03em] text-[#8a877f]"
           end
 
           render fn item ->
@@ -1665,7 +1683,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   defp conflict_words(conflict, nil, kind), do: MigrationRun.reason_label(conflict, kind)
   defp conflict_words(_conflict, reason, kind), do: MigrationRun.reason_label(reason, kind)
 
-  defp current_choice("menu_goes_to", %{decisions: %{"menu_goes_to" => choice}}), do: choice
+  defp current_choice(conflict, %{decisions: decisions}) when is_map_key(decisions, conflict),
+    do: Map.fetch!(decisions, conflict)
 
   defp current_choice("menu_goes_to", %{plan: plan}) when plan in [:created, :updated],
     do: "header"
@@ -2026,7 +2045,7 @@ defmodule MishkaCmsMigration.MigrationItem do
       <div
         :if={@reason}
         data-role={@reason_role}
-        class="mt-[4px] text-[11px] font-medium text-[#a8a5a0]"
+        class="mt-[4px] text-[11px] font-medium leading-[1.5] text-[#a8a5a0] [overflow-wrap:anywhere]"
       >
         {@reason}
       </div>

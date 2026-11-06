@@ -571,16 +571,22 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       [style] = view |> parts(~s|[style*="grid-template-columns"]|) |> LazyHTML.attribute("style")
 
-      least =
+      tracks =
         ~r/(?:minmax\((\d+)px|(?<![\w(,])(\d+)px)/
         |> Regex.scan(style, capture: :all_but_first)
         |> Enum.map(fn parts ->
           parts |> Enum.reject(&(&1 == "")) |> hd() |> String.to_integer()
         end)
-        |> Enum.sum()
 
       # 1280px less the 266px sidebar and the page's padding.
-      assert least <= 900
+      assert Enum.sum(tracks) <= 900
+
+      # Wide enough for "Comments" or "Stylesheets" beside its icon, and for the "CMS record"
+      # and "Updated" headers with their sort arrow, so none of them is cut.
+      [_checkbox, _expand, kind, _title, _plan, _result, record, updated, _actions] = tracks
+      assert kind >= 126
+      assert record >= 90
+      assert updated >= 92
     end
 
     test "says in words why an item was skipped", %{
@@ -1173,6 +1179,34 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       filter!(view, %{"plan" => "undecided"})
       assert "navigation-105" in Enum.map(rows(view), &elem(&1, 1))
       assert navigation.plan == :undecided
+    end
+
+    test "Decide… on a post whose scripts an admin decided opens with that choice picked", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      post = Enum.find(stored(site), &(&1.source_kind == "post" and &1.plan == :created))
+
+      MigrationItem
+      |> Ash.Changeset.for_create(:record_outcome, %{
+        source_host: post.source_host,
+        source_kind: "post",
+        source_id: post.source_id,
+        run_id: run.id,
+        outcome: :undecided,
+        reason: "scripts: script, onclick on a"
+      })
+      |> Ash.create!(tenant: site.id, authorize?: false)
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=post")
+      row_action!(view, "decide", post)
+      decide!(view, "import")
+      assert %{decisions: %{"scripts" => "import"}} = item!(post)
+
+      row_action!(view, "decide", post)
+      assert decision_value(view) == ["import"]
     end
 
     test "Decide… on a decided item opens with the current choice picked", %{

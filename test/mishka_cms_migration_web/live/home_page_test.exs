@@ -228,7 +228,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert has_element?(
                view,
-               ~s|[data-source="wordpress_file"] [data-role="migration-source-name"].min-w-0|
+               ~s|[data-source="wordpress_file"] .flex-wrap > [data-role="migration-source-name"].whitespace-nowrap|
              )
     end
 
