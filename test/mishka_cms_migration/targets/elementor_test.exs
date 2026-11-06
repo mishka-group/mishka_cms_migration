@@ -391,7 +391,9 @@ defmodule MishkaCmsMigration.Targets.ElementorTest do
 
       fallback = "fallback_html: google_maps, image-carousel; no_fallback: form, slides"
       assert outcomes(imported!(site, admin), "page")[@contact] == {:created, fallback}
-      assert MigrationRun.reason_label(fallback) =~ "No fallback available for form, slides"
+
+      assert MigrationRun.reason_label(fallback) ==
+               "Imported with the fallback HTML for google_maps, image-carousel, as you decided; no fallback available for form, slides, so they are left out"
 
       contact = pages(site)["/elementor-contact"]
       assert {:ok, %Tree{}} = Tree.parse(contact.template)
