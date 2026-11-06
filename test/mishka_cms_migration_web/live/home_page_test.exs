@@ -718,13 +718,13 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       new_import!(view)
       submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "app password")
 
-      assert [_busy, run] =
+      assert [run] =
                MigrationRun
                |> Ash.read!(actor: admin, tenant: site.id)
-               |> Enum.sort_by(& &1.inserted_at)
+               |> Enum.filter(&(&1.source == "wordpress"))
 
-      assert status(run) == :pending
       assert settled(view) =~ "but the dry run did not start"
+      assert status(run) == :pending
     end
 
     test "refuse a language that is not one of the site's, under the language", %{site: site} do
