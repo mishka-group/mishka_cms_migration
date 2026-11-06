@@ -892,7 +892,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Import everything in one language, and translate or edit it later. Items the source gives in one of your site's languages keep it."
+                "Import everything in one language, and translate or edit it later. Items the source gives in one of your site's languages keep it. The list is the languages under Settings → Languages; a language missing there answers 404, so add it first."
               )
             end
           end
