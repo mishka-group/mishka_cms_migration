@@ -83,6 +83,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   (`MishkaCmsMigration.MigrationItem.decision_reason/1`). Save keeps the decision (`:choose`),
   closes the modal and says that the next dry run and import follow it.
 
+  A run that put every item with no language of the site in one language (`one_language` of its
+  options) says so in one line there too (`MishkaCmsMigration.MigrationRun.one_language_words/1`),
+  from the path param `one_language`.
+
   A cancelled run's table shows an alert between the filters and the rows
   (`MishkaCmsMigration.MigrationRun.cancelled_words/1`), from the path params `cancelled` and
   `file_source`.
@@ -146,6 +150,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   use MishkaCmsCore.ExtensionLiveView
 
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Flash
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.{Branch, Decisions, Summary}
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.{LanguageNotice, PasswordNotice}
   alias MishkaGervaz.Errors
@@ -202,7 +207,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       _unreadable ->
         {:ok,
          socket
-         |> put_flash(:error, gettext("That run is not there."))
+         |> Flash.put(:error, gettext("That run is not there."))
          |> push_navigate(to: path(socket, "/admin/dashboard/migration"))}
     end
   end
@@ -215,7 +220,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       site_id: socket.assigns.run.site_id,
       connectable: MigrationRun.connectable?(socket.assigns.run),
       cancelled: socket.assigns.run.status == :cancelled,
-      file_source: Source.file?(socket.assigns.run.source)
+      file_source: Source.file?(socket.assigns.run.source),
+      one_language:
+        MigrationRun.one_language(socket.assigns.run.options, socket.assigns.run.site_id)
     }
 
     url_state = UrlSync.decode(params, uri, MigrationItem)
@@ -229,7 +236,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: {:noreply, expand(socket, id)}
 
   def handle_info({:form_saved, :update, %MigrationItem{} = item}, socket) do
-    {:noreply, socket |> close_map() |> put_flash(:info, saved_words(item))}
+    {:noreply, socket |> close_map() |> Flash.put(:success, saved_words(item))}
   end
 
   def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_map(socket)}
@@ -276,7 +283,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
        )}
 
   def handle_info({:put_flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, Flash.put(socket, kind, message)}
 
   def handle_info(:items_decided, socket), do: {:noreply, redrawn(socket)}
 
@@ -320,9 +327,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     do: socket |> decide(id, conflict, choice) |> node_decided(socket, {conflict, choice})
 
   defp node_decided({:ok, item}, socket, {"parent_missing", "keep"}),
-    do: put_flash(socket, :info, waits_again_words(item))
+    do: Flash.put(socket, :info, waits_again_words(item))
 
-  defp node_decided({:ok, item}, socket, _answer), do: put_flash(socket, :info, saved_words(item))
+  defp node_decided({:ok, item}, socket, _answer),
+    do: Flash.put(socket, :success, saved_words(item))
+
   defp node_decided({:error, reason}, socket, _answer), do: refused(socket, :decide, reason)
 
   defp waits_again_words(%MigrationItem{target_id: id}) when is_binary(id),
@@ -373,7 +382,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     {:noreply,
      socket
      |> redrawn()
-     |> put_flash(:info, ngettext("%{count} item decided.", "%{count} items decided.", count))}
+     |> Flash.put(
+       :success,
+       ngettext("%{count} item decided.", "%{count} items decided.", count)
+     )}
   end
 
   defp branch_decided({:error, reason}, socket), do: {:noreply, refused(socket, :decide, reason)}
@@ -402,7 +414,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
     with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(socket.assigns.run.id, user),
          {:ok, _run} <- action.(run, ids, actor: user, tenant: run.site_id) do
-      socket |> awaiting(ids, step) |> put_flash(:info, started(step, length(ids)))
+      socket |> awaiting(ids, step) |> Flash.put(:info, started(step, length(ids)))
     else
       {:ok, nil} -> refused(socket, step, :not_found)
       {:error, reason} -> refused(socket, step, reason)
@@ -425,7 +437,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
     socket
     |> assign(:awaiting, awaiting)
-    |> put_flash(flash_kind(result), finished_words(step, item, result, reason))
+    |> Flash.put(Flash.result_kind(result), finished_words(step, item, result, reason))
   end
 
   defp finished(
@@ -452,7 +464,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp summarized(%{assigns: %{batch: %{ids: ids, settled: settled}}} = socket) do
     {kind, words} = Summary.call(ids, settled)
-    socket |> assign(:batch, nil) |> put_flash(kind, words)
+    socket |> assign(:batch, nil) |> Flash.put(kind, words)
   end
 
   defp summarized(socket), do: socket
@@ -481,9 +493,6 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp result(:dry_run, item), do: {item.plan, item.plan_reason}
   defp result(:import, item), do: {item.outcome, item.reason}
-
-  defp flash_kind(:failed), do: :error
-  defp flash_kind(_result), do: :info
 
   defp finished_words(step, item, result, nil), do: done_words(step, item, result)
 
@@ -524,7 +533,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   defp refused(true, socket, step, reason),
     do:
-      put_flash(
+      Flash.put(
         socket,
         :info,
         not_done_words(step, Errors.extract_error_message(reason, MigrationRun))
@@ -534,11 +543,14 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
     error =
       Errors.Action.Failed.exception(resource: MigrationRun, label: label(step), reason: reason)
 
-    put_flash(socket, :error, Errors.format_flash_message(error))
+    Flash.put(socket, refusal_kind(reason), Errors.format_flash_message(error))
   end
 
   defp not_done_words(:decide, why), do: gettext("Not decided. %{why}", why: why)
   defp not_done_words(_start, why), do: gettext("Not started. %{why}", why: why)
+
+  defp refusal_kind(:not_found), do: :error
+  defp refusal_kind(_not_started), do: :info
 
   defp label(:dry_run), do: gettext("Dry run this item")
   defp label(:import), do: gettext("Import this item")

@@ -92,6 +92,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   while `comments` is off (`MishkaCmsMigration.Targets.BlogComment`), and a post's old address
   while `post_address` is `"blog_without_redirects"` (`MishkaCmsMigration.Targets.PostRedirect`).
 
+  An item no run has met that the run's choices leave out (`MishkaCmsMigration.MigrationRun.left_out?/3`:
+  a kind switched off in the New import window, or a site setting such as the icon) is planned as
+  the admin's own leave-out, `{:skipped, "left_out_by_admin"}`, and recorded as left out
+  (`MishkaCmsMigration.Workers.Helpers.Writer`), so the Items page lists it as Left out by you and
+  Bring back undoes it. An item a run has met already keeps what the admin did with it.
+
   Items are found by source host as well as by kind and id, so several sources moved into one site
   never meet: the same id from two hosts is two items, each with its own CMS record.
 
@@ -103,6 +109,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
 
   require Ash.Query
 
+  alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
@@ -160,9 +167,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     records = known |> Map.values() |> Enum.flat_map(&record_refs(&1, target)) |> current(state)
 
     items
-    |> Map.new(
-      &{&1.source_id, plan(target, &1, Map.get(known, &1.source_id), records, state.run.site_id)}
-    )
+    |> Map.new(&{&1.source_id, planned(state, target, &1, Map.get(known, &1.source_id), records)})
     |> existing(target, items, state)
   end
 
@@ -232,6 +237,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     do: {:halt, :forbidden}
 
   defp read_records({:error, error}, _records, _ids, _state), do: raise(error)
+
+  defp planned(state, target, item, nil, records) do
+    case MigrationRun.left_out?(state.options, item.kind, item.source_id) do
+      true -> {:skipped, "left_out_by_admin"}
+      false -> plan(target, item, nil, records, state.run.site_id)
+    end
+  end
+
+  defp planned(state, target, item, known, records),
+    do: plan(target, item, known, records, state.run.site_id)
 
   defp plan(_target, _item, %{left_out: true}, _records, _site),
     do: {:skipped, "left_out_by_admin"}

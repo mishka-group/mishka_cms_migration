@@ -14,8 +14,16 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   Connection draws the keys that source asks for (`MishkaCmsMigration.Source.form_fields/1`), its
   secret as a masked password input, or, for a source that reads a file
   (`MishkaCmsMigration.Source.file?/1`) such as the WordPress export file, its Export file upload
-  instead. Its Check and save creates the run once the source answers, or reads the file; the
-  modal then closes and the run shows in the table.
+  instead. The window is four short steps shown one at a time
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps`): where from, what to bring, languages,
+  and a review in plain words. Its Start the dry run creates the run once the source answers, or
+  reads the file, and starts the run's dry run at once, which writes nothing to the site; a run the
+  site cannot start it for, because another run of the site is running, stays Connected and a
+  warning says why. The modal then closes and the run shows in the table.
+
+  Every flash says what it means (`MishkaCmsMigrationWeb.Flash`): Dry run started and Import started
+  are info, Run cancelled is a success, a step the run refuses is info, and a run that is not there
+  is an error.
 
   ## A run's row
 
@@ -54,6 +62,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   alias MishkaCmsCoreWeb.Live.Admin.Components.ActivityFeed
   alias MishkaCmsMigration.{MigrationRun, Source}
+  alias MishkaCmsMigrationWeb.Flash
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice
   alias MishkaGervaz.Errors
@@ -91,12 +100,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   end
 
   @impl true
-  def handle_info({:form_saved, :create, run}, socket) do
-    {:noreply,
-     socket
-     |> close_modal()
-     |> put_flash(:info, gettext("Connected to %{site}.", site: connected_to(run)))}
-  end
+  def handle_info({:form_saved, :create, run}, socket),
+    do: {:noreply, socket |> close_modal() |> connected(run)}
 
   def handle_info({:form_cancelled, _resource}, socket), do: {:noreply, close_modal(socket)}
 
@@ -129,7 +134,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
        id,
        &MishkaCmsMigration.cancel_run/2,
        gettext("Cancel"),
-       gettext("Run cancelled.")
+       gettext("Run cancelled."),
+       :success
      )}
   end
 
@@ -147,7 +153,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   end
 
   def handle_info({:put_flash, kind, message}, socket),
-    do: {:noreply, put_flash(socket, kind, message)}
+    do: {:noreply, Flash.put(socket, kind, message)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -162,23 +168,55 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
   end
 
   defp new_run({:error, :not_installed}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("This source is no longer installed."))}
+    do: {:noreply, Flash.put(socket, :error, gettext("This source is no longer installed."))}
 
-  defp step(socket, id, action, label, done) do
+  defp step(socket, id, action, label, done, kind \\ :info) do
     user = socket.assigns.current_user
 
     with {:ok, %MigrationRun{} = run} <- MigrationRun.fetch(id, user),
          {:ok, _run} <- action.(run, actor: user, tenant: run.site_id) do
-      put_flash(socket, :info, done)
+      Flash.put(socket, kind, done)
     else
-      {:ok, nil} -> refused(socket, label, :not_found)
-      {:error, reason} -> refused(socket, label, reason)
+      {:ok, nil} -> refused(socket, label, :not_found, :error)
+      {:error, reason} -> refused(socket, label, reason, :info)
     end
   end
 
-  defp refused(socket, label, reason) do
+  # A new run starts its dry run at once: the New import window's last step says so. A run the
+  # site could not start it for, such as while another of its runs is running, stays Connected, and
+  # the flash says why, so the admin starts it from its row.
+  defp connected(socket, run) do
+    site = connected_to(run)
+    user = socket.assigns.current_user
+
+    case MishkaCmsMigration.start_dry_run(run, actor: user, tenant: run.site_id) do
+      {:ok, _run} ->
+        Flash.put(
+          socket,
+          :info,
+          gettext("Connected to %{site}. The dry run started: it writes nothing to your site.",
+            site: site
+          )
+        )
+
+      {:error, reason} ->
+        Flash.put(
+          socket,
+          :warning,
+          gettext("Connected to %{site}, but the dry run did not start. %{reason}",
+            site: site,
+            reason: refusal(gettext("Dry run"), reason)
+          )
+        )
+    end
+  end
+
+  defp refused(socket, label, reason, kind),
+    do: Flash.put(socket, kind, refusal(label, reason))
+
+  defp refusal(label, reason) do
     error = Errors.Action.Failed.exception(resource: MigrationRun, label: label, reason: reason)
-    put_flash(socket, :error, Errors.format_flash_message(error))
+    Errors.format_flash_message(error)
   end
 
   defp expand(socket, id) do

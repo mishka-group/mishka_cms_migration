@@ -140,7 +140,17 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                "pages" => "publish",
                "post_address" => "blog",
                "confirm_users" => true,
-               "comments" => false
+               "comments" => false,
+               "bring_users" => true,
+               "bring_terms" => true,
+               "bring_media" => true,
+               "bring_pages" => true,
+               "bring_posts" => true,
+               "bring_menus" => true,
+               "site_title" => true,
+               "site_logo" => true,
+               "site_icon" => true,
+               "one_language" => nil
              }
 
       assert {:ok,
@@ -149,7 +159,10 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                 pages: "publish",
                 post_address: "blog",
                 confirm_users: true,
-                comments: false
+                comments: false,
+                bring_posts: true,
+                site_icon: true,
+                one_language: nil
               }} =
                Options.builder(stored)
 

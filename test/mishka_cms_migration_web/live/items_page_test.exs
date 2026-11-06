@@ -422,6 +422,55 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     end
   end
 
+  describe "a run that put everything in one language" do
+    test "says so in one line, and a run that kept the source's languages says nothing",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      refute has_element?(open!(conn, admin, run), @table <> " [role=\"alert\"]", "no language")
+
+      one =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            source_host: "other.example.com",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password",
+            options: %{one_language: "en"}
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin, one)
+
+      assert has_element?(view, @table <> " [role=\"alert\"]", "puts every item with no language")
+      assert has_element?(view, @table <> " [role=\"alert\"]", "English")
+    end
+  end
+
+  describe "the site's own settings" do
+    test "are listed like any item, and a row's Leave out and Bring back reach them",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "setting"})
+
+      icon = Enum.find(stored(site), &(&1.source_kind == "setting" and &1.source_id == "icon"))
+
+      assert Enum.sort(rows(view)) |> Enum.map(&elem(&1, 1)) == [
+               "icon",
+               "logo",
+               "tagline",
+               "title"
+             ]
+
+      row_action!(view, "leave_out", icon)
+      assert %{left_out: true} = item!(icon)
+      assert plan_of(view, icon) == "left_out"
+
+      row_action!(view, "bring_back", icon)
+      assert %{left_out: false} = item!(icon)
+    end
+  end
+
   describe "the language addresses warning" do
     @warning ~s|[data-role="language-urls-warning"]|
 

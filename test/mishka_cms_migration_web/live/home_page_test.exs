@@ -242,15 +242,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
 
-      assert {run.source, run.source_host, run.status, run.extra["name"]} ==
-               {"wordpress", "localhost:8089", :pending, "Mishka Test Blog"}
+      assert {run.source, run.source_host, run.extra["name"]} ==
+               {"wordpress", "localhost:8089", "Mishka Test Blog"}
+
+      assert status(run) == :dry_running
 
       assert stored(run).connection == %{"url" => "http://localhost:8089", "user" => "admin"}
       assert MigrationRun.open_secret(run) == {:ok, "app password"}
-      assert settled(view) =~ "Connected to Mishka Test Blog."
+      assert settled(view) =~ "Connected to Mishka Test Blog. The dry run started"
       assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress")
       assert has_element?(view, "#migration-runs-table", "Mishka Test Blog")
-      assert has_element?(view, ~s|[data-role="run-status"][data-status="pending"]|)
+      assert has_element?(view, ~s|[data-role="run-status"][data-status="dry_running"]|)
     end
 
     test "asks WordPress's address, user and application password, the password masked", %{
@@ -404,10 +406,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       for label <- ["Choices for this run", "Authors", "Pages", "Post addresses"],
           do: assert(has_element?(view, "#migration-run-form-modal label", label))
 
-      comments = ~s|#migration-run-form-modal input[name="form[options][comments]"]|
+      comments = ~s|#migration-run-form-modal input[name="form[bring][comments]"]|
       assert has_element?(view, comments)
       refute has_element?(view, comments <> "[checked]")
-      assert has_element?(view, "#migration-run-form-modal", "Bring the comments too")
+      assert has_element?(view, "#migration-run-form-modal", "Comments")
 
       confirm = ~s|#migration-run-form-modal input[name="form[options][confirm_users]"]|
       assert has_element?(view, confirm <> "[checked]")
@@ -466,7 +468,17 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "pages" => "draft",
                "post_address" => "blog_without_redirects",
                "confirm_users" => true,
-               "comments" => false
+               "comments" => false,
+               "bring_users" => true,
+               "bring_terms" => true,
+               "bring_media" => true,
+               "bring_pages" => true,
+               "bring_posts" => true,
+               "bring_menus" => true,
+               "site_title" => true,
+               "site_logo" => true,
+               "site_icon" => true,
+               "one_language" => nil
              }
     end
 
@@ -507,13 +519,230 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
             "user" => "admin",
             "secret" => "app password"
           },
-          "options" => %{"comments" => "true"}
+          "bring" => %{"comments" => "true"}
         }
       })
       |> render_submit()
 
       assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
       assert %{"comments" => true, "authors" => "connect"} = stored(run).options
+    end
+  end
+
+  describe "the New import steps" do
+    @modal "#migration-run-form-modal"
+    @steps ~w(from bring language review)
+
+    setup do
+      for {plugin, event} <- fake_plugins(), do: register_plugin!(plugin, event)
+      Req.Test.set_req_test_to_shared()
+      on_exit(&Req.Test.set_req_test_to_private/0)
+      stub!()
+      :ok
+    end
+
+    defp hidden_steps(view) do
+      html = view |> render() |> LazyHTML.from_fragment()
+
+      for step <- @steps ++ ["advanced"], into: %{} do
+        parts = LazyHTML.query(html, "#{@modal} .migration-step-#{step}")
+        classes = parts |> LazyHTML.attribute("class") |> Enum.map(&String.split/1)
+        {step, classes != [] and Enum.all?(classes, &("hidden" in &1))}
+      end
+    end
+
+    defp review(view) do
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|#{@modal} [data-role="import-review"] p|)
+      |> LazyHTML.text()
+    end
+
+    defp typed!(view, params) do
+      view
+      |> form("#{@modal} form", %{"form" => params})
+      |> render_change(%{"_target" => ["form", "bring", "bring_posts"]})
+    end
+
+    test "walk the simple path in four steps, each shown by Phoenix.LiveView.JS and only the first at the start",
+         %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      assert hidden_steps(view) ==
+               %{
+                 "from" => false,
+                 "bring" => true,
+                 "language" => true,
+                 "review" => true,
+                 "advanced" => true
+               }
+
+      for step <- ~w(from bring language) do
+        [next] =
+          view
+          |> render()
+          |> LazyHTML.from_fragment()
+          |> LazyHTML.query(
+            ~s|#{@modal} [data-role="import-step-nav"][data-step="#{step}"] button|
+          )
+          |> LazyHTML.attribute("phx-click")
+          |> Enum.take(-1)
+
+        assert next =~ "migration-step-#{step}"
+      end
+
+      for label <- ["1 of 4: Where from", "2 of 4: What to bring", "3 of 4: Languages"],
+          do: assert(has_element?(view, "#{@modal} legend", label))
+    end
+
+    test "ask for the kinds as switches that are on, comments off, and the languages of the site with the source's kept",
+         %{conn: conn, site: site} do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      for name <- ~w(bring_posts bring_pages bring_media bring_terms bring_users bring_menus) do
+        assert has_element?(
+                 view,
+                 ~s|#{@modal} input[type="checkbox"][name="form[bring][#{name}]"][checked]|
+               )
+      end
+
+      assert has_element?(
+               view,
+               ~s|#{@modal} input[type="checkbox"][name="form[bring][comments]"]|
+             )
+
+      refute has_element?(view, ~s|#{@modal} input[name="form[bring][comments]"][checked]|)
+
+      language = ~s|#{@modal} select[name="form[language][one_language]"]|
+      assert has_element?(view, language <> " option", "Keep the source's languages")
+      assert has_element?(view, language <> " option", "English")
+    end
+
+    test "review what the run will do in plain words, as the answers change", %{
+      conn: conn,
+      site: site
+    } do
+      view = open!(conn, migration_admin!(site))
+      new_import!(view)
+
+      assert review(view) =~ "Bringing: Posts, Pages"
+      assert review(view) =~ "Not bringing: Comments."
+      assert review(view) =~ "kept as the source gives them"
+      assert review(view) =~ "writes nothing to your site"
+
+      typed!(view, %{
+        "bring" => %{"bring_posts" => "false"},
+        "language" => %{"one_language" => "en"},
+        "options" => %{"site_icon" => "false"}
+      })
+
+      assert review(view) =~ "Not bringing: Posts, Comments."
+      assert review(view) =~ "site icon"
+      assert review(view) =~ "in English"
+    end
+
+    test "keep the advanced options closed until Show advanced options, and need none of them",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      assert hidden_steps(view)["advanced"]
+
+      [toggle] =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query(~s|#{@modal} [data-role="show-advanced"]|)
+        |> LazyHTML.attribute("phx-click")
+
+      assert toggle =~ "migration-step-advanced"
+      assert has_element?(view, "#{@modal} .migration-step-advanced", "Advanced options")
+
+      for label <- ["Authors", "Pages", "Post addresses", "Site title", "Site logo", "Site icon"],
+          do: assert(has_element?(view, "#{@modal} .migration-step-advanced", label))
+
+      submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "app password")
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+      assert {:ok, defaults} = MigrationRun.Options.builder(%{})
+      assert {:ok, saved} = MigrationRun.Options.builder(stored(run).options)
+      assert saved == defaults
+    end
+
+    test "save the switches, the language and the advanced answers into the run's options, and start its dry run",
+         %{conn: conn, site: site} do
+      admin = migration_admin!(site)
+      view = open!(conn, admin)
+      new_import!(view)
+
+      view
+      |> form("#{@modal} form", %{
+        "form" => %{
+          "connection" => %{"url" => "http://localhost:8089", "user" => "admin", "secret" => "pw"},
+          "bring" => %{"bring_pages" => "false", "comments" => "true"},
+          "language" => %{"one_language" => "en"},
+          "options" => %{"site_icon" => "false", "authors" => "create"}
+        }
+      })
+      |> render_submit()
+
+      assert [run] = Ash.read!(MigrationRun, actor: admin, tenant: site.id)
+
+      assert %{
+               "bring_pages" => false,
+               "bring_posts" => true,
+               "comments" => true,
+               "one_language" => "en",
+               "site_icon" => false,
+               "site_logo" => true,
+               "authors" => "create"
+             } = stored(run).options
+
+      assert settled(view) =~ "The dry run started"
+      assert status(run) == :dry_running
+    end
+
+    test "keep the run Connected and say why when the site is busy with another run", %{
+      conn: conn,
+      site: site
+    } do
+      admin = migration_admin!(site)
+      busy = create_run!(site, admin, %{})
+      MishkaCmsMigration.start_dry_run!(busy, actor: admin, tenant: site.id)
+
+      view = open!(conn, admin)
+      new_import!(view)
+      submit!(view, %{"url" => "http://localhost:8089", "user" => "admin"}, "app password")
+
+      assert [_busy, run] =
+               MigrationRun
+               |> Ash.read!(actor: admin, tenant: site.id)
+               |> Enum.sort_by(& &1.inserted_at)
+
+      assert status(run) == :pending
+      assert settled(view) =~ "but the dry run did not start"
+    end
+
+    test "refuse a language that is not one of the site's, under the language", %{site: site} do
+      admin = migration_admin!(site)
+
+      assert {:error, %Ash.Error.Invalid{errors: errors}} =
+               MishkaCmsMigration.create_run(
+                 %{
+                   source: "fake",
+                   source_host: "old.example.com",
+                   language: %{"one_language" => "de"}
+                 },
+                 actor: admin,
+                 tenant: site.id
+               )
+
+      assert [%{field: :language}] = errors
+      assert Ash.read!(MigrationRun, actor: admin, tenant: site.id) == []
     end
   end
 
@@ -575,7 +804,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert settled(view) =~ "Connected to Mishka Test Blog."
       assert has_element?(view, ~s|[data-role="run-source"]|, "WordPress export file")
 
-      row_action!(view, "dry_run", run)
+      assert status(run) == :dry_running
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
       settled(view)
 
@@ -1621,6 +1850,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert crafted!(view, "dry_run", theirs.id) =~ "This record is no longer here."
       assert crafted!(view, "cancel", theirs.id) =~ "This record is no longer here."
       assert crafted!(view, "import", their_ready.id) =~ "This record is no longer here."
+      assert has_element?(view, "#flash-error", "no longer here")
       assert status(theirs) == :pending
       assert status(their_ready) == :dry_run
     end
@@ -1635,6 +1865,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert crafted!(view, "import", pending.id) =~
                "The run has no dry run yet. Run a dry run first."
+
+      assert has_element?(view, "#flash-info", "no dry run yet")
+      refute has_element?(view, "#flash-error")
 
       assert status(pending) == :pending
     end

@@ -386,7 +386,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_parent: item.parent,
                outcome: outcome,
                reason: reason
-             },
+             }
+             |> Map.merge(left_out(reason)),
              scope: state.scope
            ),
          do: :ok
@@ -405,13 +406,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_parent: item.parent,
                plan: plan,
                plan_reason: reason
-             },
+             }
+             |> Map.merge(left_out(reason)),
              scope: state.scope
            ),
          do: :ok
   end
 
   defp noted(_state, _item, _outcome, _reason), do: :ok
+
+  defp left_out("left_out_by_admin"), do: %{left_out: true}
+  defp left_out(_reason), do: %{}
 
   defp source_slug(%Item{attrs: %{"slug" => slug}}) when is_binary(slug) and slug != "", do: slug
   defp source_slug(_item), do: nil

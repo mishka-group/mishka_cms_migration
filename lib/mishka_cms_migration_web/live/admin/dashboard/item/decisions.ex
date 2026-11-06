@@ -428,7 +428,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
   defp read_again(socket), do: socket
 
   defp apply_rules(socket, [], _search) do
-    send(self(), {:put_flash, :error, gettext("Turn on a rule first.")})
+    send(self(), {:put_flash, :info, gettext("Turn on a rule first.")})
     socket
   end
 
@@ -521,7 +521,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Decisions do
         choice: word
       )
 
-  defp flash_kind({:ok, _count}), do: :info
+  defp flash_kind({:ok, _count}), do: :success
   defp flash_kind(_error), do: :error
 
   defp applied_words({:ok, count}),

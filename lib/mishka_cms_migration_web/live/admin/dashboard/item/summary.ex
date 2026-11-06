@@ -16,13 +16,16 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary do
   failed is said once, not once for each item under it. Then what waits for a decision, what was
   skipped for another reason, what was created or updated, and how many the job never reached,
   such as an item the source no longer lists. A group names five items at most, then how many more.
-  The flash is an error when anything failed.
+  The flash is an error when anything failed, a warning when anything was skipped, waits for a
+  decision or was not reached, and a success when every item was created or updated
+  (`MishkaCmsMigrationWeb.Flash`).
   """
 
   use Gettext, backend: MishkaCmsCore.Gettext
 
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
+  alias MishkaCmsMigrationWeb.Flash
 
   @under_parent ["parent_undecided", "parent_missing", "parent_not_listed"]
   @named 5
@@ -31,7 +34,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary do
   The flash's kind and words for an import of the items `ids`, in their order, given the items
   its job settled, by id, as their broadcasts carried them.
   """
-  @spec call([String.t()], %{String.t() => MigrationItem.t()}) :: {:info | :error, String.t()}
+  @spec call([String.t()], %{String.t() => MigrationItem.t()}) ::
+          {MishkaCmsMigrationWeb.Flash.kind(), String.t()}
   def call(ids, settled) do
     {met, unmet} = Enum.split_with(ids, &is_map_key(settled, &1))
     items = Enum.map(met, &Map.fetch!(settled, &1))
@@ -50,7 +54,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary do
       |> List.flatten()
       |> Enum.reject(&is_nil/1)
 
-    {kind(items),
+    {kind(items, unmet),
      ngettext(
        "Import of %{count} item: %{parts}.",
        "Import of %{count} items: %{parts}.",
@@ -135,8 +139,13 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Summary do
   defp titled(%{title: title}) when is_binary(title) and title != "", do: title
   defp titled(item), do: "#" <> item.source_id
 
-  defp kind(items), do: items |> Enum.any?(&(&1.outcome == :failed)) |> failed_kind()
+  defp kind(items, unmet) do
+    kinds = Enum.map(items, &Flash.result_kind(&1.outcome))
 
-  defp failed_kind(true), do: :error
-  defp failed_kind(false), do: :info
+    cond do
+      :error in kinds -> :error
+      unmet != [] or :warning in kinds -> :warning
+      true -> :success
+    end
+  end
 end

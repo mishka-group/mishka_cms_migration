@@ -44,6 +44,14 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   carries every entry's language. An item that names no language on a run of a source with no
   language plugin is in the site's main language (`MishkaCmsCore.Runtime.Languages.primary/1`).
 
+  ## One language for the run
+
+  A run whose New import window chose one language (`one_language` of its options,
+  `MishkaCmsMigration.MigrationRun.one_language/2`, one of the site's languages) asks neither
+  decision: an item that names no language, and one in a language the site does not publish in, is
+  written in that language and waits for nothing, and the Items page says so in one line. An item
+  in one of the site's languages keeps it, and the editions the source links stay linked.
+
   ## What the report says
 
   `note/3`: `"translations: fa, de"` for the group's original, the edition in the site's main
@@ -91,12 +99,16 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
     |> Map.put(:language, language(item, context))
   end
 
-  @doc "The language `item` is written in: its own, else the site's main language."
+  @doc """
+  The language `item` is written in: its own, else the site's main language; on a run that puts
+  such items in one language (see "One language for the run"), that language for an item with none
+  or with one the site does not publish in.
+  """
   @spec language(Item.t(), Target.context()) :: String.t()
-  def language(%Item{attrs: %{"language" => language}}, _context) when is_binary(language),
-    do: language
+  def language(%Item{attrs: %{"language" => language}}, context) when is_binary(language),
+    do: if(missing?(language, context), do: one(context) || language, else: language)
 
-  def language(_item, context), do: Languages.primary(context.site_id)
+  def language(_item, context), do: one(context) || Languages.primary(context.site_id)
 
   @doc """
   What a target's `prepare/3` asks first: `:ok` for an item in one of the site's languages, or one
@@ -141,7 +153,12 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   defp missing(false, _language, _item, _context), do: :ok
 
   defp missing(true, language, item, context),
+    do: context |> one() |> missing_asked(language, item, context)
+
+  defp missing_asked(nil, language, item, context),
     do: context |> Target.decision(item, @missing) |> missing_decided(language)
+
+  defp missing_asked(_one, _language, _item, _context), do: :ok
 
   defp missing_decided("import", language), do: {:add, language}
   defp missing_decided(_undecided, language), do: {:undecided, @missing <> ": " <> language}
@@ -149,7 +166,15 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   defp unknown(nil, _item, _context), do: :ok
 
   defp unknown(_plugin, item, context),
+    do: context |> one() |> unknown_asked(item, context)
+
+  defp unknown_asked(nil, item, context),
     do: context |> Target.decision(item, @unknown) |> unknown()
+
+  defp unknown_asked(_one, _item, _context), do: :ok
+
+  defp one(%{options: options, site_id: site_id}),
+    do: MishkaCmsMigration.MigrationRun.one_language(options, site_id)
 
   defp unknown("import"), do: :ok
   defp unknown("keep"), do: {:skipped, "waits_for_language"}

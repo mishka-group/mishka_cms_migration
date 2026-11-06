@@ -62,8 +62,8 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
     stub!(@empty |> Map.merge(answers) |> Map.put("/wp-json/", "polylang-index"))
   end
 
-  defp wordpress_run!(site, admin) do
-    %{source: "wordpress", connection: @connection, secret: "app password", options: %{}}
+  defp wordpress_run!(site, admin, options \\ %{}) do
+    %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
   end
 
@@ -364,6 +364,72 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
 
       assert outcomes(run, "post")["124"] == {:skipped, "left_out_by_admin"}
       assert Languages.site(site.id) == ["en"]
+    end
+  end
+
+  describe "one language for the run" do
+    test "answers every item of a language the site does not publish in with it, asking nothing and deciding nothing per item",
+         %{site: site, admin: admin} do
+      languages!(site, ["en"])
+      stub_rows!(&Derived.pro_rows/1)
+
+      run = site |> wordpress_run!(admin, %{one_language: "en"}) |> dry_run!(admin)
+
+      for kind <- ["post", "page", "category"],
+          do:
+            assert(
+              Enum.all?(outcomes(run, kind), fn {_id, {outcome, _}} -> outcome == :created end)
+            )
+
+      assert Enum.all?(
+               Ash.read!(MigrationItem, tenant: site.id, authorize?: false),
+               &(&1.decisions == %{})
+             )
+
+      run = import!(run, admin)
+
+      assert %{"122" => {:created, _}, "124" => {:created, _}} = outcomes(run, "post")
+      assert Languages.site(site.id) == ["en"]
+      assert by(BlogPost, site, :title) |> Map.values() |> Enum.all?(&(&1.language == "en"))
+      assert %{"آخر هفته‌ای در اصفهان" => %{language: "en"}} = by(BlogPost, site, :title)
+    end
+
+    test "answers every item whose language the source does not say with it, in the import too",
+         %{site: site, admin: admin} do
+      languages!(site, ["en", "fa"])
+      stub_rows!(&MishkaCmsMigration.Test.WordPress.recorded/1)
+
+      run = site |> wordpress_run!(admin, %{one_language: "fa"}) |> dry_run!(admin)
+      assert Enum.all?(outcomes(run, "post"), fn {_id, {outcome, _}} -> outcome == :created end)
+
+      run = import!(run, admin)
+
+      assert %{"122" => {:created, _}, "123" => {:created, _}} = outcomes(run, "post")
+      assert by(BlogPost, site, :title) |> Map.values() |> Enum.all?(&(&1.language == "fa"))
+    end
+
+    test "keeps the language of an item the source gives in one of the site's languages",
+         %{site: site, admin: admin} do
+      languages!(site, ["en", "fa"])
+      stub_rows!(&Derived.pro_rows/1)
+
+      imported =
+        wordpress_run!(site, admin, %{one_language: "en"}) |> dry_run!(admin) |> import!(admin)
+
+      assert %{"122" => {:created, _}} = outcomes(imported, "post")
+      assert %{"آخر هفته‌ای در اصفهان" => {"fa", @weekend}} = groups(BlogPost, site, :title)
+    end
+
+    test "is ignored when the language is not one of the site's, so the decisions are asked as before",
+         %{site: site, admin: admin} do
+      languages!(site, ["en", "fa"])
+      stub_rows!(&MishkaCmsMigration.Test.WordPress.recorded/1)
+
+      run = site |> wordpress_run!(admin, %{one_language: "de"}) |> dry_run!(admin)
+
+      assert Enum.all?(outcomes(run, "post"), fn {_id, outcome} ->
+               outcome == {:undecided, "language_unknown"}
+             end)
     end
   end
 

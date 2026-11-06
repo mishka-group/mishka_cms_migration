@@ -275,6 +275,17 @@ defmodule MishkaCmsMigration.MigrationItem do
       end
 
       layout do
+        notice :one_language_run do
+          position :after_filters
+          type :info
+          icon "hero-language"
+          show_when fn state -> is_binary(state.path_params[:one_language]) end
+
+          content fn state ->
+            MigrationRun.one_language_words(state.path_params[:one_language])
+          end
+        end
+
         notice :cancelled_run do
           position :after_filters
           type :warning
@@ -869,7 +880,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     create :record_outcome do
-      accept @source ++ [:run_id, :title, :source_slug, :source_parent, :outcome, :reason]
+      accept @source ++
+               [:run_id, :title, :source_slug, :source_parent, :outcome, :reason, :left_out]
+
       upsert? true
       upsert_identity :unique_source_item
 
@@ -1057,7 +1070,9 @@ defmodule MishkaCmsMigration.MigrationItem do
     end
 
     create :record_plan do
-      accept @source ++ [:title, :source_slug, :source_parent, :plan, :plan_reason]
+      accept @source ++
+               [:title, :source_slug, :source_parent, :plan, :plan_reason, :left_out]
+
       upsert? true
       upsert_identity :unique_source_item
       upsert_fields [:title, :source_slug, :source_parent, :plan, :plan_reason, :updated_at]
@@ -1651,11 +1666,13 @@ defmodule MishkaCmsMigration.MigrationItem do
       when is_map_key(@bulk_choices, action) do
     choice = Map.fetch!(@bulk_choices, action)
     decided = Enum.count(records, &(Map.get(&1.decisions, conflict(&1)) == choice))
-    BulkActionHooks.put_flash(socket, :info, decided_words(decided, length(records) - decided))
+    left = length(records) - decided
+    kind = if left > 0, do: :warning, else: :success
+    BulkActionHooks.put_flash(socket, kind, decided_words(decided, left))
   end
 
   def chosen(%BulkActionResult{action_name: action, succeeded_count: count}, socket),
-    do: BulkActionHooks.put_flash(socket, :info, chosen_words(action, count))
+    do: BulkActionHooks.put_flash(socket, :success, chosen_words(action, count))
 
   @doc """
   The Items table's Plan cell for `item`: what the last dry run would do with it, as a pill
