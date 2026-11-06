@@ -795,6 +795,28 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert has_element?(view, row_button("map_to", tag))
     end
 
+    test "a redirect deleted for good in the CMS says so above Import it again and Leave it out",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      item =
+        Enum.find(stored(site), &(&1.source_kind == "post_redirect" and is_binary(&1.target_id)))
+
+      MishkaCmsCore.Runtime.Redirect
+      |> Ash.get!(item.target_id, tenant: site.id, authorize?: false)
+      |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+      view = open!(conn, admin, later, "?items_filter_source_kind=post_redirect")
+
+      assert plan_of(view, item) == "undecided"
+      row_action!(view, "decide", item)
+
+      modal = view |> parts("#migration-item-map-modal") |> LazyHTML.text()
+      assert modal =~ "This redirect was deleted in Mishka CMS after it was imported"
+      refute modal =~ "already has something in its place"
+
+      assert decision_choices(view) == ["Import it again", "Leave it out"]
+    end
+
     test "an item the Blog would write, on a node without it, offers Wait for the Blog or Leave out",
          %{conn: conn, site: site, admin: admin} do
       without_blog!()

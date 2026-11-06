@@ -57,7 +57,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
 
   An item the import cannot place safely on its own, whose plan reads Needs your decision, has
   Decide… instead of Map to…: the same modal and form, with the conflict's choices in words
-  (`MishkaCmsMigration.MigrationItem.decision_options/1`). Save keeps the decision (`:choose`),
+  (`MishkaCmsMigration.MigrationItem.decision_options/1`) under why the item waits, such as "This
+  tag was deleted in Mishka CMS after it was imported"
+  (`MishkaCmsMigration.MigrationItem.decision_reason/1`). Save keeps the decision (`:choose`),
   closes the modal and says that the next dry run and import follow it.
 
   A cancelled run's table shows an alert between the filters and the rows

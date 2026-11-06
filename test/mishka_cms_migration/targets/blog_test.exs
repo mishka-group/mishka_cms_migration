@@ -626,6 +626,9 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                {"Leave it archived, and import what names it without it", "leave_out"}
              ]
 
+      assert MigrationItem.decision_reason(%{form: %Phoenix.HTML.Form{data: item}}) ==
+               MigrationRun.reason_label("archived_in_cms")
+
       refute is_map_key(blog(Tag, site), "Gutenberg")
     end
 
@@ -691,7 +694,10 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert MigrationItem.conflict(item) == "deleted_in_cms"
 
       assert MigrationRun.reason_label(item.reason, item.source_kind) ==
-               "This tag was deleted in Mishka CMS after it was imported: import it again, or leave it out"
+               "This tag was deleted in Mishka CMS after it was imported"
+
+      assert MigrationItem.decision_reason(%{form: %Phoenix.HTML.Form{data: item}}) ==
+               "This tag was deleted in Mishka CMS after it was imported"
 
       refute is_map_key(blog(Tag, site), "Gutenberg")
     end

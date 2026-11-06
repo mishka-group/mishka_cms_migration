@@ -115,7 +115,8 @@ defmodule MishkaCmsMigration.MigrationItem do
   choices are the site's records of that kind in the language it leads with, and Import as its own
   (`map_options/1`). An item with a conflict has Decide… instead while the conflict is open
   (`conflict/1`), which opens the same form with
-  one `decision` field, the conflict's choices in words (`decision_options/1`); the Plan filter's
+  one `decision` field, the conflict's choices in words (`decision_options/1`), under a notice that
+  says why the item waits, in its Plan cell's words (`decision_reason/1`); the Plan filter's
   Needs your decision lists them all, and Keep the site as it is and Import anyway decide the
   picked rows together (for two attachments of the same file, `"same_file"`, Keep both and Use the
   original). The Plan cell shows the choice before the plan, and the record a mapped
@@ -698,10 +699,20 @@ defmodule MishkaCmsMigration.MigrationItem do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "The import cannot place this item on its own: the site already has something in its place. What you pick holds for every later dry run and import."
+                "The import cannot place this item on its own. What you pick holds for every later dry run and import."
               )
             end
           end
+        end
+      end
+
+      layout do
+        notice :why_decide do
+          position :before_fields
+          type :info
+          icon "hero-information-circle"
+          show_when fn state -> MishkaCmsMigration.MigrationItem.decision_reason(state) != nil end
+          content fn state -> MishkaCmsMigration.MigrationItem.decision_reason(state) end
         end
       end
 
@@ -1298,6 +1309,23 @@ defmodule MishkaCmsMigration.MigrationItem do
   end
 
   def decision_options(_state), do: []
+
+  @doc """
+  Why the item the Decide… form has loaded waits for a decision, shown above its choices: the
+  reason its Plan cell gives, in the same words (`MishkaCmsMigration.MigrationRun.reason_label/2`),
+  such as "This tag was deleted in Mishka CMS after it was imported", or the conflict an admin
+  decided while the decision has not taken effect. `nil` before the item is loaded and for an item
+  with no conflict, whose form shows Map to… instead.
+  """
+  @spec decision_reason(map()) :: String.t() | nil
+  def decision_reason(%{form: %Phoenix.HTML.Form{data: %__MODULE__{} = item}}),
+    do: item |> conflict() |> conflict_words(waits_on(item), item.source_kind)
+
+  def decision_reason(_state), do: nil
+
+  defp conflict_words(nil, _reason, _kind), do: nil
+  defp conflict_words(conflict, nil, kind), do: MigrationRun.reason_label(conflict, kind)
+  defp conflict_words(_conflict, reason, kind), do: MigrationRun.reason_label(reason, kind)
 
   defp current_choice("menu_goes_to", %{decisions: %{"menu_goes_to" => choice}}), do: choice
 

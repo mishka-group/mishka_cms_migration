@@ -2103,17 +2103,11 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "the site gives every language a prefix")
 
   defp said("deleted_in_cms", nil),
-    do:
-      dgettext(
-        "mishka_gervaz",
-        "Deleted in Mishka CMS after it was imported: import it again, or leave it out"
-      )
+    do: dgettext("mishka_gervaz", "Deleted in Mishka CMS after it was imported")
 
   defp said("deleted_in_cms", kind),
     do:
-      dgettext(
-        "mishka_gervaz",
-        "This %{kind} was deleted in Mishka CMS after it was imported: import it again, or leave it out",
+      dgettext("mishka_gervaz", "This %{kind} was deleted in Mishka CMS after it was imported",
         kind: kind_one(kind)
       )
 
