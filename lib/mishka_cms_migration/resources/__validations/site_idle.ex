@@ -40,6 +40,11 @@ defmodule MishkaCmsMigration.Resources.Validations.SiteIdle do
              "A dry run or an import of this site is running. Change its items once it is done."
            )
 
+  @doc "Whether `error` is this validation's refusal: a run of the item's site is running now."
+  @spec running?(term()) :: boolean()
+  def running?(%InvalidChanges{message: @message}), do: true
+  def running?(_error), do: false
+
   @impl true
   def supports(_opts), do: [Ash.Changeset]
 

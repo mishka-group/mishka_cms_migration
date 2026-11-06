@@ -860,7 +860,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert flash =~ second.title
     end
 
-    test "are refused in words while another run of the site is running, and are not offered on an item left out",
+    test "say in a notice, not as a failure, that they did not start while another run of the site is running, and are not offered on an item left out",
          %{conn: conn, site: site, admin: admin, run: run} do
       [tag, left_out | _] = Enum.filter(stored(site), &(&1.source_kind == "tag"))
       view = open!(conn, admin, run)
@@ -874,15 +874,43 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> later_run!(admin, run)
       |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-      assert item_action!(view, "import_item", tag) =~ "still waiting or running"
-      assert item_action!(view, "dry_run_item", tag) =~ "still waiting or running"
+      for event <- ["import_item", "dry_run_item"] do
+        Admin.clear_flashes(view)
+        item_action!(view, event, tag)
 
+        assert has_element?(view, "#flash-info", "Not started.")
+        assert has_element?(view, "#flash-info", "still waiting or running")
+        refute has_element?(view, "#flash-error")
+      end
+
+      Admin.clear_flashes(view)
       pick!(view, tag)
-      refused = bulk!(view, "import_items")
-      assert refused =~ "Import the picked items failed"
-      refute refused =~ "Import this item failed"
+      bulk!(view, "import_items")
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      refute has_element?(view, "#flash-error")
       assert item!(tag) == tag
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
+    end
+
+    test "a second Import this item while the first one's job runs starts nothing, and says so in a notice",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"tag", "13"}))
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+
+      assert item_action!(view, "import_item", tag) =~ "Import of the item started."
+      item_action!(view, "import_item", tag)
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      assert has_element?(view, "#flash-info", "An import of this run is running.")
+      refute has_element?(view, "#flash-error")
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(view, "#flash-info", "Import of #{tag.title}: Skipped.")
+      assert %{outcome: :skipped, reason: "unchanged"} = item!(tag)
     end
   end
 
@@ -1361,6 +1389,35 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       refute has_element?(view, ~s|[data-role="item-branch-decide-parents"]|)
       assert has_element?(view, ~s|[data-role="item-branch-import-all"][phx-disable-with]|)
+    end
+
+    test "a decision or an import from the branch while another run of the site is running says in a notice that nothing changed",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      site
+      |> later_run!(admin, later)
+      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      branch_click!(
+        view,
+        ~s|[data-role="item-branch-node"][data-source-id="125"] [data-role="item-branch-decide"][data-choice="import"]|
+      )
+
+      assert has_element?(view, "#flash-info", "Not decided.")
+      assert has_element?(view, "#flash-info", "is running")
+      refute has_element?(view, "#flash-error")
+      assert %{decisions: %{}} = item!(page(site, "125"))
+
+      Admin.clear_flashes(view)
+      branch_click!(view, ~s|[data-role="item-branch-import-anyway"]|)
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      refute has_element?(view, "#flash-error")
+      assert item!(crew).decisions == %{"language_unknown" => "import"}
     end
 
     test "Import anyway writes the item without its parent and says so; the parent waits as it was",

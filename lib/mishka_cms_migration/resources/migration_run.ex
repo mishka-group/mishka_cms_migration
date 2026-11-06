@@ -227,6 +227,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   import Phoenix.Component, only: [sigil_H: 2]
   import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
+  alias Ash.Error.Changes.InvalidAttribute
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
@@ -240,7 +241,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     SourceFile
   }
 
-  alias MishkaCmsMigration.Resources.Validations.{Connectable, SourceInstalled, Status}
+  alias MishkaCmsMigration.Resources.Validations.{Connectable, SiteIdle, SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
   alias MishkaGervaz.Table.Web.UrlSync
 
@@ -1404,6 +1405,24 @@ defmodule MishkaCmsMigration.MigrationRun do
         not Enum.any?(MishkaCmsMigration.Source.form_fields(source), &required_secret?/1)
 
   defp required_secret?(field), do: field[:name] == :secret and field[:required] == true
+
+  @doc """
+  Whether `error`, what a step of a run or an admin's choice on an item answered, refuses it only
+  because a dry run or an import of the site is running now: the run's own
+  (`MishkaCmsMigration.Resources.Validations.Status.running?/1`), another run of its site
+  (`:one_active_per_site`), or any while an item is changed
+  (`MishkaCmsMigration.Resources.Validations.SiteIdle.running?/1`). Nothing is wrong with what
+  was asked, and the same request holds once that job is done, so the Items page says it as a
+  notice, not as a failure. An error that also holds anything else is not.
+  """
+  @spec refused_while_running?(term()) :: boolean()
+  def refused_while_running?(%{errors: [_ | _] = errors}),
+    do: Enum.all?(errors, &refused_while_running?/1)
+
+  def refused_while_running?(%InvalidAttribute{field: :site_id, message: @busy}), do: true
+
+  def refused_while_running?(error),
+    do: Status.running?(error) or SiteIdle.running?(error)
 
   @doc """
   What a cancelled run's alert says: that `:cancel` deleted what the run connected with, the export

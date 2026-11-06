@@ -53,6 +53,17 @@ defmodule MishkaCmsMigration.Resources.Validations.Status do
     cancelled: dgettext_noop("errors", "The run was cancelled. Start a New import.")
   }
 
+  @running [@messages.dry_running, @messages.importing]
+
+  @doc """
+  Whether `error` is this validation's refusal of a run whose dry run or import is running now,
+  which holds once that job is done, unlike a refusal of a run in a status it never leaves on its
+  own, such as a cancelled one.
+  """
+  @spec running?(term()) :: boolean()
+  def running?(%InvalidAttribute{field: :status, message: message}), do: message in @running
+  def running?(_error), do: false
+
   @impl true
   def init(opts), do: opts |> Keyword.get(:from) |> from(opts[:as_read] == true)
 

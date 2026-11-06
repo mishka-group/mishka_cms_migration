@@ -38,8 +38,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   it (`MishkaCmsMigration.MigrationRun.fetch/2`), and runs `MishkaCmsMigration.dry_run_items/3` or
   `MishkaCmsMigration.import_items/3` as the signed-in admin, on the run's site: the run's own job,
   for those items alone (`MishkaCmsMigration.MigrationRun`'s "Picked items"). It says so in a
-  flash; a step the run refuses, such as one while a run of the site is running, is said in
-  Gervaz's words for a failed action, and nothing changes. Import the picked items takes up to 100
+  flash; a step the run refuses is said in Gervaz's words for a failed action, and nothing
+  changes. A step refused only because a dry run or an import of the site is running now
+  (`MishkaCmsMigration.MigrationRun.refused_while_running?/1`) is no failure: a notice says so,
+  "Not started. An import of this run is running. Wait until it finishes, then try again.", and a
+  second click while the first one's job runs says the same. Import the picked items takes up to 100
   rows picked one by one; picking every row picks what the filters find, which it does not take,
   and the admin is asked to pick the rows. Once the job has settled the items, their rows are drawn
   again from their broadcasts.
@@ -119,6 +122,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
       came of its items once its job settles them, the branch in one flash;
     * `import_anyway` decides that the expanded item is imported without its parent
       (`"parent_missing"` answered with `"import"`) and imports it.
+
+  One of them refused only because a dry run or an import of the site is running now says so in a
+  notice, "Not decided. …" for a decision and "Not started. …" for the rest, as Import this item
+  does.
 
   While a row is expanded, the broadcast of any item of its branch draws the branch again, so it
   shows each item where it stands now, as each result of a job arrives, and so does a change of
@@ -512,12 +519,26 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
         count
       )
 
-  defp refused(socket, step, reason) do
+  defp refused(socket, step, reason),
+    do: reason |> MigrationRun.refused_while_running?() |> refused(socket, step, reason)
+
+  defp refused(true, socket, step, reason),
+    do:
+      put_flash(
+        socket,
+        :info,
+        not_done_words(step, Errors.extract_error_message(reason, MigrationRun))
+      )
+
+  defp refused(false, socket, step, reason) do
     error =
       Errors.Action.Failed.exception(resource: MigrationRun, label: label(step), reason: reason)
 
     put_flash(socket, :error, Errors.format_flash_message(error))
   end
+
+  defp not_done_words(:decide, why), do: gettext("Not decided. %{why}", why: why)
+  defp not_done_words(_start, why), do: gettext("Not started. %{why}", why: why)
 
   defp label(:dry_run), do: gettext("Dry run this item")
   defp label(:import), do: gettext("Import this item")
