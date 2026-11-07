@@ -108,13 +108,18 @@ jobs:
 
       - run: MIX_ENV="test" mix deps.audit
 
-  # The suite is small and runs on one machine. When it grows into many `async: false` modules, which
-  # share the runtime's global state and run one at a time, deal the files out with
-  # `mix test --partitions N` over a matrix of N machines (`config/test.exs` already names the
-  # database after MIX_TEST_PARTITION).
+  # Four machines, a quarter of the test files each. Most of the suite is `async: false` — it shares
+  # the runtime's global state — and runs one module at a time, so more cores do not make it faster
+  # and more machines do. Mix deals the test files out by `--partitions`, and each partition has its
+  # own Postgres and its own database (`config/test.exs` names it after MIX_TEST_PARTITION).
   test:
     needs: build
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
 
     services:
       postgres:
@@ -128,6 +133,7 @@ jobs:
 
     env:
       POSTGRES_HOST: localhost
+      MIX_TEST_PARTITION: ${{ matrix.partition }}
 
     steps:
       # Only this repository. mishka_cms_core and mishka_gervaz come from Hex, and mix.exs would use
@@ -154,5 +160,6 @@ jobs:
 
       # `mix test`, not `MIX_ENV=test mix test`: mishka_installer decides at dep-compile time
       # whether to start its plugin engine, and an exported MIX_ENV outranks the `project_env`
-      # override in config/test.exs. --warnings-as-errors also fails on warnings in the test files.
-      - run: mix test --warnings-as-errors
+      # override in config/test.exs. --warnings-as-errors also fails on warnings in the test files,
+      # each in the partition that compiles it.
+      - run: mix test --warnings-as-errors --partitions 4
