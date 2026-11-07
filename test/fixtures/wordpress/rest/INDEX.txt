@@ -47,3 +47,4 @@ elementor-index.json	GET	/wp-json/?_fields=name,description,url,home,gmt_offset,
 elementor-globals.json	GET	/wp-json/elementor/v1/globals [app]	200
 elementor-pages.json	GET	/wp-json/wp/v2/pages?context=edit&per_page=100&status=any&slug=elementor-landing,elementor-contact [app]	200
 elementor-posts.json	GET	/wp-json/wp/v2/posts?context=edit&per_page=100&status=any&slug=elementor-release-notes [app]	200
+polylang-languages.json	GET	/wp-json/pll/v1/languages [none]	200

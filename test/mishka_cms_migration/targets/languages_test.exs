@@ -53,13 +53,18 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
   defp languages!(site, languages),
     do: Settings.put("site.languages", languages, site_id: site.id, category: "general")
 
-  defp stub_rows!(rows_of) do
-    answers =
+  defp stub_rows!(rows_of, answers \\ %{}) do
+    rows =
       Map.new(@routes, fn {route, recording} ->
         {route, {"application/json", recording |> rows_of.() |> Jason.encode!()}}
       end)
 
-    stub!(@empty |> Map.merge(answers) |> Map.put("/wp-json/", "polylang-index"))
+    stub!(
+      @empty
+      |> Map.merge(rows)
+      |> Map.put("/wp-json/", "polylang-index")
+      |> Map.merge(answers)
+    )
   end
 
   defp wordpress_run!(site, admin, options \\ %{}) do
@@ -150,18 +155,75 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
                groups(Tag, site, :name)
     end
 
-    test "keeps the group's key the id of one of its editions, so the core's own list shows one row for it",
+    test "makes the edition in the site's main language the main record, and a lone translation a record of its own",
          %{site: site, admin: admin} do
       imported!(site, admin)
 
       posts = by(BlogPost, site, :title)
       [en, fa] = Enum.map(@weekend, &posts[&1])
 
-      assert en.language_group_id == fa.language_group_id
-      assert en.language_group_id in [en.id, fa.id]
+      assert {en.language_group_id, fa.language_group_id} == {en.id, en.id}
+      assert posts["یادداشت سفر"].language_group_id == posts["یادداشت سفر"].id
 
       masters = posts |> Map.values() |> Enum.filter(&(&1.language_group_id == &1.id))
       assert length(masters) == 3
+    end
+
+    test "makes the main-language edition the main record when the source lists its translation first",
+         %{site: site, admin: admin} do
+      stub_rows!(fn recording ->
+        recording |> Derived.pro_rows() |> Enum.sort_by(& &1["id"], :desc)
+      end)
+
+      imported!(site, admin)
+
+      pages = by(Page, site, :title)
+      [en, fa] = Enum.map(@story, &pages[&1])
+      assert {en.language_group_id, fa.language_group_id} == {en.id, en.id}
+
+      tags = by(Tag, site, :name)
+      assert tags["قهوه"].language_group_id == tags["Coffee"].id
+    end
+
+    test "moves a translation an earlier run wrote alone under the main-language edition once it comes, and a re-run leaves both",
+         %{site: site, admin: admin} do
+      stub_rows!(fn recording ->
+        recording |> Derived.pro_rows() |> Enum.reject(&(&1["lang"] == "en"))
+      end)
+
+      imported!(site, admin)
+      fa = by(BlogPost, site, :title)["آخر هفته‌ای در اصفهان"]
+      assert fa.language_group_id == fa.id
+
+      stub_rows!(&Derived.pro_rows/1)
+      run = imported!(site, admin)
+
+      assert %{"121" => {:created, _}} = outcomes(run, "post")
+      posts = by(BlogPost, site, :title)
+      en = posts["A Weekend in Isfahan"]
+
+      assert {en.language_group_id, posts["آخر هفته‌ای در اصفهان"].language_group_id} ==
+               {en.id, en.id}
+
+      again = imported!(site, admin)
+
+      assert %{"121" => {:skipped, "unchanged"}, "122" => {:skipped, "unchanged"}} =
+               outcomes(again, "post")
+    end
+
+    test "makes the first edition by code the main record of a group with none in the site's main language",
+         %{site: site, admin: admin} do
+      languages!(site, ["de", "en", "fa"])
+
+      stub_rows!(fn recording ->
+        recording |> Derived.pro_rows() |> Enum.sort_by(& &1["id"], :desc)
+      end)
+
+      imported!(site, admin)
+
+      posts = by(BlogPost, site, :title)
+      [en, fa] = Enum.map(@weekend, &posts[&1])
+      assert {en.language_group_id, fa.language_group_id} == {en.id, en.id}
     end
 
     test "puts a translation under the categories and the page of its own language",
@@ -430,6 +492,55 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
       assert Enum.all?(outcomes(run, "post"), fn {_id, outcome} ->
                outcome == {:undecided, "language_unknown"}
              end)
+    end
+  end
+
+  describe "Polylang's free plugin over the REST API" do
+    setup %{site: site} do
+      languages!(site, ["en", "fa"])
+
+      stub_rows!(&MishkaCmsMigration.Test.WordPress.recorded/1, %{
+        "/wp-json/pll/v1/languages" => "polylang-languages"
+      })
+
+      :ok
+    end
+
+    test "writes each page, post, category and tag in the language its address is under, each a record of its own, inactive",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      for kind <- ["post", "page", "category", "tag"],
+          do:
+            assert(
+              Enum.all?(outcomes(run, kind), fn {_id, {outcome, _}} -> outcome == :created end)
+            )
+
+      import!(run, admin)
+
+      assert %{"داستان ما" => {"fa", ["داستان ما"]}, "Our Story" => {"en", ["Our Story"]}} =
+               groups(Page, site, :title)
+
+      refute Enum.any?(Map.values(by(Page, site, :title)), & &1.active)
+
+      assert %{"آخر هفته‌ای در اصفهان" => %{language: "fa"}, "Packing Light" => %{language: "en"}} =
+               by(BlogPost, site, :title)
+
+      assert %{"سفر" => %{language: "fa"}} = by(Collection, site, :name)
+      assert %{"قهوه" => %{language: "fa"}} = by(Tag, site, :name)
+    end
+
+    test "leaves a Persian page for a decision on a site that does not publish in Persian, and one language for the run still wins",
+         %{site: site, admin: admin} do
+      languages!(site, ["en"])
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert %{"126" => {:undecided, "language_missing: fa"}, "125" => {:created, _}} =
+               outcomes(run, "page")
+
+      site |> wordpress_run!(admin, %{one_language: "en"}) |> dry_run!(admin) |> import!(admin)
+
+      assert %{"داستان ما" => %{language: "en"}} = by(Page, site, :title)
     end
   end
 

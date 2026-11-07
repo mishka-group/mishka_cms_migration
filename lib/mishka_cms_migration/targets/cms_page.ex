@@ -205,7 +205,11 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write),
-    do: with(:ok <- ContentChecks.call(item, context), do: write.(context))
+    do:
+      with(
+        :ok <- ContentChecks.call(item, context),
+        do: Editions.lead(item, context, __MODULE__, write)
+      )
 
   @impl MishkaCmsMigration.Target
   def waiting(item, context), do: ContentChecks.waiting(item, context)

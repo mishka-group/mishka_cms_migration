@@ -11,3 +11,4 @@ Site: timezone Asia/Tehran, permalinks /%year%/%monthnum%/%postname%/
 Application passwords need WP_ENVIRONMENT_TYPE=local on plain HTTP; in production they need HTTPS.
 Polylang fixtures (record_polylang.sh): 2026-11-04T22:51:10Z, Polylang 3.9.1
 Elementor fixtures (record_elementor.sh): 2026-11-05T20:17:43Z, Elementor 4.3.6
+Polylang languages (rest/polylang-languages.json): 2026-11-07, Polylang 3.9.1, recorded from the trial site http://localhost:8090 (Polylang active, Persian under /fa/), its host written as http://localhost:8089
