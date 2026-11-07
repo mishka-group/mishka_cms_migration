@@ -174,8 +174,11 @@ defmodule MishkaCmsMigration.Sources.PermalinksTest do
 
     posts = Enum.map(published(), &linked(&1, "/archives/%post_id%", categories()))
 
-    assert %{"category_base" => "archives/category", "tag_base" => "archives/tag"} =
-             Permalinks.call(site(posts))
+    assert %{
+             "category_base" => "archives/category",
+             "tag_base" => "archives/tag",
+             "author_base" => "archives/author"
+           } = Permalinks.call(site(posts))
   end
 
   test "a site with no published post has no structure, and nothing fits it" do

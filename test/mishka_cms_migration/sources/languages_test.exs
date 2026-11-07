@@ -185,6 +185,7 @@ defmodule MishkaCmsMigration.Sources.LanguagesTest do
         "language_prefixes" => ["fa"],
         "category_base" => "category",
         "tag_base" => "tag",
+        "author_base" => "author",
         "posts" => 4,
         "misfits" => []
       }

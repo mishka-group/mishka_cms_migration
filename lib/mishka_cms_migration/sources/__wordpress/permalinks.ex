@@ -78,6 +78,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Permalinks do
     * `"language_prefixes"` — the language codes met in front of a post's address, such as `["fa"]`;
     * `"category_base"` and `"tag_base"` — what comes before a term in its address, `"category"`
       and `"tag"` by default;
+    * `"author_base"` — what comes before an author in their archive's address, `"author"` with
+      the structure's literal start before it, as WordPress puts it (`"archives/author"`);
     * `"posts"` — how many published posts were compared;
     * `"misfits"` — each post that does not fit the structure, its `"id"` and `"link"`.
   """
@@ -110,6 +112,7 @@ defmodule MishkaCmsMigration.Sources.WordPress.Permalinks do
         ),
       "tag_base" =>
         base(terms["tag"], &[decoded(&1["slug"])], home_path, languages, structure, "tag"),
+      "author_base" => front(structure) <> "author",
       "posts" => length(posts),
       "misfits" =>
         for(
@@ -216,7 +219,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Permalinks do
 
   defp front(nil), do: ""
 
-  defp chain(key, categories), do: chain(key, categories, [])
+  @doc """
+  The path of the category `key` names in `categories` (`t:site/0`'s), its parents' slugs then its
+  own, decoded: `["tutorials", "wordpress", "migration"]`; `[]` for a key it does not hold.
+  """
+  @spec chain(term(), %{term() => {String.t(), term()}}) :: [String.t()]
+  def chain(key, categories), do: chain(key, categories, [])
 
   defp chain(key, categories, seen),
     do: categories |> Map.get(key) |> linked(key in seen, key, categories, seen)

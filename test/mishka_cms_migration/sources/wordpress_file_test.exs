@@ -32,8 +32,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     "media" => ["media"],
     "page" => ["pages"],
     "post" => ["posts"],
-    "comment" => ["comments", "comments-pingback"],
-    "post_redirect" => ["posts"]
+    "comment" => ["comments", "comments-pingback"]
   }
 
   # What an export does not carry ("Where it differs from the REST API" in the source's docs): the
@@ -58,8 +57,12 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
   defp file_items!(path, kind) do
     assert {:ok, conn} = WordPressFile.connect(%{"file" => path}, nil)
-    assert {:ok, rows, nil} = WordPressFile.list(conn, kind, nil)
-    built!(WordPressFile, conn, rows, kind)
+    built!(WordPressFile, conn, file_rows(conn, kind, nil), kind)
+  end
+
+  defp file_rows(conn, kind, cursor) do
+    assert {:ok, rows, next} = WordPressFile.list(conn, kind, cursor)
+    rows ++ if(next, do: file_rows(conn, kind, next), else: [])
   end
 
   defp rest_items!(kind) do
@@ -78,7 +81,14 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     rows
   end
 
+  defp rest_rows(conn, "post_redirect"), do: every_row(conn, nil)
+
   defp rest_rows(_conn, kind), do: Enum.flat_map(@recordings[kind], &recorded/1)
+
+  defp every_row(conn, cursor) do
+    {:ok, rows, next} = WordPress.list(conn, "post_redirect", cursor)
+    rows ++ if(next, do: every_row(conn, next), else: [])
+  end
 
   defp pieces(item), do: for(%{name: name} <- item.content || [], name != nil, do: name)
 
@@ -365,13 +375,25 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
         """)
 
       redirects = file_items!(path, "post_redirect")
+      to = %{"kind" => "post", "id" => "7"}
 
       assert redirects["7"].attrs == %{
                "from" => "/2026/02/hello-again/",
-               "old_from" => ["/2026/02/hello-world/", "/2026/02/%d8%b3%d9%84%d8%a7%d9%85/"]
+               "query" => nil,
+               "to" => to
              }
 
-      assert redirects["8"].attrs == %{"from" => nil, "old_from" => []}
+      assert redirects["7~hello-world"].attrs == %{
+               "from" => "/2026/02/hello-world/",
+               "query" => nil,
+               "to" => to
+             }
+
+      assert redirects["7~%d8%b3%d9%84%d8%a7%d9%85"].attrs["from"] ==
+               "/2026/02/%d8%b3%d9%84%d8%a7%d9%85/"
+
+      assert redirects["8"].attrs["from"] == nil
+      refute Enum.any?(Map.keys(redirects), &String.starts_with?(&1, ["8?", "8~"]))
       refute Map.has_key?(file_items!(path, "post")["7"].extra["meta"], "_wp_old_slug")
     end
 
@@ -401,7 +423,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       posts = recorded("posts") |> Enum.map(&to_string(&1["id"])) |> Enum.sort()
 
       assert ids(kinds["post"]) == posts
-      assert ids(kinds["post_redirect"]) == posts
+
+      assert for(id <- ids(kinds["post_redirect"]), not String.contains?(id, ["?", ":"]), do: id) ==
+               posts
+
+      refute Enum.any?(
+               ids(kinds["post_redirect"]),
+               &String.starts_with?(&1, ["page:", "category:", "tag:"])
+             )
+
       assert {kinds["page"], kinds["category"], kinds["tag"]} == {%{}, %{}, %{}}
       assert ids(kinds["user"]) == ids(file_items!(@all, "user"))
       assert Enum.all?(Map.values(kinds["media"]), &(to_string(&1.attrs["post"]) in posts))

@@ -68,10 +68,16 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       whether it is sticky and its format;
     * comment — each `wp:comment` of an item that is not in the trash, approved or held for
       moderation, with its post, parent, author, text, status, type and dates;
-    * post_redirect — each post again, its id, title, status, slug, address and modified time, its
-      old address being the path of its `<link>`, and its `"old_slugs"`, every `_wp_old_slug` it
-      has, which WordPress keeps when a published post's slug changes and which are not kept in a
-      post's `meta`;
+    * post_redirect — the addresses a visitor or search engine knows
+      (`MishkaCmsMigration.Sources.WordPress.Addresses`): each post's `<link>`, the address it had
+      under each `_wp_old_slug` (which WordPress keeps when a published post's slug changes, and
+      which is not kept in a post's `meta`) and `/?p=<id>`; each published page's `/?page_id=<id>`;
+      each file's attachment page and `/?attachment_id=<id>`; each category's, tag's and author's
+      archive, made from the bases the posts' addresses tell (`"permalinks"`, an export carrying
+      no term address) and the category's parents, the tag's slug or the author's login (an export
+      does not carry WordPress's `user_nicename`, which is the login unless it was changed), with
+      `/?cat=<id>`, `/?tag=<slug>` and `/?author=<id>`; and the feeds and date archives of the
+      published posts;
     * menu — each `nav_menu` term (`wp:term`, which an export may list twice) with its
       `nav_menu_item` items, whose own fields are their meta (`_menu_item_type`,
       `_menu_item_object`, `_menu_item_object_id`, `_menu_item_menu_item_parent`,
@@ -130,7 +136,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   alias MishkaCmsMigration.Source
   alias MishkaCmsMigration.Sources.WordPress
-  alias MishkaCmsMigration.Sources.WordPress.{ElementorKit, Export, Permalinks}
+  alias MishkaCmsMigration.Sources.WordPress.{Addresses, ElementorKit, Export, Permalinks}
 
   import Export, only: [text: 1, text: 2]
 
@@ -436,7 +442,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
        counts: found.counts,
        editions: found.editions,
        elementor: kit(found.kits),
-       under: under(Map.get(rows, "/wp/v2/pages", []), home)
+       under: under(Map.get(rows, "/wp/v2/pages", []), home),
+       published: Enum.reverse(found.published),
+       parents: found.parents
      }}
   end
 
@@ -517,6 +525,32 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp rows("wp:author", element, "user", _conn), do: [user(element)]
 
+  defp rows("wp:author", element, "post_redirect", conn),
+    do: element |> user() |> addressed("user", conn, & &1["username"])
+
+  defp rows("wp:category", element, "post_redirect", conn),
+    do:
+      "wp:category"
+      |> term(element, conn)
+      |> addressed(
+        "category",
+        conn,
+        &(&1["slug"]
+          |> Permalinks.chain(conn.parents)
+          |> Enum.map_join("/", fn slug -> slug_asked(slug) end))
+      )
+
+  defp rows("wp:tag", element, "post_redirect", conn),
+    do: "wp:tag" |> term(element, conn) |> addressed("tag", conn, & &1["slug"])
+
+  defp rows("wp:wxr_version", _element, "post_redirect", conn),
+    do:
+      Addresses.archives(
+        conn.published,
+        conn.index["permalinks"]["structure"],
+        conn.index["home"]
+      )
+
   defp rows("wp:category", element, "category", conn), do: [term("wp:category", element, conn)]
   defp rows("wp:tag", element, "tag", conn), do: [term("wp:tag", element, conn)]
 
@@ -534,12 +568,18 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     do: [entry(type, element, conn)]
 
   defp item_rows("post", _status, element, {"post_redirect", _conn}),
-    do: [
+    do:
       element
       |> posted(%{})
       |> Map.take(~w(id title status slug link modified_gmt))
       |> Map.put("old_slugs", old_slugs(element))
-    ]
+      |> Addresses.post()
+
+  defp item_rows("page", _status, element, {"post_redirect", _conn}),
+    do: element |> posted(%{}) |> Addresses.page()
+
+  defp item_rows("attachment", _status, element, {"post_redirect", _conn}),
+    do: element |> posted(%{}) |> Addresses.media()
 
   defp item_rows(type, _status, element, {"comment", _conn}), do: comments(type, element)
   defp item_rows(_type, _status, _element, _asked), do: []
@@ -678,6 +718,19 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       "slug" => slug(login)
     }
   end
+
+  # An export carries no term or author address, so a term's archive is the one its base and slug
+  # make, as WordPress makes it (`MishkaCmsMigration.Sources.WordPress.Permalinks`).
+  defp addressed(row, kind, conn, named),
+    do:
+      Addresses.term(
+        row,
+        kind,
+        "/" <> conn.index["permalinks"]["#{base_of(kind)}_base"] <> "/" <> named.(row) <> "/"
+      )
+
+  defp base_of("user"), do: "author"
+  defp base_of(kind), do: kind
 
   defp term(name, element, conn) do
     {taxonomy, slug_key, name_key, description_key} = Map.fetch!(@terms, name)
