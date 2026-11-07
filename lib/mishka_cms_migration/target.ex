@@ -242,6 +242,7 @@ defmodule MishkaCmsMigration.Target do
   """
 
   alias Ash.Resource.Info
+  alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Source
   alias MishkaCmsMigration.Source.Item
 
@@ -443,11 +444,15 @@ defmodule MishkaCmsMigration.Target do
 
   @doc """
   What an admin decided on `item`'s `conflict` (see "An admin's decision"): `"keep"`, `"import"`,
-  or `nil` while no admin has answered it, and for a context that carries no decisions.
+  or `nil` while no admin has answered it, and for a context that carries no decisions. A conflict
+  a later run found on an item the admin already decided takes that decision when it still applies
+  (`MishkaCmsMigration.MigrationItem.carried/2`), so the item is not asked again.
   """
   @spec decision(map(), Item.t(), String.t()) :: String.t() | nil
-  def decision(context, %Item{source_id: id}, conflict),
-    do: get_in(context, [:decisions, id, conflict])
+  def decision(context, %Item{source_id: id}, conflict) do
+    decided = get_in(context, [:decisions, id]) || %{}
+    Map.get_lazy(decided, conflict, fn -> MigrationItem.carried(decided, conflict) end)
+  end
 
   defp refused([], _module), do: :ok
 

@@ -819,6 +819,38 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert outcomes(run)["22"] == {:skipped, "waits_for_language_urls"}
       assert template(site) == layout.template
     end
+
+    test "a menu the admin decided keeps that decision when a later run finds its links need one too",
+         %{site: site, admin: admin} do
+      layout!(site, own_links())
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "import")
+      polylang!()
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run)["22"] == {:updated, nil}
+      assert MigrationItem.standing(menu_item(site, "22")) == :decided
+
+      run = import!(run, admin)
+
+      assert {:updated, _old_addresses} = outcomes(run)["22"]
+      refute Enum.any?(links(site), &(elem(&1, 0) == "Pricing"))
+    end
+
+    test "a menu the admin placed still waits when a later run finds its links need a decision, which no place answers",
+         %{site: site, admin: admin} do
+      layout = layout!(site)
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "23")
+      polylang!()
+
+      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      assert outcomes(run)["23"] == {:undecided, "language_urls: polylang"}
+      assert MigrationItem.standing(menu_item(site, "23")) == :undecided
+      assert template(site) == layout.template
+    end
   end
 
   describe "a second run" do

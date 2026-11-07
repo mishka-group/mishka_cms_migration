@@ -200,6 +200,13 @@ defmodule MishkaCmsMigration.MigrationItem do
     "deleted_in_cms" => ["import", "keep"],
     "parent_missing" => ["import", "keep"]
   }
+  @carried [
+    "language_urls",
+    "unsupported_widgets",
+    "player_not_allowed",
+    "slug_taken",
+    "component_name_taken"
+  ]
   @parent_conflict "parent_missing"
   @parent_waits ["parent_undecided", "parent_missing", "parent_not_listed"]
   @holding [:undecided, :failed, :decided, :not_imported, :not_listed]
@@ -1635,6 +1642,25 @@ defmodule MishkaCmsMigration.MigrationItem do
   """
   @spec choices(String.t() | nil) :: [String.t()]
   def choices(conflict), do: Map.get(@choices, conflict, [])
+
+  @doc """
+  The choice an item's earlier decisions carry to `conflict`, one a later run found on it that no
+  admin has answered yet (`MishkaCmsMigration.Target.decision/3`): the choice the admin made on
+  the item's other conflicts, when they all agree, and `conflict` offers it (`choices/1`). Only a
+  conflict whose answer touches the item alone takes one: how its links are written
+  (`"language_urls"`), the fallback for its widgets, a player it embeds, its slug and its
+  component's name. A conflict whose answer changes something else, such as the site's own header,
+  setting or language, a record an admin archived or deleted in the CMS, other pages or the item's
+  place, is asked again, and so is any conflict while the item's decisions disagree. `nil` then.
+  """
+  @spec carried(%{String.t() => String.t()}, String.t()) :: String.t() | nil
+  def carried(decisions, conflict) when conflict in @carried,
+    do: decisions |> Map.values() |> Enum.uniq() |> offered(choices(conflict))
+
+  def carried(_decisions, _conflict), do: nil
+
+  defp offered([choice], choices), do: Enum.find(choices, &(&1 == choice))
+  defp offered(_choices, _offered), do: nil
 
   @doc """
   The Decide… form's choices (`decision`'s `options`): the choices of the conflict the item the
