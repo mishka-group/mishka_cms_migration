@@ -213,9 +213,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       (https://github.com/shawnhooper/wpml-rest-api). The language is the locale's first part:
       `fa_IR` is `fa`.
 
-  A code is lower-cased, with `-` for `_`. These fields are not kept in `extra`. A row that names
-  no language has neither key: Polylang's free plugin adds no field to the REST API, so its
-  entries and terms say their language only in the site's export. WPML's REST API answers its
+  A code is lower-cased, with `-` for `_`. These fields are not kept in `extra`. Polylang's free
+  plugin adds no field to the REST API, but it lists its languages, each with the address its
+  content is served under, at its public `/pll/v1/languages`, read once when the run connects: a
+  row with neither field is in the language whose address its `link` sits under, the longest one
+  (`/fa/` before `/`), such as `fa` for `http://site/fa/about/`, with no `"translations"`, which
+  only the site's export says. A row whose `link` sits under no language's address, and any row of
+  a site without Polylang, names no language and has neither key. WPML's REST API answers its
   default language alone unless a request names another, so a site that runs WPML is read once for
   each language of its `/wpml/v1/languages`, with `?lang=<code>`: its categories, tags, pages and
   posts. A site without WPML is read as before, with no extra request.
@@ -397,6 +401,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          index: index,
          user: user,
          languages: wpml_languages(req, index["namespaces"]),
+         polylang: polylang_homes(req, index["namespaces"]),
          elementor: elementor_globals(req, index["namespaces"]),
          read: &read(req, &1, &2)
        }}
@@ -428,6 +433,24 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: for(%{"code" => code} <- languages, is_binary(code) and code != "", do: code)
 
   defp wpml_codes(_unreadable), do: []
+
+  defp polylang_homes(req, namespaces) when is_list(namespaces),
+    do: polylang_asked(req, "pll/v1" in namespaces)
+
+  defp polylang_homes(_req, _namespaces), do: []
+
+  defp polylang_asked(req, true), do: req |> Req.get(url: "/pll/v1/languages") |> homes()
+  defp polylang_asked(_req, false), do: []
+
+  defp homes({:ok, %Req.Response{status: 200, body: [_ | _] = languages}}),
+    do:
+      for(
+        %{"slug" => slug, "home_url" => home} <- languages,
+        is_binary(slug) and slug != "" and is_binary(home),
+        do: {code(slug), URI.parse(home)}
+      )
+
+  defp homes(_unreadable), do: []
 
   @impl MishkaCmsMigration.Source
   def extra(%{index: index, user: user}) do
@@ -603,7 +626,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          |> Map.merge(%{"seo" => seo, "media" => media})
          |> Map.merge(laid_out)
          |> Map.merge(links(html, context))
-         |> Map.merge(edition(row)),
+         |> Map.merge(edition(row, context)),
        extra: row |> Map.drop(@entry_read) |> without_elementor(),
        content: content
      }}
@@ -661,7 +684,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          attrs: %{"from" => old_path(row)}
        }}
 
-  def normalize(%{"id" => id, "name" => name} = row, kind, _context)
+  def normalize(%{"id" => id, "name" => name} = row, kind, context)
       when is_map_key(@named, kind) do
     attrs = Map.fetch!(@named, kind)
 
@@ -675,7 +698,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          |> Map.take(attrs)
          |> unescaped_names()
          |> decoded_slug()
-         |> Map.merge(edition(row)),
+         |> Map.merge(edition(row, context)),
        extra: Map.drop(row, ["id", "name" | attrs] ++ @rendered ++ @edition_fields)
      }}
   end
@@ -736,6 +759,34 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: locale |> locale_code() |> edition(row["wpml_translations"], &wpml_edition/1)
 
   defp edition(_row), do: %{}
+
+  defp edition(row, %{conn: %{polylang: [_ | _] = homes}}),
+    do: row |> edition() |> addressed(row["link"], homes)
+
+  defp edition(row, _context), do: edition(row)
+
+  defp addressed(edition, link, homes) when edition == %{} and is_binary(link),
+    do: link |> URI.parse() |> home_of(homes) |> in_language()
+
+  defp addressed(edition, _link, _homes), do: edition
+
+  defp home_of(link, homes),
+    do:
+      homes
+      |> Enum.filter(fn {_code, home} -> under?(link, home) end)
+      |> Enum.max_by(fn {_code, home} -> String.length(home.path || "") end, fn -> nil end)
+
+  defp under?(link, home),
+    do:
+      link.host == home.host and link.port == home.port and
+        String.starts_with?(link.path || "/", home.path || "/") and
+        Enum.all?(asked(home.query), &(&1 in asked(link.query)))
+
+  defp asked(nil), do: []
+  defp asked(query), do: query |> URI.decode_query() |> Enum.to_list()
+
+  defp in_language({code, _home}), do: %{"language" => code, "translations" => %{}}
+  defp in_language(nil), do: %{}
 
   defp edition(language, translations, read) do
     %{

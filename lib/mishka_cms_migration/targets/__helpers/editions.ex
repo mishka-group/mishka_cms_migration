@@ -15,14 +15,24 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
 
   ## Its record
 
-  Each edition is a record of its own, in its language (`attrs/3`). The group's key is the
-  resource's own: the id of its first record. An item none of whose editions has a record yet is
-  written as a group of its own, which the resource's create makes it, and each edition written
-  after it joins that group, by the `language_group_id` of the records its editions' items
-  (`MishkaCmsMigration.MigrationItem`) were written to. So the editions are one group whatever
-  order the source lists them in, and whichever of them an earlier run wrote. That costs two
-  queries for an item with editions, its editions' items and their records, and none for one
-  without.
+  The CMS keeps a record in several languages as one main record, its master, and a translation
+  of it per other language: each a record of its own, in its language (`attrs/3`), whose
+  `language_group_id` is the master's id, the key the master's own `language_group_id` holds too
+  (`MishkaCmsCore.LanguageEditions`, `MishkaCmsCore.Runtime.Resources.Changes.SetLanguageGroupId`).
+  The CMS's Add translation writes a translation the same way: the resource's create, with the
+  master's group (`MishkaCmsCore.Runtime.PageEditions.translate/4`).
+
+  The master is the group's original: the edition in the site's main language, else the first by
+  code, since the CMS lets a record in any language lead its group. The original is written as a
+  group of its own, which the resource's create makes it, and every other edition joins the group
+  of the records its editions' items (`MishkaCmsMigration.MigrationItem`) were written to. An
+  original written after other editions of it, by a later page of the source or a later run, then
+  takes them over (`lead/4`): they, and any translation an admin added to them in the CMS, move to
+  its group through the resource's update action, and their items record the new `updated_at`, so
+  a later run does not take the move for an edit in the CMS. So the editions are one group, led by
+  the original, whatever order the source lists them in, and whichever of them an earlier run
+  wrote. That costs two queries for an item with editions, its editions' items and their records,
+  one more and an update each when the original takes them over, and none for one without.
 
   ## A language the site does not publish in
 
@@ -37,9 +47,11 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   ## A language the source does not say
 
   On a run whose source runs a language plugin (`MishkaCmsMigration.Target`'s context, `languages`),
-  an item that names no language waits for an admin's decision on `"language_unknown"`: Polylang's
-  free plugin says no entry's language over the REST API, so writing it in the site's language
-  could mislabel a translation. Import it in the site's main language (`"import"`) writes it so;
+  an item that names no language waits for an admin's decision on `"language_unknown"`: writing it
+  in the site's language could mislabel a translation. Polylang's free plugin names an entry's
+  language over the REST API only by the address it serves it under, which the WordPress source
+  reads (`MishkaCmsMigration.Sources.WordPress`, "Languages"), so this waits only for an entry no
+  language's address holds. Import it in the site's main language (`"import"`) writes it so;
   Wait (`"keep"`) skips it as `"waits_for_language"`, for a run of the site's export file, which
   carries every entry's language. An item that names no language on a run of a source with no
   language plugin is in the site's main language (`MishkaCmsCore.Runtime.Languages.primary/1`).
@@ -65,10 +77,13 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
 
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Settings
+  alias MishkaCmsMigration.MigrationItem
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.Helpers.Read
 
+  @recorded ~w(source_host source_kind source_id run_id title source_slug source_parent
+               source_modified_at content_hash target_resource target_id outcome reason extra)a
   @missing "language_missing"
   @unknown "language_unknown"
   @setting "site.languages"
@@ -78,7 +93,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
     quote do
       @impl MishkaCmsMigration.Target
       def prepare(item, context, write),
-        do: MishkaCmsMigration.Targets.Helpers.Editions.prepare(item, context, write)
+        do: MishkaCmsMigration.Targets.Helpers.Editions.prepare(item, context, __MODULE__, write)
 
       @impl MishkaCmsMigration.Target
       def waiting(item, context),
@@ -94,10 +109,21 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   @spec attrs(Item.t(), Target.context(), Ash.Resource.t()) :: map()
   def attrs(item, context, resource) do
     item
-    |> written(context)
+    |> joined(context)
     |> grouped(resource, context)
     |> Map.put(:language, language(item, context))
   end
+
+  @doc """
+  Runs `write`, the import's write of `item` by `target`, and, when `item` is the original of its
+  group (see "Its record"), moves the editions written before it into its group, as the admin,
+  with `target`'s update action. Answers what `write` does, or the CMS's refusal of a move.
+  """
+  @spec lead(Item.t(), Target.context(), module(), (Target.context() -> result)) ::
+          result | {:error, term()}
+        when result: term()
+  def lead(item, context, target, write),
+    do: item |> original?(context) |> led(write.(context), item, context, target)
 
   @doc """
   The language `item` is written in: its own, else the site's main language; on a run that puts
@@ -120,13 +146,15 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
   def call(item, context), do: item |> waits(context) |> added(context)
 
   @doc """
-  The `prepare/3` of a target whose write waits on nothing else (`MishkaCmsMigration.Target`):
-  `write.(context)` once `call/2` answers `:ok`, else what it answers.
+  The `prepare/3` of `target`, a target whose write waits on nothing else
+  (`MishkaCmsMigration.Target`): `write.(context)`, led by `lead/4`, once `call/2` answers `:ok`,
+  else what it answers.
   """
-  @spec prepare(Item.t(), Target.context(), (Target.context() -> result)) ::
+  @spec prepare(Item.t(), Target.context(), module(), (Target.context() -> result)) ::
           result | {:error, term()} | {:skipped, String.t()} | {:undecided, String.t()}
         when result: term()
-  def prepare(item, context, write), do: with(:ok <- call(item, context), do: write.(context))
+  def prepare(item, context, target, write),
+    do: with(:ok <- call(item, context), do: lead(item, context, target, write))
 
   @doc "What a target's `waiting/2` answers in a dry run: what `call/2` would, without writing."
   @spec waiting(Item.t(), Target.context()) :: Target.found() | nil
@@ -244,6 +272,80 @@ defmodule MishkaCmsMigration.Targets.Helpers.Editions do
          |> Enum.flat_map(&target_id/1)
 
   defp written(_item, _context), do: []
+
+  defp joined(item, context), do: item |> original?(context) |> joined(item, context)
+
+  defp joined(true, _item, _context), do: []
+  defp joined(false, item, context), do: written(item, context)
+
+  defp original?(%Item{attrs: %{"translations" => %{} = others}} = item, context)
+       when map_size(others) > 0 do
+    language = language(item, context)
+    original([language | Map.keys(others)], Languages.primary(context.site_id)) == language
+  end
+
+  defp original?(_item, _context), do: false
+
+  defp led(true, {:ok, {:ok, %{id: id} = record}} = written, item, context, target) do
+    resource = target.resource()
+
+    item
+    |> written(context)
+    |> groups(resource, context)
+    |> then(&[record.language_group_id | &1])
+    |> Enum.reject(&(is_nil(&1) or &1 == id))
+    |> Enum.uniq()
+    |> taken_over(id, resource, target.actions().update, item, context)
+    |> then(&if(&1 == :ok, do: written, else: &1))
+  end
+
+  defp led(_original, written, _item, _context, _target), do: written
+
+  defp groups([], _resource, _context), do: []
+
+  defp groups(ids, resource, context) do
+    resource
+    |> Ash.Query.filter(id in ^ids)
+    |> Ash.Query.select([:id, :language_group_id])
+    |> Read.call(context)
+    |> Enum.map(&(&1.language_group_id || &1.id))
+  end
+
+  defp taken_over([], _id, _resource, _update, _item, _context), do: :ok
+
+  defp taken_over(groups, id, resource, update, item, context) do
+    resource
+    |> Ash.Query.filter(language_group_id in ^groups or id in ^groups)
+    |> Read.call(context)
+    |> Enum.reduce_while(:ok, fn edition, :ok ->
+      edition
+      |> Ash.Changeset.for_update(update, %{language_group_id: id},
+        actor: context.actor,
+        tenant: context.site_id
+      )
+      |> Ash.update()
+      |> moved(item, context)
+    end)
+  end
+
+  defp moved({:ok, edition}, item, context) do
+    MigrationItem
+    |> Ash.Query.filter(
+      source_host == ^context.source_host and source_kind == ^item.kind and
+        target_id == ^edition.id and not is_nil(target_updated_at)
+    )
+    |> Read.call(context)
+    |> Enum.each(
+      &MishkaCmsMigration.record_item!(
+        &1 |> Map.take(@recorded) |> Map.put(:target_updated_at, edition.updated_at),
+        scope: context.scope
+      )
+    )
+
+    {:cont, :ok}
+  end
+
+  defp moved({:error, error}, _item, _context), do: {:halt, {:error, error}}
 
   defp target_id(%{target_id: id}) when is_binary(id), do: [id]
   defp target_id(_never_written), do: []
