@@ -14,7 +14,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   The job connects once with the run's connection and its opened secret
   (`MishkaCmsMigration.MigrationRun.open_secret/1`, through `MishkaCmsMigration.Source.connect/4`)
-  and reads the source's facts (`extra/1`), then
+  and, in a job of the whole run, reads the source's facts (`extra/1`), then
   walks the kinds in the order the source's `kinds/0` gives them, and pages through each with
   `list/3` until the source answers no cursor. Each row is normalized into an item
   (`MishkaCmsMigration.Source.Item`), decided (`MishkaCmsMigration.Workers.Helpers.Decision`) and
@@ -246,7 +246,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
-         extra = source.extra(conn),
+         extra = facts(source, conn, job),
          started = DateTime.utc_now(),
          {:ok, report} <-
            walk_kinds(%{
@@ -265,6 +265,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       {:ok, report, extra}
     end
   end
+
+  defp facts(source, conn, %{picked: nil}), do: source.extra(conn)
+  defp facts(_source, _conn, _picked), do: %{}
 
   defp forget_plans(run, %{mode: :dry_run, picked: nil}, started, context) do
     MigrationItem
