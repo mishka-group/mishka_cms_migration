@@ -13,7 +13,7 @@
 
 ## 📖 What is Mishka CMS Migration?
 
-`mishka_cms_migration` is the migration extension of [Mishka CMS](https://mishka.tools/cms). It moves a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects, site settings, and the global colours and fonts of a site built with Elementor (as theme tokens in a stylesheet of its own, with a dark-theme twin of each colour). Every record is written by the CMS's own actions as the admin who pressed Import, so the CMS's policies and validations decide, and plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
+`mishka_cms_migration` is the migration extension of [Mishka CMS](https://mishka.tools/cms). It moves a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects, site settings, and the global colours and fonts of a site built with Elementor (as theme tokens in a stylesheet of its own, with a dark-theme twin of each colour). Every record is written by the CMS's own actions as the admin who pressed Import, so the CMS's policies and validations decide, and plugins that react to a change (sitemap, share cards, stylesheet) react as usual. Slugs and names are made by `mishka_slug`, so they match what the CMS stores: a Persian or Arabic slug stays as it is on a site that publishes in that language.
 
 - [x] **WordPress**, over its REST API or from the file its Tools ▸ Export makes, with Polylang and WPML translations and Elementor layouts
 - [ ] Joomla
@@ -87,7 +87,7 @@ Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS]
 Add it from Hex, then follow [In a host](#-in-a-host):
 
 ```elixir
-{:mishka_cms_migration, "~> 0.0.1"}
+{:mishka_cms_migration, "~> 0.0.2"}
 ```
 
 Open the Migration entry in the admin sidebar, press New import, and start with a dry run.
