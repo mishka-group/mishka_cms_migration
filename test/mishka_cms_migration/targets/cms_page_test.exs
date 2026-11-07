@@ -20,6 +20,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
+  alias MishkaCmsMigration.Targets.Helpers.BySlug
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:runtime:page"]
@@ -435,20 +436,27 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
       assert Map.keys(pages(site)) == ["/about/cafe-creme"]
     end
 
-    test "with no Latin letter at all fails with the core's sentence, never a crash", %{
-      site: site,
-      admin: admin
-    } do
+    test "with no Latin letter at all gets a generated ASCII segment, the same for the same text, and the report says so",
+         %{site: site, admin: admin} do
       run =
         fake_pages!(site, admin, [
           row(1, %{
             "slug" => "وردپرس",
             "permalink_template" => "http://old.example.com/about/%pagename%/"
+          }),
+          row(2, %{
+            "slug" => "x",
+            "permalink_template" =>
+              "http://old.example.com/about/%D9%88%D8%B1%D8%AF%D9%BE%D8%B1%D8%B3/%pagename%/"
           })
         ])
 
-      assert %{"1" => {:failed, _sentence}} = outcomes(run)
-      assert pages(site) == %{}
+      assert %{"1" => {:created, "path_made_ascii"}, "2" => {:created, "path_made_ascii"}} =
+               outcomes(run)
+
+      assert ["/about/page-" <> hex = parent, child] = pages(site) |> Map.keys() |> Enum.sort()
+      assert hex =~ ~r/\A[0-9a-f]{8}\z/
+      assert child == parent <> "/x"
     end
 
     test "of a draft WordPress gave no slug yet comes from the slug it would generate", %{
@@ -613,7 +621,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
                  "/contact?ref=nav#form",
                  "/about/team",
                  "/about/team#staff",
-                 "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/"
+                 "/" <> BySlug.generated("page", "وردپرس")
                ]
     end
 

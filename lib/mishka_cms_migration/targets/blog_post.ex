@@ -12,9 +12,10 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     its code blocks highlighted.
 
     An item's title is the post's title, its `"slug"` the post's slug (its title for a draft
-    WordPress left without one), its content pieces, converted, the post's content
-    (`MishkaCmsMigration.Source.Item.html/1`), its `"excerpt"` the post's excerpt (an empty one is
-    none), and `"sticky"` makes it featured. A post is in the language the item names
+    WordPress left without one, and a generated one where the site's languages keep nothing of it,
+    `MishkaCmsMigration.Targets.Helpers.BySlug.slug/4`), its content pieces, converted, the post's
+    content (`MishkaCmsMigration.Source.Item.html/1`), its `"excerpt"` the post's excerpt (an empty
+    one is none), and `"sticky"` makes it featured. A post is in the language the item names
     (a site that runs Polylang or WPML names one), joined as one group with the posts that are its
     other editions, whatever order they are imported in, or, for an item that names none, in the
     language the site leads with (`MishkaCmsMigration.Targets.Helpers.Editions`). An item in a
@@ -174,7 +175,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       |> Map.merge(Editions.attrs(item, context, MishkaBlog.BlogPost))
       |> Map.merge(%{
         title: item.title,
-        slug: slug(item),
+        slug: BySlug.slug(__MODULE__, slug(item), language, context),
         content:
           item
           |> Item.html()
@@ -243,6 +244,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       [
         Editions.note(item, context),
         item |> Status.call() |> drafted(),
+        BySlug.note(__MODULE__, item, context),
         authored(item, context),
         pictured(item, context),
         Widgets.note(item, context),

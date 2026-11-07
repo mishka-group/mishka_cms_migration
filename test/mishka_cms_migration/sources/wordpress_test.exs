@@ -1329,9 +1329,17 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:undecided, "menu_goes_to"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
-                   {:skipped, "type_not_allowed"}
+                   {:skipped, "type_not_allowed"},
+                   {:created, "path_made_ascii"}
                  ])
              )
+
+      assert for(
+               %{reason: "path_made_ascii"} = entry <- run.report.entries,
+               entry.kind in ["tag", "category"],
+               do: {entry.kind, entry.source_id}
+             )
+             |> Enum.sort() == [{"category", "9"}, {"tag", "20"}]
 
       assert Enum.any?(run.report.entries, &(&1.title == "نصب وردپرس روی سرور"))
 

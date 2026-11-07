@@ -366,7 +366,20 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert BySlug.slug(BlogTag, "وردپرس", "fa", context) == "وردپرس"
       assert BySlug.slug(BlogTag, "كتاب", "fa", context) == "کتاب"
-      assert BySlug.slug(BlogTag, "Привет", "fa", context) == nil
+      assert BySlug.slug(BlogTag, "Привет", "fa", context) == BySlug.generated("tag", "Привет")
+    end
+
+    test "kept nothing of by the site's languages is generated, the same for the same slug", %{
+      site: site
+    } do
+      context = %{site_id: site.id}
+      forget_settings(~w(site.languages), [site.id])
+      {:ok, _} = Settings.put("site.languages", ["en"], site_id: site.id)
+
+      assert "tag-" <> hex = BySlug.slug(BlogTag, "وردپرس", "en", context)
+      assert hex =~ ~r/\A[0-9a-f]{8}\z/
+      assert BySlug.slug(BlogTag, "وردپرس", "en", context) == "tag-" <> hex
+      assert BySlug.slug(BlogTag, "وردپرس", "fa", context) == "وردپرس"
     end
   end
 

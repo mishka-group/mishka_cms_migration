@@ -32,8 +32,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   letters, digits and `- _ .` (a slug written in another script, which WordPress keeps
   percent-encoded) is decoded and written the way the core names things, Latin letters only
   (`/Café` is `/cafe`) and the report says so (`"path_made_ascii"`). A segment with no Latin letter
-  at all (`/وردپرس`) leaves the page without a path, and the core refuses it with its sentence,
-  since the core's page path takes ASCII only. The old address is not redirected.
+  at all (`/fa/وردپرس`) is written as `MishkaCmsMigration.Targets.Helpers.BySlug.generated/2`
+  makes it (`/fa/page-1a2b3c4d`), the same for the same segment, so the pages under it stay under
+  it and a link to it finds it. The old address is not redirected.
 
   The source's front page is the page whose address is `/`, and its posts page the page at the
   address of the posts: neither is told apart, since the address says it. A page whose address the
@@ -379,15 +380,14 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp root(path), do: path
 
   defp ascii(nil), do: nil
-  defp ascii(path), do: path |> String.split("/") |> Enum.map(&segment/1) |> joined()
-
-  defp joined(segments),
-    do: if(Enum.any?(segments, &is_nil/1), do: nil, else: Enum.join(segments, "/"))
+  defp ascii(path), do: path |> String.split("/") |> Enum.map_join("/", &segment/1)
 
   defp segment(segment), do: segment(segment, String.match?(segment, ~r/\A[A-Za-z0-9_.-]*\z/))
 
   defp segment(segment, true), do: segment
-  defp segment(segment, false), do: segment |> URI.decode() |> InternalName.slug()
+  defp segment(segment, false), do: segment |> URI.decode() |> latin()
+
+  defp latin(segment), do: InternalName.slug(segment) || BySlug.generated("page", segment)
 
   defp template(item, context),
     do:

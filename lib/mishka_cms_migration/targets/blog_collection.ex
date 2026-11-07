@@ -48,7 +48,7 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     def attrs(item, context) do
       %{
         name: item.title,
-        slug: BySlug.wanted(item, context),
+        slug: BySlug.wanted(__MODULE__, item, context),
         description: description(item.attrs["description"]),
         status: :active,
         parent_collection_id: context.parent_id
@@ -57,7 +57,8 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     end
 
     @impl MishkaCmsMigration.Target
-    def note(item, context), do: Editions.note(item, context, BySlug.note(item, context))
+    def note(item, context),
+      do: Editions.note(item, context, BySlug.note(__MODULE__, item, context))
 
     defp description(""), do: nil
     defp description(description), do: description
