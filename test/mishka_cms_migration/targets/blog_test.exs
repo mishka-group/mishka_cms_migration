@@ -1729,6 +1729,12 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
     defp published, do: Enum.filter(recorded("posts"), &(&1["status"] == "publish"))
 
+    # A post's own address, of all the addresses the run redirects.
+    defp post_outcomes(run),
+      do: Map.take(outcomes(run, "post_redirect"), Enum.map(recorded("posts"), &"#{&1["id"]}"))
+
+    defp counted(outcomes, outcome), do: Enum.count(outcomes, &match?({_id, {^outcome, _}}, &1))
+
     defp old_path(row) do
       {:ok, path} = Redirects.normalize_path(row["link"])
       path
@@ -1746,17 +1752,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     } do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
       unpublished = length(recorded("posts")) - length(published())
+      planned = post_outcomes(run)
 
-      assert counts(run, "post_redirect") ==
-               %{
-                 created: length(published()),
-                 updated: 0,
-                 skipped: unpublished,
-                 failed: 0,
-                 undecided: 0
-               }
+      assert counted(planned, :created) == length(published())
 
-      assert for({_id, {:skipped, reason}} <- outcomes(run, "post_redirect"), do: reason) ==
+      assert for({_id, {:skipped, reason}} <- planned, do: reason) ==
                List.duplicate("no_old_address", unpublished)
 
       assert redirects(site) == %{}
@@ -1765,12 +1765,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     test "an import sends each published post's old address to its Blog address with a 301, on the run's site only",
          %{site: site, admin: admin} do
       other = create_site!()
-      run = imported!(site, admin)
+      run = imported!(site, admin, %{post_address: "blog"})
       redirects = redirects(site)
       posts = posts(site)
 
-      assert counts(run, "post_redirect").created == length(published())
-      assert map_size(redirects) == length(published())
+      assert counted(post_outcomes(run), :created) == length(published())
 
       assert %{to: "/blog/release-1-0-announcement", status: 301, active: true} =
                redirects[@release]
@@ -1784,6 +1783,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       refute is_map_key(redirects, "/2026/03/private-team-notes")
       assert redirects(other) == %{}
+
+      assert %{to: "/blog/release-1-0-announcement", status: 301} =
+               Redirect
+               |> Ash.read!(tenant: site.id, authorize?: false)
+               |> Enum.find(&(&1.from_query == "p=44"))
     end
 
     test "a second run writes no second redirect, and keeps one an admin edited", %{
@@ -1795,7 +1799,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert %{created: 0, updated: 0, failed: 0} = counts(again, "post_redirect")
 
-      assert again |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() |> Enum.sort() ==
+      assert again |> post_outcomes() |> Map.values() |> Enum.uniq() |> Enum.sort() ==
                [{:skipped, "no_old_address"}, {:skipped, "unchanged"}]
 
       redirects(site)[@release]
@@ -1809,8 +1813,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       third = imported!(site, admin)
 
       assert %{"44" => {:skipped, "edited_in_cms"}} = outcomes(third, "post_redirect")
-      assert counts(third, "post_redirect").updated == length(published()) - 1
-      assert map_size(redirects(site)) == length(published())
+      assert counted(post_outcomes(third), :updated) == length(published()) - 1
       assert redirects(site)[@release].to == "/news/release-1-0"
     end
 
@@ -1821,7 +1824,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       assert {:failed, reason} = outcomes(run, "post_redirect")["44"]
       assert reason =~ "already redirects that address"
-      assert counts(run, "post_redirect").created == length(published()) - 1
+      assert counted(post_outcomes(run), :created) == length(published()) - 1
       assert redirects(site)[@release].to == "/news/release-1-0"
     end
 
@@ -1846,10 +1849,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       run = imported!(site, admin)
 
-      assert run |> outcomes("post_redirect") |> Map.values() |> Enum.uniq() |> Enum.sort() ==
+      assert run |> post_outcomes() |> Map.values() |> Enum.uniq() |> Enum.sort() ==
                [{:skipped, "no_old_address"}, {:skipped, "post_missing"}]
 
-      assert redirects(site) == %{}
+      assert run |> outcomes("post_redirect") |> Map.get("44?p") == {:skipped, "post_missing"}
+      refute Enum.any?(published(), &is_map_key(redirects(site), old_path(&1)))
     end
 
     test "an old address that is already its post's Blog address is left out", %{
@@ -1872,7 +1876,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
       items =
         for {id, from} <- [{"44", "/blog/release-1-0-announcement/"}, {"43", @release}],
-            do: %Item{kind: "post_redirect", source_id: id, attrs: %{"from" => from}}
+            do: %Item{
+              kind: "post_redirect",
+              source_id: id,
+              attrs: %{"from" => from, "query" => nil, "to" => %{"kind" => "post", "id" => id}}
+            }
 
       assert PostRedirect.existing(items, context) == %{"44" => {:skipped, "same_address"}}
     end

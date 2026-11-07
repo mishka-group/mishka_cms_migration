@@ -24,10 +24,18 @@ defmodule MishkaCmsMigration.MigrationRun do
       way each becomes that user's blog author (`MishkaCmsMigration.Targets.BlogBlogger`).
     * `:pages` — `"draft"` (the default) brings pages in as drafts; `"publish"` puts them live at
       their old addresses.
-    * `:post_address` — `"blog"` (the default) serves posts at `/blog/<slug>`, with a 301 redirect
-      from each old address; `"blog_without_redirects"` serves them there with no redirect.
-      Keeping a source's own address, such as WordPress's `/2025/12/hello/`, needs Mishka Blog to
-      serve a post at an address of its own first (mishka_blog#6), so it is not a choice yet.
+    * `:post_address` — `"keep"` (the default) serves each post at the address the source gave
+      it: the run's detected permalink structure (`extra`'s `"permalinks"`) becomes the path of the
+      Blog's post page, and its category, tag and author pages take the source's bases
+      (`MishkaCmsMigration.Targets.Helpers.BlogPages`); a source with no structure detected keeps
+      the Blog's own addresses. `"blog"` serves posts at `/blog/<slug>`; either way each old
+      address the site does not serve at the same path is redirected with a 301
+      (`MishkaCmsMigration.Targets.PostRedirect`). `"blog_without_redirects"` serves them at
+      `/blog/<slug>` with no redirect.
+    * `:posts_page` — where the Blog's list of posts is served: `"source"` (the default) at the
+      source's posts page (its `"front_page"` facts, else the page whose address is the posts'),
+      `"front"` at `/`, the id of one of the site's pages at that page's address (the page is
+      archived to free it), or `"blog"` at the Blog's own `/blog`.
     * `:confirm_users` — whether the users the authors choice creates have their email confirmed;
       `true` by default. Either way no "Confirm your email" mail is sent; a user left unconfirmed
       is confirmed later from the Users table's bulk Confirm email.
@@ -210,7 +218,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   Review, are Choices for this run, a `:key_map` over `options` with a select for the authors, the pages
   and the post addresses, a toggle for confirming the imported users' email, on, and a toggle for
   each of the site's own settings WordPress brings, the title, logo and icon, on; its description
-  says why a post's old address is redirected rather than kept. A kind or setting switched off is
+  says how post addresses are kept or redirected. A kind or setting switched off is
   left out as the admin's own leave-out (`left_out?/3`): the first run that meets its items records
   them as Left out by you, and the Items page brings them back. `one_language` puts every item
   with no language of the site's in that language (`one_language/2`). The authors, confirm users,
@@ -292,8 +300,20 @@ defmodule MishkaCmsMigration.MigrationRun do
       type: :select,
       label: dgettext_noop("mishka_gervaz", "Post addresses"),
       options: [
-        {dgettext_noop("mishka_gervaz", "/blog/<slug> + 301 redirect"), "blog"},
-        {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirect"), "blog_without_redirects"}
+        {dgettext_noop("mishka_gervaz", "Keep the WordPress addresses (the dry run says which)"),
+         "keep"},
+        {dgettext_noop("mishka_gervaz", "/blog/<slug> with 301s"), "blog"},
+        {dgettext_noop("mishka_gervaz", "/blog/<slug>, no redirects"), "blog_without_redirects"}
+      ]
+    ],
+    [
+      name: :posts_page,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Posts list page"),
+      options: [
+        {dgettext_noop("mishka_gervaz", "WordPress's posts page"), "source"},
+        {dgettext_noop("mishka_gervaz", "The front page /"), "front"},
+        {dgettext_noop("mishka_gervaz", "Keep the Blog's /blog"), "blog"}
       ]
     ],
     [
@@ -343,6 +363,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     authors: "user",
     confirm_users: "user",
     post_address: "post_redirect",
+    posts_page: "post",
     comments: "comment",
     bring_posts: "post",
     bring_terms: "category",
@@ -409,8 +430,13 @@ defmodule MishkaCmsMigration.MigrationRun do
         derives: "sanitize(trim) validate(enum=String[draft::publish])"
 
       field :post_address, :string,
-        default: "blog",
-        derives: "sanitize(trim) validate(enum=String[blog::blog_without_redirects])"
+        default: "keep",
+        derives: "sanitize(trim) validate(enum=String[keep::blog::blog_without_redirects])"
+
+      field :posts_page, :string,
+        default: "source",
+        validator: {MishkaCmsMigration.MigrationRun, :posts_page},
+        derives: "sanitize(trim) validate(string, not_empty, max_len=36)"
 
       field :confirm_users, :boolean,
         default: true,
@@ -899,7 +925,12 @@ defmodule MishkaCmsMigration.MigrationRun do
         end
 
         field :options, :key_map do
-          default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
+          default %{
+            "authors" => "connect",
+            "pages" => "draft",
+            "post_address" => "keep",
+            "posts_page" => "source"
+          }
 
           options fn state -> MishkaCmsMigration.MigrationRun.run_choices(state) end
 
@@ -909,7 +940,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: every post moves to /blog/<slug>, and the redirect sends a visitor of its old WordPress address there. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
+                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
               )
             end
           end
@@ -2225,7 +2256,51 @@ defmodule MishkaCmsMigration.MigrationRun do
   alone.
   """
   @spec run_choices(map()) :: [keyword()]
-  def run_choices(_state), do: Enum.filter(@run_choices, &offered?(@choice_kinds[&1[:name]]))
+  def run_choices(state),
+    do:
+      for(
+        choice <- @run_choices,
+        offered?(@choice_kinds[choice[:name]]),
+        do: with_pages(choice, state)
+      )
+
+  defp with_pages(choice, state) do
+    case choice[:name] do
+      :posts_page -> Keyword.update!(choice, :options, &(&1 ++ page_choices(window_site(state))))
+      _other -> choice
+    end
+  end
+
+  # THE SITE'S OWN PAGES THE POSTS LIST MAY TAKE THE ADDRESS OF: those at a plain address, read in one
+  # query, as the form is drawn.
+  defp page_choices(site_id) when is_binary(site_id) do
+    MishkaCmsCore.Runtime.Page
+    |> Ash.Query.filter(not contains(path, ":") and not contains(path, "*"))
+    |> Ash.Query.select([:id, :title, :path])
+    |> Ash.Query.sort(path: :asc)
+    |> Ash.Query.limit(200)
+    |> Ash.read!(tenant: site_id, authorize?: false)
+    |> Enum.map(&{dgettext("mishka_gervaz", "The address of %{page}", page: &1.path), &1.id})
+  end
+
+  defp page_choices(_no_site), do: []
+
+  @doc """
+  Checks a run's `posts_page` choice: `"source"`, `"front"`, `"blog"`, or the id of one of the
+  site's pages (`run_choices/1`).
+  """
+  @spec posts_page(atom(), term()) :: {:ok, atom(), String.t()} | {:error, atom(), String.t()}
+  def posts_page(field, value) when value in ["source", "front", "blog"], do: {:ok, field, value}
+
+  def posts_page(field, value) when is_binary(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, id} -> {:ok, field, id}
+      :error -> {:error, field, dgettext("errors", "Pick where the posts list goes.")}
+    end
+  end
+
+  def posts_page(field, _value),
+    do: {:error, field, dgettext("errors", "Pick where the posts list goes.")}
 
   @doc """
   The New import window's "What to bring" switches: posts, pages, pictures and files, categories
@@ -2604,6 +2679,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("not_chosen"), do: dgettext("mishka_gervaz", "Left out by this run's choices")
   defp said("no_old_address"), do: dgettext("mishka_gervaz", "No public address at the source")
   defp said("post_missing"), do: dgettext("mishka_gervaz", "Its post was not imported")
+
+  defp said("not_imported"),
+    do: dgettext("mishka_gervaz", "What it points at was not imported")
+
+  defp said("posts_list_here"),
+    do: dgettext("mishka_gervaz", "The Blog's list of posts is served at its address")
+
   defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
   defp said("left_out_by_admin"), do: dgettext("mishka_gervaz", "Left out by you")
   defp said("parent_left_out"), do: dgettext("mishka_gervaz", "Its parent is left out")
@@ -2734,6 +2816,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("slug_taken"),
     do: dgettext("mishka_gervaz", "The site already has one at this address")
+
+  defp said("address_taken"),
+    do: dgettext("mishka_gervaz", "A page of the site is at this post's address")
 
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
 

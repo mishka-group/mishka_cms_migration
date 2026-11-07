@@ -20,8 +20,11 @@ defmodule MishkaCmsMigration.Targets.Helpers.Written do
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.Helpers.Read
 
-  @doc "The `resource` records written for the `kind` items `source_ids` name, by source id."
-  @spec call(Ash.Resource.t(), String.t(), [term()], Target.context()) :: %{
+  @doc """
+  The `resource` records written for the `kind` items `source_ids` name, by source id. `resource`
+  may be a query of it, to load what the caller needs with the records.
+  """
+  @spec call(Ash.Resource.t() | Ash.Query.t(), String.t(), [term()], Target.context()) :: %{
           String.t() => struct()
         }
   def call(resource, kind, source_ids, context) do

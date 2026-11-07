@@ -82,6 +82,9 @@ defmodule MishkaCmsMigration.Report do
       the other menu has not written it yet) (`MishkaCmsMigration.Targets.CmsLayout`);
     * `"slug_taken"` — the site already has a category or a tag with the item's slug, or a page at
       its path (`MishkaCmsMigration.Targets.Helpers.BySlug`, `MishkaCmsMigration.Targets.CmsPage`);
+    * `"address_taken"` — the post's address is a page of the site, which wins
+      (`MishkaCmsMigration.Targets.BlogPost`): Import it with another slug (`<slug>-<id>`, noted
+      `"another_slug"`), or Leave it out;
     * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed
       (`MishkaCmsMigration.Application.blog_kinds/0`);
     * `"player_not_allowed"` — the item's content frames a YouTube or Vimeo player the site does

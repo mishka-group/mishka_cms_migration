@@ -1104,7 +1104,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
 
       later = site |> later_run!(admin, run) |> dry_run!(admin)
-      view = open!(conn, admin, later, "?items_filter_source_kind=post_redirect")
+
+      view =
+        open!(
+          conn,
+          admin,
+          later,
+          "?items_filter_source_kind=post_redirect&items_filter_plan=undecided"
+        )
 
       assert plan_of(view, item) == "undecided"
       row_action!(view, "decide", item)
@@ -1126,7 +1133,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
 
       site |> later_run!(admin, run) |> dry_run!(admin)
-      view = open!(conn, admin, run, "?items_filter_source_kind=post_redirect")
+
+      view =
+        open!(
+          conn,
+          admin,
+          run,
+          "?items_filter_source_kind=post_redirect&items_filter_search=#{item.source_id}"
+        )
 
       assert has_element?(view, "#{item_action("import_item", item)}[data-confirm]")
       assert item_action!(view, "import_item", item) =~ "Import of the item started."

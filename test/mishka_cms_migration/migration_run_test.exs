@@ -138,7 +138,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       assert stored == %{
                "authors" => "connect",
                "pages" => "publish",
-               "post_address" => "blog",
+               "post_address" => "keep",
+               "posts_page" => "source",
                "confirm_users" => true,
                "comments" => false,
                "bring_users" => true,
@@ -157,7 +158,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
               %Options{
                 authors: "connect",
                 pages: "publish",
-                post_address: "blog",
+                post_address: "keep",
+                posts_page: "source",
                 confirm_users: true,
                 comments: false,
                 bring_posts: true,
@@ -169,7 +171,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
       for {options, field} <- [
             {%{pages: "maybe"}, :pages},
             {%{mode: "x"}, :mode},
-            {%{comments: "maybe"}, :comments}
+            {%{comments: "maybe"}, :comments},
+            {%{posts_page: "somewhere"}, :posts_page}
           ] do
         assert {:error,
                 %Ash.Error.Invalid{

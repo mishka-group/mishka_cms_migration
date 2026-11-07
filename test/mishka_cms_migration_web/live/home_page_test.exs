@@ -439,10 +439,18 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert choices(view) == %{
                "authors" => {defaults.authors, ["connect", "create"]},
                "pages" => {defaults.pages, ["draft", "publish"]},
-               "post_address" => {defaults.post_address, ["blog", "blog_without_redirects"]}
+               "post_address" =>
+                 {defaults.post_address, ["keep", "blog", "blog_without_redirects"]},
+               "posts_page" => {defaults.posts_page, ["source", "front", "blog"]}
              }
 
-      for label <- ["Choices for this run", "Authors", "Pages", "Post addresses"],
+      for label <- [
+            "Choices for this run",
+            "Authors",
+            "Pages",
+            "Post addresses",
+            "Posts list page"
+          ],
           do: assert(has_element?(view, "#migration-run-form-modal label", label))
 
       comments = ~s|#migration-run-form-modal input[name="form[bring][comments]"]|
@@ -457,7 +465,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert has_element?(
                view,
                "#migration-run-form-modal",
-               "sends a visitor of its old WordPress address there"
+               "every old address the site does not serve as it was is sent on with a 301 redirect"
              )
 
       assert has_element?(view, "#migration-run-form-modal", "off by default")
@@ -512,6 +520,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "authors" => "create",
                "pages" => "draft",
                "post_address" => "blog_without_redirects",
+               "posts_page" => "source",
                "confirm_users" => true,
                "comments" => false,
                "bring_users" => true,
@@ -1516,7 +1525,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 86, "skipped" => 25, "undecided" => 5}
+      assert outcomes(view) == %{"created" => 207, "skipped" => 25, "undecided" => 5}
       assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
 
       assert kinds(view) == %{
@@ -1528,7 +1537,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "page" => 11,
                "post" => 21,
                "comment" => 13,
-               "post_redirect" => 21,
+               "post_redirect" => 142,
                "menu" => 3
              }
 
@@ -1543,12 +1552,12 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "page" => 11,
                "post" => 21,
                "comment" => 13,
-               "post_redirect" => 21,
+               "post_redirect" => 142,
                "menu" => 3
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 86, "skipped" => 25, "undecided" => 5}
+               %{"created" => 207, "skipped" => 25, "undecided" => 5}
 
       assert has_element?(
                view,
@@ -1658,7 +1667,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       for {kind, found, why} <- [
             {"user", 5, "No user with this email on the site"},
-            {"post_redirect", 21, "Left out by this run's choices"}
+            {"post_redirect", 142, "Left out by this run's choices"}
           ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
@@ -1681,15 +1690,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                  %{"skipped" => found}
       end
 
-      newest_posts =
-        "posts"
-        |> MishkaCmsMigration.Test.WordPress.recorded()
-        |> Enum.map(&to_string(&1["id"]))
-        |> Enum.take(-5)
-        |> Enum.reverse()
-
-      assert detailed(view, "run-details-item", "data-source-id") ==
-               ["navigation-105", "23", "22" | newest_posts]
+      # The latest items are the menus, then the last addresses the redirect kind lists, the
+      # archives of the newest months first.
+      assert ["navigation-105", "23", "22", "archive:/2026/04" | _rest] =
+               detailed(view, "run-details-item", "data-source-id")
 
       assert detailed(view, "run-details-item", "data-kind") ==
                ["menu", "menu", "menu" | List.duplicate("post_redirect", 5)]
@@ -1699,17 +1703,18 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert has_element?(
                view,
-               ~s|[data-role="run-details-item"][data-source-id="34"] [data-role="run-details-item-reason"]|,
+               ~s|[data-role="run-details-item"][data-source-id="archive:/2026/04"] [data-role="run-details-item-reason"]|,
                "Left out by this run's choices"
              )
 
-      assert detailed(view, "run-details-items-more", "data-count") == ["108"]
+      assert detailed(view, "run-details-items-more", "data-count") == ["229"]
 
       for {fact, said} <- [
             {"name", "Mishka Test Blog"},
             {"home", "localhost:8089"},
             {"timezone", "Asia/Tehran"},
-            {"signed_in_as", "admin"}
+            {"signed_in_as", "admin"},
+            {"structure", "/%year%/%monthnum%/%postname%/"}
           ],
           do:
             assert(
@@ -1725,6 +1730,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "connect",
                "draft",
                "blog_without_redirects",
+               "source",
                "true",
                "false"
              ]
@@ -1785,7 +1791,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Imported"
              )
 
-      assert outcomes(view) == %{"created" => 89, "skipped" => 25, "undecided" => 2}
+      assert outcomes(view) == %{"created" => 198, "skipped" => 37, "undecided" => 2}
 
       assert has_element?(
                view,
@@ -1793,7 +1799,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              )
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 89, "skipped" => 25, "undecided" => 2}
+               %{"created" => 198, "skipped" => 37, "undecided" => 2}
 
       for {kind, counts} <- [
             {"media", %{"created" => 17, "skipped" => 1}},
@@ -1802,7 +1808,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
             {"tag", %{"created" => 11}},
             {"page", %{"created" => 11}},
             {"post", %{"created" => 21}},
-            {"post_redirect", %{"created" => 17, "skipped" => 4}}
+            {"post_redirect", %{"created" => 126, "skipped" => 16}}
           ] do
         card = ~s|[data-role="run-details-kind"][data-kind="#{kind}"]|
 
@@ -1818,7 +1824,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       assert length(Ash.read!(MishkaBlog.BlogPost, tenant: site.id, authorize?: false)) == 21
 
       assert length(Ash.read!(MishkaCmsCore.Runtime.Redirect, tenant: site.id, authorize?: false)) ==
-               17
+               126
 
       refute has_element?(view, "#migration-runs-table #{action("import", run)}")
     end

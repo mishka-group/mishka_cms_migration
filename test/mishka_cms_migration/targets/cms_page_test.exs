@@ -20,7 +20,6 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   alias MishkaCmsMigration.MigrationRun
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
-  alias MishkaCmsMigration.Targets.Helpers.BySlug
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:runtime:page"]
@@ -422,41 +421,30 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   end
 
   describe "an address" do
-    test "that is not ASCII is written with Latin letters only, and the report says so",
+    test "in another script is kept as it reads, decoded, so the page answers its old address",
          %{site: site, admin: admin} do
       run =
         fake_pages!(site, admin, [
           row(1, %{
-            "slug" => "Café-Crème-وردپرس",
-            "permalink_template" => "http://old.example.com/about/%pagename%/"
-          })
-        ])
-
-      assert %{"1" => {:created, "path_made_ascii"}} = outcomes(run)
-      assert Map.keys(pages(site)) == ["/about/cafe-creme"]
-    end
-
-    test "with no Latin letter at all gets a generated ASCII segment, the same for the same text, and the report says so",
-         %{site: site, admin: admin} do
-      run =
-        fake_pages!(site, admin, [
-          row(1, %{
-            "slug" => "وردپرس",
+            "slug" => "Café-Crème",
             "permalink_template" => "http://old.example.com/about/%pagename%/"
           }),
           row(2, %{
             "slug" => "x",
             "permalink_template" =>
-              "http://old.example.com/about/%D9%88%D8%B1%D8%AF%D9%BE%D8%B1%D8%B3/%pagename%/"
+              "http://old.example.com/fa/%D8%AF%D8%A7%D8%B3%D8%AA%D8%A7%D9%86-%D9%85%D8%A7/%pagename%/"
+          }),
+          row(3, %{
+            "slug" => "%d8%af%d8%a7%d8%b3%d8%aa%d8%a7%d9%86-%d9%85%d8%a7",
+            "permalink_template" => "http://old.example.com/fa/%pagename%/"
           })
         ])
 
-      assert %{"1" => {:created, "path_made_ascii"}, "2" => {:created, "path_made_ascii"}} =
+      assert %{"1" => {:created, nil}, "2" => {:created, nil}, "3" => {:created, nil}} =
                outcomes(run)
 
-      assert ["/about/page-" <> hex = parent, child] = pages(site) |> Map.keys() |> Enum.sort()
-      assert hex =~ ~r/\A[0-9a-f]{8}\z/
-      assert child == parent <> "/x"
+      assert pages(site) |> Map.keys() |> Enum.sort() ==
+               ["/about/Café-Crème", "/fa/داستان-ما", "/fa/داستان-ما/x"]
     end
 
     test "of a draft WordPress gave no slug yet comes from the slug it would generate", %{
@@ -621,7 +609,7 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
                  "/contact?ref=nav#form",
                  "/about/team",
                  "/about/team#staff",
-                 "/" <> BySlug.generated("page", "وردپرس")
+                 "/وردپرس"
                ]
     end
 

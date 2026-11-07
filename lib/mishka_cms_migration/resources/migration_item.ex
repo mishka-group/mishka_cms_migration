@@ -187,6 +187,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     "menu_goes_to" => ["header", "footer", "component", "leave_out"],
     "component_name_taken" => ["keep", "leave_out"],
     "slug_taken" => ["keep", "import"],
+    "address_taken" => ["import", "leave_out"],
     "same_file" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
@@ -2233,6 +2234,11 @@ defmodule MishkaCmsMigration.MigrationItem do
 
   defp choice_word("slug_taken", "import"),
     do: dgettext("mishka_gervaz", "Import as new with another slug")
+
+  defp choice_word("address_taken", "import"),
+    do: dgettext("mishka_gervaz", "Import with another slug, so its address is free")
+
+  defp choice_word("address_taken", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
 
   defp choice_word("same_file", "keep"), do: dgettext("mishka_gervaz", "Keep both")
   defp choice_word("same_file", "import"), do: dgettext("mishka_gervaz", "Use the original")

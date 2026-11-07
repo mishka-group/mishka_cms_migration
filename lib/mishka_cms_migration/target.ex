@@ -145,6 +145,15 @@ defmodule MishkaCmsMigration.Target do
   and answers each item's in `writes_to/2`, handed the context with the item's decisions. The item
   records the resource of the record it was written to, and a re-run reads it from there.
 
+  ## What the site needs first
+
+  An import may need the site set up before any item is written, such as the Blog's pages that a
+  post's address comes from. `before_import/1` is handed the context `attrs/2` gets (no parent and
+  no record) once an import job starts, before it walks the first kind, for each installed target
+  of a kind the job walks, in the order the source walks them; a dry run asks none. It answers
+  `:ok`, or `{:error, reason}`, which fails the job with `reason`. It runs again in every import
+  job, so it writes only what is not yet as it should be. `use` answers `:ok`.
+
   ## What the CMS already holds
 
   An item may already be in the CMS without any run having written it, such as a WordPress author
@@ -257,7 +266,9 @@ defmodule MishkaCmsMigration.Target do
   edits"), the CMS record of the item's parent (see "An item's parent"), the record an update writes over (see
   "A create and an update"), what the write needs that `existing/2` found (`{:created, prepared}`)
   or `prepare/3` fetched (`nil` until one does), the language plugin the source runs
-  (`languages`, `"polylang"` or `"wpml"`, else `nil`), and an
+  (`languages`, `"polylang"` or `"wpml"`, else `nil`), the addresses it gives its posts and
+  terms (`permalinks`) and what it shows on its front (`front_page`), the run's `extra` facts of
+  those names (`MishkaCmsMigration.Sources.WordPress`), else `nil`, and an
   admin's decisions on the items, by source id (see "An admin's decision", read with
   `decision/3`).
   """
@@ -274,6 +285,8 @@ defmodule MishkaCmsMigration.Target do
           record: struct() | nil,
           prepared: term(),
           languages: String.t() | nil,
+          permalinks: map() | nil,
+          front_page: map() | nil,
           decisions: %{String.t() => %{String.t() => String.t()}}
         }
 
@@ -339,6 +352,12 @@ defmodule MishkaCmsMigration.Target do
               | {:connected, struct(), String.t()}
               | {:error, term()}
             when result: term()
+
+  @doc """
+  Sets up what the site needs before an import writes any item, or answers `{:error, reason}` (see
+  "What the site needs first"). `use` answers `:ok`.
+  """
+  @callback before_import(context()) :: :ok | {:error, term()}
 
   @doc """
   What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import
@@ -408,6 +427,9 @@ defmodule MishkaCmsMigration.Target do
       def prepare(_item, context, write), do: write.(context)
 
       @impl MishkaCmsMigration.Target
+      def before_import(_context), do: :ok
+
+      @impl MishkaCmsMigration.Target
       def recorded(_item, _context), do: %{}
 
       @impl MishkaCmsMigration.Target
@@ -421,6 +443,7 @@ defmodule MishkaCmsMigration.Target do
                      note: 2,
                      existing: 2,
                      prepare: 3,
+                     before_import: 1,
                      recorded: 2,
                      waiting: 2,
                      needs: 1
