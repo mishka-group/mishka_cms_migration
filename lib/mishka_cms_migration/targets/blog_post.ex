@@ -8,7 +8,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     The `"post"` items of a source written as the Blog's posts (`MishkaBlog.BlogPost`), through the
     `:create` and `:update` an admin's own post form runs, on the run's site and as the admin who
     pressed Import: the admin needs the Blog's `admin:dashboard:blog:post`, and the Blog's own rules
-    decide the rest, such as how a slug is written (its `slugify`), how its content is sanitized and
+    decide the rest, such as how a slug is written (its slug change), how its content is sanitized and
     its code blocks highlighted.
 
     An item's title is the post's title, its `"slug"` the post's slug (its title for a draft
@@ -68,7 +68,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     `href` as written and the source's slug of the post it points at (the WordPress source finds
     them, `MishkaCmsMigration.Sources.WordPress`). Each such link points at that post's Blog
     address instead (`address/3`), its slug made as the Blog's create makes it
-    (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/2`) in the post's own language, and
+    (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/4`) in the post's own language, and
     keeps its `#fragment`: `http://old.example/2025/12/hello/#more` becomes `/blog/hello#more`.
     It is the address the run writes the post at, so a post that links to one listed after it
     points at it too. Its `"pages"` name the links of its content that point at a page of the
@@ -343,7 +343,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp href(attribute, _links, _to), do: attribute
 
     defp slug_address(slug, {language, context}),
-      do: __MODULE__ |> BySlug.slug(slug) |> address(language, context.site_id)
+      do: __MODULE__ |> BySlug.slug(slug, language, context) |> address(language, context.site_id)
 
     defp anchored(nil, old), do: old
     defp anchored(new, old), do: old |> URI.parse() |> fragment(new)

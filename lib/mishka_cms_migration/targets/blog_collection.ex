@@ -8,8 +8,8 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     The `"category"` items of a source written as the Blog's categories (`MishkaBlog.Collection`),
     through the `:create` and `:update` an admin's own category form runs, on the run's site and
     as the admin who pressed Import: the admin needs the Blog's `admin:dashboard:blog:post`, and
-    the Blog's own rules decide the rest, such as one slug per site and how a slug is written (its
-    `slugify`).
+    the Blog's own rules decide the rest, such as one slug per site and how a slug is written (the
+    scripts of the site's languages stay, Latin accents go).
 
     An item's title is the category's name, its `"slug"` and `"description"` the category's own
     (an empty description is none), and its parent the category's parent category: the walk writes

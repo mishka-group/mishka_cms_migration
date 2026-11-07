@@ -141,6 +141,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   alias MishkaCmsCore.Runtime.Authoring.Tree
   alias MishkaCmsCore.Runtime.Authoring.Tree.{Node, Serializer}
   alias MishkaCmsCore.Runtime.{Component, Languages, Layout, Page, PageEditions}
+  alias MishkaCmsCore.Runtime.Resources.Changes.InternalName
   alias MishkaCmsMigration.{MigrationItem, MigrationRun, Source, Target}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.CmsPage
@@ -299,7 +300,7 @@ defmodule MishkaCmsMigration.Targets.CmsLayout do
   defp claim_name(_found, taken, _name), do: taken
 
   defp component_name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
-    do: "nav-" <> (Slug.slugify(slug) || item.source_id)
+    do: "nav-" <> (InternalName.slug(slug) || item.source_id)
 
   defp component_name(item), do: "nav-" <> item.source_id
 

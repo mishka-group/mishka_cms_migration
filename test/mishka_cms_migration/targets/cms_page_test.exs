@@ -421,8 +421,24 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
   end
 
   describe "an address" do
-    test "that is not ASCII is transliterated the way the CMS slugs a name, and the report says so",
+    test "that is not ASCII is written with Latin letters only, and the report says so",
          %{site: site, admin: admin} do
+      run =
+        fake_pages!(site, admin, [
+          row(1, %{
+            "slug" => "Café-Crème-وردپرس",
+            "permalink_template" => "http://old.example.com/about/%pagename%/"
+          })
+        ])
+
+      assert %{"1" => {:created, "path_made_ascii"}} = outcomes(run)
+      assert Map.keys(pages(site)) == ["/about/cafe-creme"]
+    end
+
+    test "with no Latin letter at all fails with the core's sentence, never a crash", %{
+      site: site,
+      admin: admin
+    } do
       run =
         fake_pages!(site, admin, [
           row(1, %{
@@ -431,8 +447,8 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
           })
         ])
 
-      assert %{"1" => {:created, "path_made_ascii"}} = outcomes(run)
-      assert Map.keys(pages(site)) == ["/about/wrdprs"]
+      assert %{"1" => {:failed, _sentence}} = outcomes(run)
+      assert pages(site) == %{}
     end
 
     test "of a draft WordPress gave no slug yet comes from the slug it would generate", %{
@@ -593,7 +609,12 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
              |> LazyHTML.from_fragment()
              |> LazyHTML.query("a")
              |> LazyHTML.attribute("href") ==
-               ["/contact?ref=nav#form", "/about/team", "/about/team#staff", "/wrdprs"]
+               [
+                 "/contact?ref=nav#form",
+                 "/about/team",
+                 "/about/team#staff",
+                 "http://localhost:8089/%d9%88%d8%b1%d8%af%d9%be%d8%b1%d8%b3/"
+               ]
     end
 
     test "a link to a page with no address of its own yet, and any other link, is kept as it is",

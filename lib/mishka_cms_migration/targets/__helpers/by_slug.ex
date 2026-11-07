@@ -13,20 +13,21 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   `"another_slug"`).
 
   The slug is made the way the resource stores it. A WordPress slug arrives decoded, and the
-  resource's `:create` runs its `slugify` over what it is given, so an item with the slug
-  `"وردپرس"` is the record with the slug `"wrdprs"`. The slugify options are read from the create
-  action itself (`MishkaCmsCore.Runtime.Helpers.slugifiers/1`), so a resource that slugifies
-  otherwise is matched as it is written.
+  resource's `:create` runs its slug change over what it is given, so a slug is compared as the
+  Blog writes it: with the scripts of the site's languages kept (`وردپرس` stays `وردپرس` on a site
+  that publishes in Persian) and the Latin accents removed (`café` is `cafe`). The slug options
+  are read from the create action itself (`MishkaCmsCore.Runtime.Helpers.slugifiers/1`) and
+  resolved for the item's site and language (`MishkaCmsCore.Runtime.Helpers.slug/3`), so a
+  resource that slugs otherwise is matched as it is written.
 
   A target whose records are found so, such as the Blog's categories and tags, says
   `use MishkaCmsMigration.Targets.Helpers.BySlug` after `use MishkaCmsMigration.Target`: its
   `existing/2` is `call/3`, its `note/2` says what `note/2` says, and its `attrs/2` writes the slug
   `wanted/2` makes.
 
-  The records are read by `MishkaCmsMigration.Targets.Helpers.Read`. `slug/2` is that slug alone,
+  The records are read by `MishkaCmsMigration.Targets.Helpers.Read`. `slug/4` is that slug alone,
   for a target that points at a record by the address its slug makes, such as a post's link to
-  another post, or the slug another resource's action stores in a field of its own, such as the
-  name of a media folder.
+  another post.
   """
 
   require Ash.Query
@@ -35,7 +36,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   alias MishkaCmsCore.Runtime.Helpers
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
-  alias MishkaCmsMigration.Targets.Helpers.Read
+  alias MishkaCmsMigration.Targets.Helpers.{Editions, Read}
 
   @doc false
   defmacro __using__(_opts) do
@@ -53,8 +54,11 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   """
   @spec call(module(), [Item.t()], Target.context()) :: %{String.t() => Target.found()}
   def call(target, items, context) do
-    options = slugify_options(target.resource(), target.actions().create, :slug)
-    stored = for item <- items, slug = stored(item.attrs["slug"], options), do: {item, slug}
+    stored =
+      for item <- items,
+          slug = slug(target, item.attrs["slug"], Editions.language(item, context), context),
+          do: {item, slug}
+
     held = stored |> Enum.map(&elem(&1, 1)) |> held(target.resource(), context)
 
     for {item, slug} <- stored,
@@ -68,7 +72,7 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   The slug a target writes `item` with: the source's `"slug"`, or, once an admin decided to import
   the item as new beside the site's record of that slug (`"slug_taken"`), that slug with
   `-<source id>` after it: `elixir` is `elixir-10`. The resource's create makes it as it makes any
-  slug, so the Blog's rule holds for it too: `وردپرس-20` is `wrdprs-20`.
+  slug, so the Blog's rule holds for it too: `Café-20` is `cafe-20`.
   """
   @spec wanted(Item.t(), Target.context()) :: String.t() | nil
   def wanted(%Item{attrs: %{"slug" => slug}} = item, context) when is_binary(slug) and slug != "",
@@ -84,18 +88,19 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
   def note(item, context), do: context |> Target.decision(item, "slug_taken") |> noted()
 
   @doc """
-  The slug `target`'s resource stores for a source's `slug`, made as its create action makes it:
-  `"وردپرس"` is `"wrdprs"` for the Blog's tags; `nil` for no slug. Given
-  `{resource, action, field}` instead of a target, the slug that action of that resource stores in
-  that field, such as `{MishkaCmsCore.Runtime.MediaCategory, :create, :name}` for a media folder's
-  name.
+  The slug `target`'s resource stores for a source's `slug` written in `language` on the run's site,
+  made as its create action makes it: `"وردپرس"` stays `"وردپرس"` for a Persian tag on a site that
+  publishes in Persian, and `nil` for no slug or one with nothing left to write.
   """
-  @spec slug(module() | {Ash.Resource.t(), atom(), atom()}, String.t() | nil) ::
-          String.t() | nil
-  def slug({resource, action, field}, slug),
-    do: stored(slug, slugify_options(resource, action, field))
+  @spec slug(module(), String.t() | nil, String.t(), Target.context()) :: String.t() | nil
+  def slug(target, slug, language, context) when is_binary(slug) do
+    resource = target.resource()
+    options = slugify_options(resource, target.actions().create, :slug)
 
-  def slug(target, slug), do: slug({target.resource(), target.actions().create, :slug}, slug)
+    Helpers.slug(slug, options, changeset(resource, language, context))
+  end
+
+  def slug(_target, _no_slug, _language, _context), do: nil
 
   defp taken(record, "keep"), do: {:connected, record}
   defp taken(_record, "import"), do: nil
@@ -117,11 +122,12 @@ defmodule MishkaCmsMigration.Targets.Helpers.BySlug do
     end)
   end
 
-  defp stored(slug, options) when is_binary(slug), do: stored(Slug.slugify(slug, options))
-  defp stored(_not_a_slug, _options), do: nil
-
-  defp stored(slug) when slug in [nil, ""], do: nil
-  defp stored(slug), do: slug
+  defp changeset(resource, language, context),
+    do:
+      resource
+      |> Ash.Changeset.new()
+      |> Ash.Changeset.set_tenant(context.site_id)
+      |> Ash.Changeset.force_change_attribute(:language, language)
 
   defp held([], _resource, _context), do: %{}
 
