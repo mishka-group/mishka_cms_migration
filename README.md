@@ -5,7 +5,7 @@
 
 # Mishka CMS Migration
 
-**A migration extension for [Mishka CMS](https://mishka.tools/cms): move a WordPress site, and later Joomla and other CMSs, into it.**
+**A migration extension for [Mishka CMS](https://mishka.tools/cms): move a WordPress site into it.**
 
 [Mishka CMS](https://mishka.tools/cms) · [Hire us](https://mishka.tools/hire-us)
 
@@ -13,55 +13,70 @@
 
 ## 📖 What is Mishka CMS Migration?
 
-`mishka_cms_migration` is the migration extension of Mishka CMS. It will move a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects, site settings, and the global colours and fonts of a site built with Elementor, as theme tokens in a stylesheet of its own that the imported pages use, with a twin of each colour for the dark theme. Every record is written by the existing CMS actions as the admin who pressed Import, so the CMS's policies and validations decide, and the plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
+`mishka_cms_migration` is the migration extension of [Mishka CMS](https://mishka.tools/cms). It moves a site from another CMS into a Mishka CMS site: blog posts, categories, tags and authors, pages, media, redirects, site settings, and the global colours and fonts of a site built with Elementor (as theme tokens in a stylesheet of its own, with a dark-theme twin of each colour). Every record is written by the CMS's own actions as the admin who pressed Import, so the CMS's policies and validations decide, and plugins that react to a change (sitemap, share cards, stylesheet) react as usual.
 
-- [ ] WordPress
+- [x] **WordPress**, over its REST API or from the file its Tools ▸ Export makes, with Polylang and WPML translations and Elementor layouts
 - [ ] Joomla
 - [ ] Drupal
 - [ ] Ghost
 
 ## 🔌 In a host
 
-The CMS adds `MishkaCmsMigration` to its `ash_domains`, runs `mix ash.codegen` for the runs and items tables, and gives Oban a `migration` queue (`queues: [migration: 1]`); it starts Oban with `AshOban.config/2` over its `ash_domains`, as Mishka CMS does, since the jobs are AshOban triggers on the run. Installing the extension on a site from the CMS's installer creates the `admin:dashboard:migration` and `admin:api:migration` permissions, which a site's admin is then granted. Sources and targets are Mishka Installer plugins, each supervised by the extension that ships it. This extension ships the WordPress source, read over its REST API or from the file its Tools ▸ Export makes, and, where [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog) runs beside it, the targets that write a site's authors (as bloggers of the site's users, matched by email, or of new users when the admin chooses), categories (with their parents), tags and posts (their content converted to HTML, each with its author) into the Blog; on a CMS without the Blog those kinds are skipped. A site that runs Polylang or WPML keeps its translations: each page, post, category and tag is written in its own language and linked to its other editions as one group, the way the CMS and the Blog link a record's languages.
+1. Add `MishkaCmsMigration` to the host's `ash_domains` and run `mix ash.codegen` for the runs and items tables.
+2. Give Oban a `migration` queue (`queues: [migration: 1]`).
+3. Install the extension on a site from the CMS's installer, then grant the `admin:dashboard:migration` and `admin:api:migration` permissions to the site's admin.
+
+Posts, authors, categories and tags are written into [Mishka Blog](https://mishka.tools/cms/extensions/blog) when it runs beside the extension, and skipped when it does not.
 
 ## 🔁 How a migration runs
 
-An admin creates a run (the source, the host it reads from, how to connect, their choices), then asks for a dry run: a job walks the source and reports what an import would create, update and skip, writing nothing in the CMS: it records each item's plan, which the run's Items page shows. Once it has reported, the admin asks for the import, which writes each item through the CMS's own actions as that admin and saves the report. A run ends `done`, `failed` (with the reason, after the job's last attempt) or `cancelled` (the admin stopped it; a running job stops at its next page). Running again is a new run, which updates what the source changed and keeps what an admin changed in the CMS.
+1. An admin creates a run: the source, the host it reads from, how to connect, and their choices.
+2. A dry run reports what an import would create, update and skip. It writes nothing.
+3. The admin decides on the Items page: leave items out, map a category or tag to one the site has, or settle each conflict marked "Needs your decision".
+4. The import writes each item through the CMS's own actions as that admin, and saves the report.
 
-The dry run and the import are AshOban jobs on the `migration` queue, three attempts of an hour each. A site has one run dry running or importing at a time; the database refuses a second. [`MishkaCmsMigration.MigrationRun`](lib/mishka_cms_migration/resources/migration_run.ex) has the whole life of a run.
+Both steps are AshOban jobs on the `migration` queue. Running again is a new run: it updates what the source changed and keeps what an admin changed in the CMS.
 
 ## 🔀 Several sources into one site
 
-A site can take content from more than one source: a run names the host it reads from, and what the migration remembers of each item is kept per site, host, kind and source id. Two WordPress blogs moved into one site keep separate items and CMS records, the same id on both hosts is two items, and re-running one host updates only what that host wrote. When two sources ask for the same thing in the CMS, such as the same address, the CMS action refuses the second, and the run reports that item as failed with the CMS's reason; nothing is overwritten. Each run shows the host it reads from, and its Items page lists everything the migration keeps of that host on the site: each item's kind, title, source id, what the last dry run would do with it and what the last import did, and why, filtered by kind, plan, last import, title and the run that imported it last, with links to its CMS record in the admin and on the site, and the item's kept WordPress fields as JSON. Before an import, the Items page decides what it brings: an item can be left out, alone or with every row the filters pick, and what sits under it goes with it; a category or a tag can be mapped to one the site already has, and is linked to it instead of written. Its Map view draws the categories as WordPress nests them. What the import cannot place safely on its own, such as a site name, header links or an address the site already has, a video player the importing admin may not allow, Elementor widgets the CMS has no equivalent for, a script or inline event handler in a post or page, a translation in a language the site does not publish in, or an entry whose language a site that runs Polylang or WPML does not say, is neither forced in nor dropped: its plan reads Needs your decision, with the conflict in words, the import writes nothing for it, and the run's card counts how many wait. Its Decide… picks what happens, alone or for the picked rows, and every later dry run and import follows it. On a site without [Mishka Blog: Open-Source Blog Engine](https://mishka.tools/cms/extensions/blog), its authors, categories, tags, posts and comments wait for the Blog, or are left out, and New import does not ask the Blog's choices.
+- 🌍 One site can take content from many sources, such as two WordPress blogs.
+- 🧾 Each item is remembered per site, host, kind and source id, so the same id on two hosts is two items.
+- 🛡️ A clash in the CMS, such as the same address, fails that item with the CMS's reason. Nothing is overwritten.
+
+```mermaid
+flowchart LR
+  A[WordPress blog A] --> M[Mishka CMS site]
+  B[WordPress blog B] --> M
+```
 
 ## 🗂️ Layout
 
+The extension is an Ash domain with three resources: a run, its items and its log. Sources and targets are Mishka Installer plugins, and the admin screens are mishka_gervaz. The tests replay responses recorded from a real WordPress.
+
+<details>
+<summary>Folders and files that matter</summary>
+
 ```
 lib/
-├── mishka_cms_migration.ex           the Ash domain and its code interfaces
-└── mishka_cms_migration/
-    ├── application.ex                the plugins the extension supervises
-    ├── repo.ex                       the Postgres repo when the extension runs on its own (the CMS's repo inside the CMS)
-    ├── source.ex                     the source behaviour, the item every source hands over, the installed plugins
-    ├── sources/                      the sources it ships: WordPress and its export file, how a post's content, or its Elementor layout, becomes HTML, how an export is streamed
-    ├── target.ex                     the target behaviour: a kind of item written by an existing CMS action
-    ├── targets/                      the targets it ships: pages into the CMS's pages, and authors, categories, tags and posts into Mishka Blog, where it runs
-    ├── events.ex                     migration:content:convert, migration:item:before_import, migration:import:finished
-    ├── report.ex                     what a dry run or an import did with each item
-    ├── provision.ex                  installing the extension on a site: its permission names
-    ├── resources/                    MigrationRun and MigrationItem, with their __changes and __validations
-    ├── workers.ex                    the AshOban jobs, and the handler that fails a run whose job Oban discarded
-    └── workers/__helpers/            what a job does: the walk, the decision, the write, who it runs as, the discard handler
-test/
-├── mishka_cms_migration/             behaviour tests: runs, items, the walk, events, targets, provisioning
-├── support/                          the case, the factory, and plugins for the suite: a fake source, two targets, event probes
-└── fixtures/wordpress/               REST responses and WXR exports recorded from dev/wordpress
+├── mishka_cms_migration.ex       the Ash domain and its code interfaces
+├── mishka_cms_migration/
+│   ├── resources/                MigrationRun, MigrationItem and MigrationLog
+│   ├── sources/                  the WordPress source (REST and export file) and how its content becomes HTML
+│   ├── targets/                  one module per kind written: pages, media, redirects, settings,
+│   │                             stylesheet, layout, and the Blog's bloggers, collections, tags, posts, comments
+│   ├── workers/                  what a job does: the walk, the decision, the write, who it runs as
+│   ├── source.ex, target.ex      the behaviours a source and a target follow
+│   ├── events.ex                 migration:content:convert, migration:item:before_import, migration:import:finished
+│   ├── provision.ex              installing on a site: its permissions
+│   └── report.ex                 what a dry run or an import did with each item
+└── mishka_cms_migration_web/     the admin: runs page, items page, routes and sidebar entry
+test/                             behaviour tests, support plugins and the recorded WordPress fixtures
 dev/
-├── playground.exs                    `mix playground`: a run walked through by hand over the fake source
-└── wordpress/                        a real WordPress in Docker, seeded with realistic content, and the script that records it
+├── playground.exs                `mix playground`: a run walked through by hand
+└── wordpress/                    a real WordPress in Docker, and the scripts that seed and record it
 ```
 
-`dev/wordpress/` runs WordPress and MariaDB in Docker on this machine, fills the site with the content a migration meets (every block, shortcodes, nested terms, media, threaded comments, menus, Yoast SEO, Elementor pages) and records what it answers into `test/fixtures/wordpress/` (its `README.md` says how). Nothing replays the fixtures yet: the WordPress source (#4) will, so its tests run against what a real site says rather than hand-written JSON.
+</details>
 
 ## 🧩 Part of Mishka CMS
 
@@ -69,33 +84,28 @@ Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS]
 
 ## 🚀 Getting started
 
-It is not on Hex yet. Until its first release, add it from GitHub:
+Add it from Hex, then follow [In a host](#-in-a-host):
 
 ```elixir
-{:mishka_cms_migration, github: "mishka-group/mishka_cms_migration"}
+{:mishka_cms_migration, "~> 0.0.1"}
 ```
 
-To work on it, clone it next to `mishka_cms_core`, `mishka_gervaz`, `mishka_installer` and `guarded_struct`. `mix.exs` takes a sibling checkout over the Hex release when there is one. Then:
+Open the Migration entry in the admin sidebar, press New import, and start with a dry run.
+
+## 🤝 Contributing
+
+Clone the repo next to `mishka_cms_core`, `mishka_gervaz`, `mishka_installer` and `guarded_struct`; `mix.exs` takes a sibling checkout over Hex when there is one. Then run the checks:
 
 ```sh
 mix deps.get
-MIX_ENV=test mix ash.codegen setup
-mix test
+mix ci
 ```
 
-There is no screen yet and no real source. The only source is the suite's fake one (`test/support/plugins/fake_source.ex`): the tests create, dry-run and import runs over it, and `mix playground` (below) does the same by hand.
-
-`mix ci` runs every check: `hex.audit`, compile with warnings as errors, format, credo, sobelow, `deps.audit`, dialyzer, ExDNA and the tests. The tests need PostgreSQL on `localhost` (user and password `postgres`, or `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_HOST`).
-
-**Try it by hand.** `mix playground` walks through a run over the fake source and checks each step in plain words, then rolls everything back. `iex -S mix playground` does the same and stays in IEx with a `Playground` module to try your own rows. It needs the same PostgreSQL as the tests:
-
-```sh
-mix playground
-iex -S mix playground
-```
+To work against a real WordPress, start the one in [`dev/wordpress`](dev/wordpress/README.md) with Docker and seed it as that README says.
 
 ## 💬 Community and support
 
+- Join the [Mishka Discord](https://discord.gg/m4zdCJjDJg) to ask questions, share what you moved and meet the team.
 - Report a bug or ask a question in [GitHub issues](https://github.com/mishka-group/mishka_cms_migration/issues).
 - Read about new releases on the [Mishka blog](https://mishka.tools/blog).
 - For a custom migration or priority support, [hire the Mishka team](https://mishka.tools/hire-us).
