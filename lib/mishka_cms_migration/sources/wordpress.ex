@@ -29,7 +29,18 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       It answers a wrong password, an unknown user and a request whose `Authorization` header the
       host dropped the same way (`rest_not_logged_in`), so these cannot be told apart.
 
-  `extra/1` keeps the site's name, its home address and timezone, and who signed in. When the REST
+  `extra/1` keeps the site's name, its home address and timezone, who signed in, and the addresses
+  it gives its posts and terms as `"permalinks"` (`MishkaCmsMigration.Sources.WordPress.Permalinks`),
+  worked out from every published post's `link` (`/wp/v2/posts` with `status=publish` and only
+  `id`, `status`, `slug`, `date`, `link` and `categories`, 100 a request), every category's `link`
+  and parents (`/wp/v2/categories` with only `id`, `slug`, `parent` and `link`) and the first 100
+  tags' `link` (`/wp/v2/tags`). When the user may read the site's settings (`/wp/v2/settings`,
+  an administrator), it keeps what the site shows on its front as `"front_page"`:
+  `"show_on_front"` (`"page"` or `"posts"`), and for `"page"` the ids of the front page
+  (`"page_on_front"`) and the posts page (`"page_for_posts"`), each `nil` when none is set,
+  such as `%{"show_on_front" => "page", "page_on_front" => "22", "page_for_posts" => "23"}`.
+  A user who may not has no `"front_page"`, and the front page is the page at the home's
+  address (`MishkaCmsMigration.Targets.CmsPage`). When the REST
   index lists the REST namespace of a language plugin, Polylang's `pll/v1` or WPML's `wpml/v1`, it
   keeps which one as `"languages"` (`"polylang"` or `"wpml"`): such a site names the language in its
   addresses, as `/fa/about/`, which the links an import writes do not follow
@@ -256,7 +267,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     Elementor,
     ElementorKit,
     Export,
-    Navigation
+    Navigation,
+    Permalinks
   }
 
   @kinds [
@@ -312,6 +324,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   @translated ~w(category tag page post post_redirect)
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
+  @permalink_posts [status: "publish", _fields: "id,status,slug,date,link,categories"]
+  @permalink_categories [_fields: "id,slug,parent,link"]
   @media_fields [_fields: "id,source_url,media_details"]
   @addressed ["src", "href", "poster"]
   @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
@@ -453,15 +467,69 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp homes(_unreadable), do: []
 
   @impl MishkaCmsMigration.Source
-  def extra(%{index: index, user: user}) do
+  def extra(%{req: req, index: index, user: user} = conn) do
     %{
       "name" => index["name"],
       "home" => index["home"],
       "timezone" => index["timezone_string"],
-      "signed_in_as" => user["username"]
+      "signed_in_as" => user["username"],
+      "permalinks" => permalinks(conn)
     }
     |> Map.merge(languages(index["namespaces"]))
+    |> Map.merge(req |> Req.get(url: "/wp/v2/settings") |> front_page())
   end
+
+  defp permalinks(%{req: req, index: index} = conn) do
+    categories = req |> every("/wp/v2/categories", @permalink_categories, 1, []) |> read_rows()
+
+    Permalinks.call(%{
+      posts:
+        req
+        |> every("/wp/v2/posts", @permalink_posts, 1, [])
+        |> read_rows()
+        |> Enum.filter(&(&1["status"] == "publish")),
+      categories: Map.new(categories, &{&1["id"], {&1["slug"], &1["parent"]}}),
+      terms: %{
+        "category" => Enum.map(categories, &%{"key" => &1["id"], "link" => &1["link"]}),
+        "tag" =>
+          req
+          |> Req.get(url: "/wp/v2/tags", params: [per_page: @per_page, _fields: "slug,link"])
+          |> listed(1)
+          |> read_rows()
+      },
+      home: index["home"],
+      languages: Enum.map(conn.polylang, &elem(&1, 0)) ++ conn.languages
+    })
+  end
+
+  defp read_rows({:ok, rows}), do: rows
+  defp read_rows({:ok, rows, _next}), do: rows
+  defp read_rows(_refused), do: []
+
+  defp front_page(
+         {:ok, %Req.Response{status: 200, body: %{"show_on_front" => "page"} = settings}}
+       ),
+       do: %{
+         "front_page" => %{
+           "show_on_front" => "page",
+           "page_on_front" => page_id(settings["page_on_front"]),
+           "page_for_posts" => page_id(settings["page_for_posts"])
+         }
+       }
+
+  defp front_page({:ok, %Req.Response{status: 200, body: %{"show_on_front" => "posts"}}}),
+    do: %{
+      "front_page" => %{
+        "show_on_front" => "posts",
+        "page_on_front" => nil,
+        "page_for_posts" => nil
+      }
+    }
+
+  defp front_page(_unreadable), do: %{}
+
+  defp page_id(id) when is_integer(id) and id > 0, do: Integer.to_string(id)
+  defp page_id(_none), do: nil
 
   defp languages(namespaces) when is_list(namespaces),
     do: namespaces |> Enum.find_value(&Map.get(@language_plugins, &1)) |> languages()

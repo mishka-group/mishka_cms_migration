@@ -30,7 +30,13 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   page, the address, alt text and sizes of each file, and the content of each reusable block. That
   is how it answers the reads the WordPress source's `normalize/3` makes with its connection's
   `read` (the blocks and gallery images of a post's content, the posts, pages and files its links
-  point at), from the file instead of the site. `extra/1` keeps the site's name, tagline and home.
+  point at), from the file instead of the site. `extra/1` keeps the site's name, tagline and home,
+  and the addresses it gives its posts and terms as `"permalinks"`
+  (`MishkaCmsMigration.Sources.WordPress.Permalinks`), worked out from each published post's
+  `<link>`, date, slug and categories, with the categories' parents: an export has no term
+  `<link>`, so the category and tag bases are WordPress's own. An export carries no options, so
+  there is no `"front_page"`: the front page is the page at the home's address
+  (`MishkaCmsMigration.Targets.CmsPage`).
 
   ## What it reads
 
@@ -122,7 +128,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   alias MishkaCmsMigration.Source
   alias MishkaCmsMigration.Sources.WordPress
-  alias MishkaCmsMigration.Sources.WordPress.{ElementorKit, Export}
+  alias MishkaCmsMigration.Sources.WordPress.{ElementorKit, Export, Permalinks}
 
   import Export, only: [text: 1, text: 2]
 
@@ -167,7 +173,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     counts: %{},
     rows: %{},
     kits: %{},
-    editions: @editions
+    editions: @editions,
+    published: [],
+    parents: %{}
   }
 
   @kinds WordPress.kinds()
@@ -245,6 +253,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     {:cont,
      found
      |> put_in([:terms, taxonomy, text(element, slug)], id)
+     |> parent_indexed(name, text(element, slug), text(element, "wp:category_parent"))
      |> update_in([:editions], &wpml_indexed(&1, taxonomy, id, meta(element, "wp:termmeta")))}
   end
 
@@ -271,6 +280,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     found
     |> update_in([:rows, Map.fetch!(@routes, type)], &[row | &1 || []])
     |> counted(type, status, element)
+    |> published(type, status, element)
     |> update_in([:editions], &entry_indexed(&1, type, element))
   end
 
@@ -314,6 +324,37 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       end)
 
   defp counted(found, _type, _status, _element), do: found
+
+  defp parent_indexed(found, "wp:category", slug, parent),
+    do: put_in(found, [:parents, slug], {slug, parent})
+
+  defp parent_indexed(found, _tag, _slug, _parent), do: found
+
+  defp published(found, "post", "publish", element),
+    do:
+      update_in(
+        found.published,
+        &[
+          %{
+            "id" => integer(text(element, "wp:post_id")),
+            "slug" => text(element, "wp:post_name"),
+            "date" => datetime(text(element, "wp:post_date")),
+            "link" => text(element, "link"),
+            "categories" =>
+              for(
+                reference <- Export.all(element, "category"),
+                Export.attribute(reference, "domain") == "category",
+                do: Export.attribute(reference, "nicename")
+              ),
+            "language" =>
+              referenced(element, "language") ||
+                meta(element, "wp:postmeta")["_wpml_import_language_code"]
+          }
+          | &1
+        ]
+      )
+
+  defp published(found, _type, _status, _element), do: found
 
   defp entry_indexed(editions, type, element) when type in @entries,
     do:
@@ -380,7 +421,12 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
      %{
        file: path,
        index:
-         %{"name" => site["title"], "description" => site["description"], "home" => home}
+         %{
+           "name" => site["title"],
+           "description" => site["description"],
+           "home" => home,
+           "permalinks" => permalinks(found, home)
+         }
          |> languages(found.editions.plugin),
        read: &read(rows, &1, &2),
        authors: found.authors,
@@ -398,6 +444,16 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   # The kit made last, which an export cannot tell from the active one.
   defp kit(kits) when map_size(kits) == 0, do: %{}
   defp kit(kits), do: kits |> Enum.max_by(&elem(&1, 0)) |> elem(1) |> ElementorKit.from_settings()
+
+  defp permalinks(found, home),
+    do:
+      Permalinks.call(%{
+        posts: Enum.reverse(found.published),
+        categories: found.parents,
+        terms: %{},
+        home: home,
+        languages: for(%{"language" => code} <- found.published, code, uniq: true, do: code)
+      })
 
   defp languages(index, nil), do: index
   defp languages(index, plugin), do: Map.put(index, "languages", plugin)

@@ -176,12 +176,24 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
       assert {:ok, conn} = WordPressFile.connect(%{"file" => @all}, nil)
 
-      assert WordPressFile.extra(conn) == %{
+      assert %{
                "name" => "Mishka Test Blog",
                "description" =>
                  "A WordPress site filled with realistic content for testing the Mishka CMS migration",
                "home" => "http://localhost:8089"
-             }
+             } = extra = WordPressFile.extra(conn)
+
+      refute Map.has_key?(extra, "front_page")
+    end
+
+    test "keeps the structure of the posts' addresses as the REST API's links give it, and WordPress's own term bases" do
+      stub!()
+      {:ok, rest} = WordPress.connect(@connection, "app password")
+
+      for path <- [@all, @posts_only] do
+        assert {:ok, conn} = WordPressFile.connect(%{"file" => path}, nil)
+        assert WordPressFile.extra(conn)["permalinks"] == WordPress.extra(rest)["permalinks"]
+      end
     end
 
     @tag :tmp_dir

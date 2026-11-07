@@ -92,11 +92,57 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert {:ok, conn} = WordPress.connect(@connection, "app password")
 
-      assert WordPress.extra(conn) == %{
+      assert %{
                "name" => "Mishka Test Blog",
                "home" => "http://localhost:8089",
                "timezone" => "Asia/Tehran",
-               "signed_in_as" => "admin"
+               "signed_in_as" => "admin",
+               "front_page" => %{
+                 "show_on_front" => "page",
+                 "page_on_front" => "22",
+                 "page_for_posts" => "23"
+               }
+             } = WordPress.extra(conn)
+    end
+
+    test "keeps the structure of the posts' addresses and the bases of the terms', read from their links" do
+      stub!()
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      published = for %{"status" => "publish", "id" => id} <- recorded("posts"), do: id
+
+      assert WordPress.extra(conn)["permalinks"] == %{
+               "structure" => "/%year%/%monthnum%/%postname%/",
+               "pattern" => "/:year/:monthnum/:slug",
+               "language_prefixes" => [],
+               "category_base" => "category",
+               "tag_base" => "tag",
+               "posts" => length(published),
+               "misfits" => []
+             }
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/posts",
+                         query_params: %{"_fields" => fields} = asked
+                       }}
+
+      assert asked["status"] == "publish"
+      assert fields == "id,status,slug,date,link,categories"
+    end
+
+    test "keeps no front page for a user who may not read the site's settings, and none of its pages for a site that shows its posts" do
+      stub!(%{"/wp-json/wp/v2/settings" => "unauthorized-settings"})
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+      refute Map.has_key?(WordPress.extra(conn), "front_page")
+
+      latest = "settings" |> recorded() |> Map.put("show_on_front", "posts") |> Jason.encode!()
+      stub!(%{"/wp-json/wp/v2/settings" => {"application/json", latest}})
+
+      assert WordPress.extra(conn)["front_page"] == %{
+               "show_on_front" => "posts",
+               "page_on_front" => nil,
+               "page_for_posts" => nil
              }
     end
 
