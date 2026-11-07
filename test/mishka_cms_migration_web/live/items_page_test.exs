@@ -18,6 +18,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.States.SiteState
+  alias MishkaCmsCore.Test.Admin
   alias MishkaCmsMigration.{MigrationItem, MigrationRun}
 
   @admin [
@@ -205,6 +206,18 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     settled(view)
   end
 
+  defp reason_of(view, item),
+    do:
+      view
+      |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-reason"]|)
+      |> LazyHTML.text()
+
+  defp last_import_of(view, item),
+    do:
+      view
+      |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-outcome"]|)
+      |> LazyHTML.text()
+
   defp plan_of(view, item) do
     view
     |> parts(~s|#{@table} [id$="#{item.id}"] [data-role="item-plan"]|)
@@ -234,6 +247,12 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     view |> element("#migration-item-map-modal form") |> render_submit()
     settled(view)
   end
+
+  defp decision_value(view),
+    do:
+      view
+      |> parts(~s|#migration-item-map-modal input[type="hidden"][name="decision"]|)
+      |> LazyHTML.attribute("value")
 
   # What Decide… offers, once its field is focused, by label.
   defp decision_choices(view) do
@@ -300,6 +319,101 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   defp json(view),
     do: view |> parts(~s|#{@table} [data-role="item-json"]|) |> LazyHTML.text() |> Jason.decode!()
 
+  # A later run of the same source, now running Polylang Free, whose pages say no language: Our
+  # Story (#125) with Our Crew (#127) under it, and their Persian editions, each waiting for a
+  # decision, dry run.
+  defp polylang_run!(site, admin, run) do
+    index =
+      "index"
+      |> MishkaCmsMigration.Test.WordPress.recorded()
+      |> Map.update!("namespaces", &["pll/v1" | &1])
+      |> Jason.encode!()
+
+    stub!(%{
+      "/wp-json/" => {"application/json", index},
+      "/wp-json/wp/v2/pages" => "polylang-pages"
+    })
+
+    site |> later_run!(admin, run) |> dry_run!(admin)
+  end
+
+  defp page(site, source_id),
+    do: Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"page", source_id}))
+
+  # Our Crew decided and imported alone, so it waits for Our Story.
+  defp crew_waits!(site, admin, later) do
+    crew = page(site, "127")
+    MishkaCmsMigration.decide_item!(crew, "import", actor: admin, tenant: site.id)
+    MishkaCmsMigration.import_items!(later, [crew.id], actor: admin, tenant: site.id)
+    assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+    item!(crew)
+  end
+
+  # The expanded row's branch, each item as `{source id, where it stands}`, the top one first.
+  defp branch(view) do
+    nodes = parts(view, ~s|[data-role="item-branch-node"]|)
+
+    Enum.zip(
+      LazyHTML.attribute(nodes, "data-source-id"),
+      LazyHTML.attribute(nodes, "data-standing")
+    )
+  end
+
+  defp branch_click!(view, selector) do
+    view |> element(selector) |> render_click()
+    settled(view)
+  end
+
+  defp panel_settled(view) do
+    settled(view)
+    settled(view)
+  end
+
+  # The core refuses every page from now on, as a deployment with hand-written templates off does,
+  # so a page's import fails with the core's sentence.
+  defp pages_code_off! do
+    previous = Application.fetch_env(:mishka_cms_core, :page_code)
+    Application.put_env(:mishka_cms_core, :page_code, :off)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:mishka_cms_core, :page_code, value)
+        :error -> Application.delete_env(:mishka_cms_core, :page_code)
+      end
+    end)
+  end
+
+  # How many UPDATEs of the items the repository runs from now on, in any process, read once.
+  defp updates_counted do
+    test = self()
+    handler = "items-updates-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler,
+      [:mishka_cms_migration, :repo, :query],
+      &__MODULE__.items_update/4,
+      {test, handler}
+    )
+
+    fn ->
+      :telemetry.detach(handler)
+      counted(handler, 0)
+    end
+  end
+
+  @doc false
+  def items_update(_event, _measurements, %{query: query}, {test, handler}) do
+    if query =~ ~s|UPDATE "mishka_cms_migration_items"|, do: send(test, {:items_update, handler})
+  end
+
+  defp counted(handler, count) do
+    receive do
+      {:items_update, ^handler} -> counted(handler, count + 1)
+    after
+      0 -> count
+    end
+  end
+
   describe "the cancelled run alert" do
     test "is between the filters and the table of a cancelled run, and not on a run that is done",
          %{conn: conn, site: site, admin: admin, run: run} do
@@ -311,6 +425,55 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert has_element?(view, @table <> " [role=\"alert\"]", "This run was cancelled.")
       assert has_element?(view, @table <> " [role=\"alert\"]", "WordPress password")
       assert has_element?(view, @table <> " [role=\"alert\"]", "Start a New import")
+    end
+  end
+
+  describe "a run that put everything in one language" do
+    test "says so in one line, and a run that kept the source's languages says nothing",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      refute has_element?(open!(conn, admin, run), @table <> " [role=\"alert\"]", "no language")
+
+      one =
+        MishkaCmsMigration.create_run!(
+          %{
+            source: "wordpress",
+            source_host: "other.example.com",
+            connection: %{"url" => "http://localhost:8089", "user" => "admin"},
+            secret: "app password",
+            options: %{one_language: "en"}
+          },
+          actor: admin,
+          tenant: site.id
+        )
+
+      view = open!(conn, admin, one)
+
+      assert has_element?(view, @table <> " [role=\"alert\"]", "puts every item with no language")
+      assert has_element?(view, @table <> " [role=\"alert\"]", "English")
+    end
+  end
+
+  describe "the site's own settings" do
+    test "are listed like any item, and a row's Leave out and Bring back reach them",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "setting"})
+
+      icon = Enum.find(stored(site), &(&1.source_kind == "setting" and &1.source_id == "icon"))
+
+      assert Enum.sort(rows(view)) |> Enum.map(&elem(&1, 1)) == [
+               "icon",
+               "logo",
+               "tagline",
+               "title"
+             ]
+
+      row_action!(view, "leave_out", icon)
+      assert %{left_out: true} = item!(icon)
+      assert plan_of(view, icon) == "left_out"
+
+      row_action!(view, "bring_back", icon)
+      assert %{left_out: false} = item!(icon)
     end
   end
 
@@ -402,6 +565,30 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       end
     end
 
+    test "fits its columns beside the sidebar on a 1280px screen, so Actions covers none of them",
+         %{conn: conn, admin: admin, run: run} do
+      view = open!(conn, admin, run)
+
+      [style] = view |> parts(~s|[style*="grid-template-columns"]|) |> LazyHTML.attribute("style")
+
+      tracks =
+        ~r/(?:minmax\((\d+)px|(?<![\w(,])(\d+)px)/
+        |> Regex.scan(style, capture: :all_but_first)
+        |> Enum.map(fn parts ->
+          parts |> Enum.reject(&(&1 == "")) |> hd() |> String.to_integer()
+        end)
+
+      # 1280px less the 266px sidebar and the page's padding.
+      assert Enum.sum(tracks) <= 900
+
+      # Wide enough for "Comments" or "Stylesheets" beside its icon, and for the "CMS record"
+      # and "Updated" headers with their sort arrow, so none of them is cut.
+      [_checkbox, _expand, kind, _title, _plan, _result, record, updated, _actions] = tracks
+      assert kind >= 126
+      assert record >= 90
+      assert updated >= 102
+    end
+
     test "says in words why an item was skipped", %{
       conn: conn,
       site: site,
@@ -489,6 +676,35 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       filter!(view, %{"plan" => "", "this_run" => "true"})
       assert total(view) == 0
     end
+
+    test "says what the last dry run would do before an import, and what it planned once an import met the item",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.plan == :created))
+      assert tag.outcome in [:created, :updated, :skipped]
+
+      for template <- ["", "&items_template=item_tree"] do
+        view = open!(conn, admin, run, "?items_filter_source_kind=tag" <> template)
+
+        plan =
+          view
+          |> parts(
+            ~s|[id$="#{tag.id}"] [data-role="item-plan"], | <>
+              ~s|[data-item-id="#{tag.id}"] > div [data-role="item-plan"]|
+          )
+          |> LazyHTML.text()
+
+        refute plan =~ MigrationItem.plan_word(:created)
+        assert plan =~ MigrationItem.planned_word(:created)
+      end
+
+      fresh =
+        site
+        |> create_run!(admin, %{"redirect" => [redirect_row(1, "/a", "/b")]})
+        |> dry_run!(admin)
+
+      view = open!(conn, admin, fresh)
+      assert texts(view, "item-plan") |> Enum.join() =~ MigrationItem.plan_word(:created)
+    end
   end
 
   describe "leaving out" do
@@ -507,14 +723,17 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       row_action!(view, "leave_out", tag)
 
       assert %{left_out: true} = item!(tag)
+      assert has_element?(view, "#flash-success", "Left out: #{tag.title}.")
       assert plan_of(view, tag) == "left_out"
       refute has_element?(view, row_button("leave_out", tag))
       settled(other_tab)
       assert plan_of(other_tab, tag) == "left_out"
 
+      Admin.clear_flashes(view)
       row_action!(view, "bring_back", tag)
 
       assert %{left_out: false} = item!(tag)
+      assert has_element?(view, "#flash-success", "Brought back: #{tag.title}.")
       assert plan_of(view, tag) == "created"
       settled(other_tab)
       assert plan_of(other_tab, tag) == "created"
@@ -594,8 +813,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
       assert row_action!(view, "leave_out", tag) =~ "is running"
+      assert has_element?(view, "#flash-info", "Not done.")
+      refute has_element?(view, "#flash-error")
+      Admin.clear_flashes(view)
+
       pick!(view, tag)
       assert bulk!(view, "leave_out") =~ "is running"
+      assert has_element?(view, "#flash-info", "Not done.")
+      refute has_element?(view, "#flash-error")
 
       assert %{left_out: false} = item!(tag)
       assert plan_of(view, tag) == "created"
@@ -658,6 +883,45 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
     end
 
+    test "say what came of the item once its job settled it, each time: a page under one that waits names that page, in a flash and live in its row",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      index =
+        "index"
+        |> MishkaCmsMigration.Test.WordPress.recorded()
+        |> Map.update!("namespaces", &["pll/v1" | &1])
+        |> Jason.encode!()
+
+      stub!(%{
+        "/wp-json/" => {"application/json", index},
+        "/wp-json/wp/v2/pages" => "polylang-pages"
+      })
+
+      later = site |> later_run!(admin, run) |> dry_run!(admin)
+      crew = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"page", "127"}))
+      MishkaCmsMigration.decide_item!(crew, "import", actor: admin, tenant: site.id)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+
+      for _click <- 1..2 do
+        item_action!(view, "import_item", crew)
+        assert Admin.flashes(view) =~ "Import of the item started."
+        assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+        settled(view)
+
+        assert Admin.flashes(view) =~ "Our Crew"
+        assert Admin.flashes(view) =~ "Skipped"
+        assert Admin.flashes(view) =~ "Our Story (#125) needs your decision"
+        assert reason_of(view, crew) =~ "Our Story (#125) needs your decision"
+        Admin.clear_flashes(view)
+      end
+
+      item_action!(view, "dry_run_item", crew)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Admin.flashes(view) =~ "Dry run of Our Crew"
+      assert Admin.flashes(view) =~ "Our Story (#125) needs your decision"
+    end
+
     test "are not offered on a run whose password an earlier release cleared, and say why when asked",
          %{conn: conn, site: site, admin: admin, run: run} do
       MishkaCmsMigration.Repo.query!(
@@ -701,12 +965,19 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       pick!(view, second)
 
       assert bulk!(view, "import_items") =~ "Import of 2 items started."
+      Admin.clear_flashes(view)
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
 
       assert Enum.map([first, second], &item!(&1).reason) == ["unchanged", "unchanged"]
+
+      flash = Admin.flashes(view)
+      assert flash =~ ~r/\AImport of 2 items: .+ skipped: Unchanged\.\z/
+      assert flash =~ first.title
+      assert flash =~ second.title
     end
 
-    test "are refused in words while another run of the site is running, and are not offered on an item left out",
+    test "say in a notice, not as a failure, that they did not start while another run of the site is running, and are not offered on an item left out",
          %{conn: conn, site: site, admin: admin, run: run} do
       [tag, left_out | _] = Enum.filter(stored(site), &(&1.source_kind == "tag"))
       view = open!(conn, admin, run)
@@ -720,15 +991,43 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> later_run!(admin, run)
       |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
 
-      assert item_action!(view, "import_item", tag) =~ "still waiting or running"
-      assert item_action!(view, "dry_run_item", tag) =~ "still waiting or running"
+      for event <- ["import_item", "dry_run_item"] do
+        Admin.clear_flashes(view)
+        item_action!(view, event, tag)
 
+        assert has_element?(view, "#flash-info", "Not started.")
+        assert has_element?(view, "#flash-info", "still waiting or running")
+        refute has_element?(view, "#flash-error")
+      end
+
+      Admin.clear_flashes(view)
       pick!(view, tag)
-      refused = bulk!(view, "import_items")
-      assert refused =~ "Import the picked items failed"
-      refute refused =~ "Import this item failed"
+      bulk!(view, "import_items")
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      refute has_element?(view, "#flash-error")
       assert item!(tag) == tag
       assert MishkaCmsMigration.get_run!(run.id, actor: admin, tenant: site.id).status == :done
+    end
+
+    test "a second Import this item while the first one's job runs starts nothing, and says so in a notice",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"tag", "13"}))
+      view = open!(conn, admin, run)
+      filter!(view, %{"source_kind" => "tag"})
+
+      assert item_action!(view, "import_item", tag) =~ "Import of the item started."
+      item_action!(view, "import_item", tag)
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      assert has_element?(view, "#flash-info", "An import of this run is running.")
+      refute has_element?(view, "#flash-error")
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(view, "#flash-warning", "Import of #{tag.title}: Skipped.")
+      assert %{outcome: :skipped, reason: "unchanged"} = item!(tag)
     end
   end
 
@@ -859,6 +1158,121 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert plan_of(view, tag) == "left_out"
     end
 
+    test "the Plan filter's Decided lists the items whose waiting decision is answered, and not the ones still waiting",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      [footer, navigation] =
+        for id <- ["23", "navigation-105"],
+            do: Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", id}))
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      filter!(view, %{"plan" => "decided"})
+      assert total(view) == 0
+
+      filter!(view, %{"plan" => ""})
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      filter!(view, %{"plan" => "decided"})
+      assert [{"menu", "23", _outcome}] = rows(view)
+
+      filter!(view, %{"plan" => "undecided"})
+      assert "navigation-105" in Enum.map(rows(view), &elem(&1, 1))
+      assert navigation.plan == :undecided
+    end
+
+    test "Decide… on a post whose scripts an admin decided opens with that choice picked", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      post = Enum.find(stored(site), &(&1.source_kind == "post" and &1.plan == :created))
+
+      MigrationItem
+      |> Ash.Changeset.for_create(:record_outcome, %{
+        source_host: post.source_host,
+        source_kind: "post",
+        source_id: post.source_id,
+        run_id: run.id,
+        outcome: :undecided,
+        reason: "scripts: script, onclick on a"
+      })
+      |> Ash.create!(tenant: site.id, authorize?: false)
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=post")
+      row_action!(view, "decide", post)
+      decide!(view, "import")
+      assert %{decisions: %{"scripts" => "import"}} = item!(post)
+
+      row_action!(view, "decide", post)
+      assert decision_value(view) == ["import"]
+    end
+
+    test "Decide… on a decided item opens with the current choice picked", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      footer = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", "23"}))
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      row_action!(view, "decide", footer)
+      assert decision_value(view) in [[], [""]]
+      decide!(view, "footer")
+
+      row_action!(view, "decide", footer)
+      assert decision_value(view) == ["footer"]
+    end
+
+    test "the Plan filter's Needs your decision lists an item only its last import left waiting, and Would create does not",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      tag = Enum.find(stored(site), &(&1.source_kind == "tag" and &1.plan == :created))
+
+      MigrationItem
+      |> Ash.Changeset.for_create(:record_outcome, %{
+        source_host: tag.source_host,
+        source_kind: "tag",
+        source_id: tag.source_id,
+        run_id: run.id,
+        outcome: :undecided,
+        reason: "same_file: Hero image"
+      })
+      |> Ash.create!(tenant: site.id, authorize?: false)
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=tag")
+      assert plan_of(view, tag) == "undecided"
+
+      filter!(view, %{"plan" => "undecided"})
+      assert {"tag", tag.source_id, "undecided"} in rows(view)
+
+      filter!(view, %{"plan" => "created"})
+      refute Enum.any?(rows(view), &(elem(&1, 1) == tag.source_id))
+    end
+
+    test "deciding one item tells the runs of its source, with what waits and what was decided now",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      footer = Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", "23"}))
+
+      waiting =
+        MigrationRun.fetch(run.id, admin) |> elem(1) |> Ash.load!([:decisions], actor: admin)
+
+      assert %{decided: 0, waiting: before} = waiting.decisions
+
+      Phoenix.PubSub.subscribe(MishkaCmsCore.PubSub, "migration_run:#{site.id}:updated")
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        payload: %Ash.Notifier.Notification{data: %{id: id, decisions: decisions}}
+      }
+
+      assert id == run.id
+      assert decisions == %{decided: 1, waiting: before - 1}
+    end
+
     test "a main menu that links pages that are not live names them, and offers to publish them or leave their links out",
          %{conn: conn, site: site, run: run} do
       admin = migration_admin!(site, @admin ++ ["admin:dashboard:runtime:layout"])
@@ -890,6 +1304,33 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
       assert item!(menu).decisions == %{"draft_pages" => "import"}
       assert plan_of(view, menu) == "decided"
+    end
+
+    test "an import that waited for a decision reads as waited once the item is decided or left out, as its Plan says",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      [footer, navigation] =
+        for id <- ["23", "navigation-105"],
+            do: Enum.find(stored(site), &({&1.source_kind, &1.source_id} == {"menu", id}))
+
+      view = open!(conn, admin, run, "?items_filter_source_kind=menu")
+
+      for menu <- [footer, navigation] do
+        assert %{outcome: :undecided} = menu
+        assert last_import_of(view, menu) =~ "Needs your decision"
+      end
+
+      row_action!(view, "decide", footer)
+      decide!(view, "footer")
+
+      assert plan_of(view, footer) == "decided"
+      refute last_import_of(view, footer) =~ "Needs your decision"
+      assert reason_of(view, footer) =~ "Footer links"
+
+      row_action!(view, "leave_out", navigation)
+
+      refute last_import_of(view, navigation) =~ "Needs your decision"
+      assert reason_of(view, navigation) =~ "Left out by you"
+      assert %{outcome: :undecided} = item!(navigation)
     end
 
     test "the picked rows are decided together, and one with nothing to decide is left as it is",
@@ -1064,6 +1505,345 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     end
   end
 
+  describe "Where it sits" do
+    test "an item that waits for its parent names its parents in its row and its expanded row, where the parent is decided and the branch imported, parents first",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      story = page(site, "125")
+      assert crew.reason == "parent_undecided: Our Story (#125)"
+
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+
+      assert view
+             |> parts(~s|#{@table} [id$="#{crew.id}"] [data-role="item-waits-node"]|)
+             |> LazyHTML.attribute("data-source-id") == ["125"]
+
+      expand!(view, crew)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="item-branch"][data-waits="true"] [data-role="item-branch-waits"]|,
+               "Our Story (#125) needs your decision"
+             )
+
+      assert branch(view) == [{"125", "undecided"}, {"127", "decided"}]
+      refute has_element?(view, ~s|[data-role="item-branch-import-all"]|)
+
+      branch_click!(
+        view,
+        ~s|[data-role="item-branch-node"][data-source-id="125"] [data-role="item-branch-decide"][data-choice="import"]|
+      )
+
+      assert Admin.flashes(view) =~ "Decided"
+      assert %{decisions: %{"language_unknown" => "import"}} = item!(story)
+      assert item!(crew).reason == "parent_undecided: Our Story (#125)"
+      assert branch(view) == [{"125", "decided"}, {"127", "decided"}]
+      assert has_element?(view, ~s|[data-role="item-branch-waits"]|, "is not imported yet")
+      refute has_element?(view, ~s|[data-role="item-branch-waits"]|, "needs your decision")
+
+      Admin.clear_flashes(view)
+      branch_click!(view, ~s|[data-role="item-branch-import-all"]|)
+      assert Admin.flashes(view) =~ "Import of 2 items started."
+      Admin.clear_flashes(view)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Admin.flashes(view) =~ "Import of 2 items: Our Story and Our Crew created."
+      assert %{outcome: :created, target_id: story_page} = item!(story)
+
+      assert %{title: "Our Story"} =
+               Ash.get!(MishkaCmsCore.Runtime.Page, story_page,
+                 tenant: site.id,
+                 authorize?: false
+               )
+
+      assert %{outcome: :created, reason: nil} = item!(crew)
+      assert branch(view) == [{"125", "imported"}, {"127", "imported"}]
+      refute has_element?(view, ~s|#{@table} [id$="#{crew.id}"] [data-role="item-waits-node"]|)
+    end
+
+    test "Import the branch says every item's result in one flash once its job is done, a failed parent first, and the open branch follows live",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      MishkaCmsMigration.decide_item!(page(site, "125"), "import", actor: admin, tenant: site.id)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+      pages_code_off!()
+
+      branch_click!(view, ~s|[data-role="item-branch-import-all"]|)
+      assert Admin.flashes(view) =~ "Import of 2 items started."
+      assert has_element?(view, ~s|[data-role="item-branch-busy"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-import-all"][disabled]|)
+
+      Admin.clear_flashes(view)
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert has_element?(view, "#flash-error")
+
+      assert Admin.flashes(view) =~
+               ~r/Import of 2 items: Our Story failed: .+; Our Crew skipped: its parent was not imported\./
+
+      refute Admin.flashes(view) =~ "Import of Our Crew"
+
+      assert branch(view) == [{"125", "decided"}, {"127", "decided"}]
+      assert has_element?(view, ~s|[data-source-id="125"] [data-role="item-branch-failed"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-node"][data-source-id="125"]|, "ready")
+      refute has_element?(view, ~s|[data-role="item-branch-busy"]|)
+      assert %{outcome: :skipped, reason: "parent_missing: Our Story (#125)"} = item!(crew)
+    end
+
+    test "marks the recommended choice, says to decide the parents first, and asks once per click",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      assert has_element?(view, ~s|[data-role="item-branch-node"][data-source-id="127"]|, "ready")
+      assert has_element?(view, ~s|[data-role="item-branch-decide-parents"]|)
+
+      assert view
+             |> parts(~s|[data-source-id="125"] [data-role="item-branch-decide"]|)
+             |> LazyHTML.attribute("data-recommended") == ["true", "false"]
+
+      assert view
+             |> parts(~s|[data-role="item-branch"] [data-confirm]|)
+             |> LazyHTML.attribute("phx-disable-with")
+             |> Enum.all?(&(&1 == ""))
+
+      branch_click!(
+        view,
+        ~s|[data-source-id="125"] [data-role="item-branch-decide"][data-recommended="true"]|
+      )
+
+      refute has_element?(view, ~s|[data-role="item-branch-decide-parents"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-import-all"][phx-disable-with]|)
+    end
+
+    test "a decision or an import from the branch while another run of the site is running says in a notice that nothing changed",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      site
+      |> later_run!(admin, later)
+      |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      branch_click!(
+        view,
+        ~s|[data-role="item-branch-node"][data-source-id="125"] [data-role="item-branch-decide"][data-choice="import"]|
+      )
+
+      assert has_element?(view, "#flash-info", "Not decided.")
+      assert has_element?(view, "#flash-info", "is running")
+      refute has_element?(view, "#flash-error")
+      assert %{decisions: %{}} = item!(page(site, "125"))
+
+      Admin.clear_flashes(view)
+      branch_click!(view, ~s|[data-role="item-branch-import-anyway"]|)
+
+      assert has_element?(view, "#flash-info", "Not started.")
+      refute has_element?(view, "#flash-error")
+      assert item!(crew).decisions == %{"language_unknown" => "import"}
+    end
+
+    test "Import anyway writes the item without its parent and says so; the parent waits as it was",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      branch_click!(view, ~s|[data-role="item-branch-import-anyway"]|)
+      assert Admin.flashes(view) =~ "Import of the item started."
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+
+      assert Admin.flashes(view) =~ "Import of Our Crew: Created."
+      assert Admin.flashes(view) =~ "without its parent Our Story (#125)"
+      assert %{outcome: :created, reason: "without_parent: Our Story (#125)"} = item!(crew)
+      assert %{target_id: nil, decisions: %{}} = item!(page(site, "125"))
+      assert branch(view) == [{"125", "undecided"}, {"127", "imported"}]
+
+      wait = ~s|[data-role="item-branch-wait"]|
+      assert view |> parts(wait) |> LazyHTML.attribute("data-confirm") |> hd() =~ "stays where"
+
+      Admin.clear_flashes(view)
+      branch_click!(view, wait)
+
+      assert Admin.flashes(view) =~ "It waits for its parent again"
+      assert Admin.flashes(view) =~ "stays where it is"
+      refute Admin.flashes(view) =~ "failed"
+      assert %{decisions: %{"parent_missing" => "keep"}, target_id: page_id} = item!(crew)
+
+      assert %{title: "Our Crew"} =
+               Ash.get!(MishkaCmsCore.Runtime.Page, page_id, tenant: site.id, authorize?: false)
+
+      refute has_element?(view, wait)
+    end
+
+    test "an item whose parent the list does not hold is drawn under it in the Map view, which says it waits",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew_waits!(site, admin, later)
+
+      view =
+        open!(
+          conn,
+          admin,
+          later,
+          "?items_template=item_tree&items_filter_source_kind=page&items_filter_outcome=skipped"
+        )
+
+      assert has_element?(
+               view,
+               ~s|[data-role="item-tree-node"][data-ghost="true"][data-source-id="125"] [data-role="item-tree-node"][data-source-id="127"]|
+             )
+
+      assert has_element?(
+               view,
+               ~s|[data-role="item-tree-node"][data-source-id="127"] [data-role="item-tree-waits"]|,
+               "Our Story (#125)"
+             )
+
+      refute has_element?(
+               view,
+               ~s|[data-role="item-tree-node"][data-ghost="true"] > div input[name="select_row"]|
+             )
+
+      assert has_element?(
+               view,
+               ~s|[data-role="item-tree-node"][data-source-id="127"] > div input[name="select_row"]|
+             )
+    end
+  end
+
+  describe "the Decisions panel" do
+    test "groups what waits for a decision, and its recommended choice decides a whole group at once",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      {:ok, groups} = MigrationItem.waiting_groups(later, admin)
+
+      waiting =
+        groups
+        |> Enum.filter(&(&1.conflict == "language_unknown"))
+        |> Enum.map(& &1.count)
+        |> Enum.sum()
+
+      assert waiting >= 4
+      view = open!(conn, admin, later)
+      panel_settled(view)
+
+      group = ~s|[data-role="decision-group"][data-conflict="language_unknown"]|
+      assert view |> parts(group) |> LazyHTML.attribute("data-count") == [to_string(waiting)]
+
+      assert view
+             |> parts(group <> ~s| [data-role="decision-choice"][data-recommended="true"]|)
+             |> LazyHTML.attribute("data-choice") == ["import"]
+
+      assert view
+             |> parts(group <> ~s| [data-role="decision-choice"]|)
+             |> LazyHTML.attribute("phx-disable-with")
+             |> Enum.all?(&(&1 == ""))
+
+      updates = updates_counted()
+
+      view
+      |> element(group <> ~s| [data-role="decision-choice"][data-choice="import"]|)
+      |> render_click()
+
+      panel_settled(view)
+
+      assert updates.() == 1
+      assert Admin.flashes(view) =~ "#{waiting} items decided."
+      assert {:ok, rest} = MigrationItem.waiting_groups(later, admin)
+      refute Enum.any?(rest, &(&1.conflict == "language_unknown"))
+      assert %{decisions: %{"language_unknown" => "import"}} = page(site, "128")
+      assert plan_of(view, page(site, "128")) == "decided"
+      refute has_element?(view, group)
+    end
+
+    test "says so in one line once nothing waits any more, instead of vanishing",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      view = open!(conn, admin, later)
+      panel_settled(view)
+      refute has_element?(view, ~s|[data-role="decisions-done"]|)
+
+      for _group <- 1..10, has_element?(view, ~s|[data-role="decision-group"]|) do
+        view
+        |> element(~s|[data-role="decision-group"]:first-child [data-recommended="true"]|)
+        |> render_click()
+
+        panel_settled(view)
+      end
+
+      assert {:ok, []} = MigrationItem.waiting_groups(later, admin)
+      refute has_element?(view, ~s|[data-role="decisions"]|)
+
+      assert has_element?(
+               view,
+               ~s|[data-role="decisions-done"]|,
+               "Nothing needs your decision now."
+             )
+    end
+
+    test "Advanced decides only the rules that are on, narrowed by a title, once its counts are previewed",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      {:ok, groups} = MigrationItem.waiting_groups(later, admin)
+      view = open!(conn, admin, later)
+      panel_settled(view)
+
+      view |> element(~s|[data-role="decisions-mode"][data-mode="advanced"]|) |> render_click()
+
+      rules =
+        Map.new(groups, fn group ->
+          {"#{group.kind}:#{group.conflict}",
+           %{
+             "on" => to_string(group.kind == "page" and group.conflict == "language_unknown"),
+             "choice" => "import"
+           }}
+        end)
+
+      form = element(view, ~s|[data-role="decision-rules"]|)
+      render_change(form, %{"search" => "our", "rules" => rules})
+      render_submit(form, %{"search" => "our", "rules" => rules})
+
+      assert view |> parts(~s|[data-role="decision-preview"]|) |> LazyHTML.attribute("data-count") ==
+               ["2"]
+
+      assert view
+             |> parts(~s|[data-role="decision-preview-rule"]|)
+             |> LazyHTML.attribute("data-key") == ["page:language_unknown"]
+
+      off = Enum.reject(groups, &(&1.kind == "page" and &1.conflict == "language_unknown"))
+
+      for group <- off do
+        assert has_element?(
+                 view,
+                 ~s|[data-role="decision-rule"][data-key="#{group.kind}:#{group.conflict}"]|,
+                 "off, not counted"
+               )
+      end
+
+      view |> element(~s|[data-role="decision-apply"]|) |> render_click()
+      panel_settled(view)
+
+      assert Admin.flashes(view) =~ "2 items decided."
+
+      assert %{"language_unknown" => "import"} = page(site, "125").decisions
+      assert %{"language_unknown" => "import"} = page(site, "127").decisions
+      assert page(site, "126").decisions == %{}
+      assert page(site, "128").decisions == %{}
+    end
+  end
+
   describe "the Map view" do
     test "draws the categories as WordPress nests them, each with its plan, and folds a parent's children",
          %{conn: conn, admin: admin, run: run} do
@@ -1191,6 +1971,23 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       assert Enum.sort(rows(view)) == Enum.sort(kept(matching))
     end
 
+    test "search the source id as the rows show it, with or without its #", %{
+      conn: conn,
+      site: site,
+      admin: admin,
+      run: run
+    } do
+      view = open!(conn, admin, run)
+      post = Enum.find(stored(site), &(&1.source_kind == "post"))
+
+      filter!(view, %{"search" => post.source_id})
+      plain = rows(view)
+      assert {"post", post.source_id, to_string(post.outcome)} in plain
+
+      filter!(view, %{"search" => "#" <> post.source_id})
+      assert rows(view) == plain
+    end
+
     test "narrow the items to the ones this run met last", %{
       conn: conn,
       site: site,
@@ -1255,7 +2052,20 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       expand!(view, post)
 
       assert has_element?(view, ~s|[data-role="item-details"][data-item-id="#{post.id}"]|)
-      assert has_element?(view, ~s|[data-role="item-details-note"]|, "read from the source again")
+
+      assert has_element?(
+               view,
+               ~s|details[data-role="item-technical"]:not([open]) [data-role="item-details-note"]|,
+               "read from the source again"
+             )
+
+      assert has_element?(
+               view,
+               ~s|details[data-role="item-technical"] summary|,
+               "Technical details"
+             )
+
+      assert has_element?(view, ~s|details[data-role="item-technical"] [data-role="item-json"]|)
 
       assert %{
                "source_kind" => "post",

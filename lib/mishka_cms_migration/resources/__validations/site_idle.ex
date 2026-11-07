@@ -16,6 +16,14 @@ defmodule MishkaCmsMigration.Resources.Validations.SiteIdle do
 
   The site's runs are read as the admin, under the item's site. Run it with `before_action?: true`,
   so the policies have let the admin make the choice before their runs are read.
+
+  An atomic action (`:decide`, one update for a whole group) runs it once for the update, under
+  its tenant, not once per item; a run the admin may not read counts as none, and the items'
+  own policies then refuse the change.
+
+      update :decide do
+        validate MishkaCmsMigration.Resources.Validations.SiteIdle
+      end
   """
 
   use Ash.Resource.Validation
@@ -32,21 +40,29 @@ defmodule MishkaCmsMigration.Resources.Validations.SiteIdle do
              "A dry run or an import of this site is running. Change its items once it is done."
            )
 
+  @doc "Whether `error` is this validation's refusal: a run of the item's site is running now."
+  @spec running?(term()) :: boolean()
+  def running?(%InvalidChanges{message: @message}), do: true
+  def running?(_error), do: false
+
   @impl true
   def supports(_opts), do: [Ash.Changeset]
 
   @impl true
-  def validate(changeset, _opts, context) do
-    MigrationRun
-    |> Ash.Query.filter(status in ^@running)
-    |> Ash.exists?(
-      actor: context.actor,
-      tenant: changeset.data.site_id,
-      authorize?: context.authorize?
-    )
-    |> idle()
-  end
+  def validate(changeset, _opts, context),
+    do: changeset.data.site_id |> running(context) |> idle()
 
-  defp idle(false), do: :ok
-  defp idle(true), do: {:error, InvalidChanges.exception(message: @message)}
+  @impl true
+  def atomic(changeset, _opts, context), do: changeset.tenant |> running(context) |> idle()
+
+  defp running(site_id, context),
+    do:
+      MigrationRun
+      |> Ash.Query.filter(status in ^@running)
+      |> Ash.exists(actor: context.actor, tenant: site_id, authorize?: context.authorize?)
+
+  defp idle({:ok, false}), do: :ok
+  defp idle({:ok, true}), do: {:error, InvalidChanges.exception(message: @message)}
+  defp idle({:error, %Ash.Error.Forbidden{}}), do: :ok
+  defp idle({:error, error}), do: {:error, error}
 end

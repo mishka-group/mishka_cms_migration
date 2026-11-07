@@ -64,9 +64,13 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
 
   An item with a parent (`MishkaCmsMigration.Source.Item`'s `parent`), which the walk settles
   first, is written under the CMS record its parent's item recorded: the target is handed that
-  record's id as its context's `parent_id`. When the parent has none — it failed, was never written,
-  or the source never listed it — the item is skipped as `"parent_missing"`, so it is not written
-  out of its place, and the run that writes the parent writes it too.
+  record's id as its context's `parent_id`. When the parent has none — it waits for a decision,
+  failed, was never written, or the source never listed it — the item is skipped with a reason that
+  names the parent and what unblocks it (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`), read
+  from the parent's item this lookup already found, so it is not written out of its place, and the
+  run that writes the parent writes it too. An item an admin decided to import anyway
+  (`MishkaCmsMigration.MigrationItem.without_parent?/1`) is written then with no parent, at the
+  top level, and its note says so first (`"without_parent: <parent>"`).
 
   A plugin, a target or the CMS action that raises or exits while an item is converted, offered or
   written fails that item alone, with the exception's message as its reason. One the CMS's policies
@@ -77,7 +81,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   alias MishkaCmsMigration.{Events, MigrationItem, Report}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.Helpers.LanguageUrls
-  alias MishkaCmsMigration.Workers.Helpers.Archived
+  alias MishkaCmsMigration.Workers.Helpers.{Archived, Needs}
 
   @restored "restored"
   @deleted "deleted_in_cms"
@@ -220,10 +224,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     do: Report.entry(item.kind, item.source_id, item.title, :failed, Report.reason(error))
 
   defp written(state, source_item, {outcome, target, _record} = plan, context) do
-    with {:ok, context} <- parented(state, source_item, context),
+    with {:ok, context, unparented} <- parented(state, source_item, context),
          {:ok, item, kept} <- convert(state, source_item),
          {:ok, item} <- Events.before_import(item, reported(outcome), state.run, state.actor),
-         note = note(target, item, context, kept, outcome),
+         note = noted([unparented, note(target, item, context, kept, outcome)]),
          {:ok, written} <-
            target.prepare(item, context, &transacted(state, {source_item, item}, plan, &1, note)) do
       {:ok, written, note}
@@ -275,19 +279,29 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp reported(:restored), do: :updated
   defp reported(outcome), do: outcome
 
-  defp parented(_state, %Item{parent: nil}, context), do: {:ok, context}
+  defp parented(_state, %Item{parent: nil}, context), do: {:ok, context, nil}
 
-  defp parented(state, %Item{kind: kind, parent: parent}, context) do
+  defp parented(state, %Item{kind: kind, parent: parent} = item, context) do
     state.run.source_host
     |> MishkaCmsMigration.items_by_sources(kind, [parent], scope: state.scope)
-    |> parent_record(context)
+    |> parent_record(
+      parent,
+      context,
+      MigrationItem.without_parent?(context.decisions[item.source_id])
+    )
   end
 
-  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, context) when is_binary(id),
-    do: {:ok, %{context | parent_id: id}}
+  defp parent_record({:ok, [%MigrationItem{target_id: id}]}, _parent, context, _without)
+       when is_binary(id),
+       do: {:ok, %{context | parent_id: id}, nil}
 
-  defp parent_record({:ok, _items}, _context), do: {:skipped, "parent_missing"}
-  defp parent_record({:error, error}, _context), do: {:error, error}
+  defp parent_record({:ok, items}, parent, context, true),
+    do: {:ok, context, "without_parent: " <> Needs.parent_name(List.first(items), parent)}
+
+  defp parent_record({:ok, items}, parent, _context, false),
+    do: {:skipped, items |> List.first() |> Needs.parent(parent)}
+
+  defp parent_record({:error, error}, _parent, _context, _without), do: {:error, error}
 
   defp write(target, item, record, context) do
     {resource, actions} = target.writes_to(item, context)
@@ -372,7 +386,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_parent: item.parent,
                outcome: outcome,
                reason: reason
-             },
+             }
+             |> Map.merge(left_out(reason)),
              scope: state.scope
            ),
          do: :ok
@@ -391,13 +406,17 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
                source_parent: item.parent,
                plan: plan,
                plan_reason: reason
-             },
+             }
+             |> Map.merge(left_out(reason)),
              scope: state.scope
            ),
          do: :ok
   end
 
   defp noted(_state, _item, _outcome, _reason), do: :ok
+
+  defp left_out("left_out_by_admin"), do: %{left_out: true}
+  defp left_out(_reason), do: %{}
 
   defp source_slug(%Item{attrs: %{"slug" => slug}}) when is_binary(slug) and slug != "", do: slug
   defp source_slug(_item), do: nil
@@ -437,16 +456,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
     do: for(%{html: nil, name: name} <- content || [], do: name)
 
   defp note(target, item, context, unconverted, outcome),
-    do:
-      [restored_note(outcome), target.note(item, context), unconverted(unconverted)]
-      |> Enum.reject(&is_nil/1)
-      |> noted()
+    do: noted([restored_note(outcome), target.note(item, context), unconverted(unconverted)])
 
   defp restored_note(:restored), do: @restored
   defp restored_note(_outcome), do: nil
 
-  defp noted([]), do: nil
-  defp noted(notes), do: notes |> Enum.join("; ") |> Report.reason()
+  defp noted(notes), do: notes |> Enum.reject(&is_nil/1) |> joined()
+
+  defp joined([]), do: nil
+  defp joined(notes), do: notes |> Enum.join("; ") |> Report.reason()
 
   defp unconverted(names), do: names |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
 

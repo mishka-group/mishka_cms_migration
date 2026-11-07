@@ -746,7 +746,7 @@ defmodule MishkaCmsMigration.PipelineTest do
       rows = [category(3, "Guides", 2), %{category(2, "News") | "title" => nil}]
       run = migrate!(site, admin, %{"category" => rows})
 
-      assert %{"2" => {:failed, _reason}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert %{"2" => {:failed, _reason}, "3" => {:skipped, "parent_missing: #2"}} = outcomes(run)
       assert collections(site) == %{}
 
       again =
@@ -888,8 +888,8 @@ defmodule MishkaCmsMigration.PipelineTest do
       rows = [category(3, "Guides", 99), category(4, "Loop", 4), category(2, "News")]
       run = migrate!(site, admin, %{"category" => rows})
 
-      assert %{"2" => {:created, nil}, "3" => {:skipped, "parent_missing"}} = outcomes(run)
-      assert %{"4" => {:skipped, "parent_missing"}} = outcomes(run)
+      assert %{"2" => {:created, nil}, "3" => {:skipped, "parent_not_listed: 99"}} = outcomes(run)
+      assert %{"4" => {:skipped, "parent_missing: Loop (#4)"}} = outcomes(run)
       assert Map.keys(collections(site)) == ["News"]
     end
   end

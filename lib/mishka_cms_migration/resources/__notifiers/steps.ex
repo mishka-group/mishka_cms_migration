@@ -126,6 +126,9 @@ defmodule MishkaCmsMigration.Resources.Notifiers.Steps do
 
       sentence(:import_finished, %{source_host: "localhost:8089", counts: counts, reason: nil})
       #=> "Import of localhost:8089 finished: 384 created, 371 updated, 185 skipped."
+
+  A finished step's counts are what the run counted when it ended, so they read in the past tense:
+  "Dry run of localhost:8090 finished: 1,029 created, 74 skipped, 565 needed your decision."
   """
   @spec sentence(step(), map()) :: String.t()
   def sentence(:connected, %{source_host: host}),
@@ -179,11 +182,15 @@ defmodule MishkaCmsMigration.Resources.Notifiers.Steps do
 
   defp counted([]), do: gettext("nothing to move")
 
-  defp counted(outcomes),
+  defp counted(outcomes), do: Enum.map_join(outcomes, ", ", &counted_outcome/1)
+
+  defp counted_outcome({:undecided, count}),
     do:
-      Enum.map_join(outcomes, ", ", fn {outcome, count} ->
-        MigrationRun.outcome_count(outcome, count)
-      end)
+      gettext("%{number} needed your decision",
+        number: MishkaCmsCore.Localized.number(count)
+      )
+
+  defp counted_outcome({outcome, count}), do: MigrationRun.outcome_count(outcome, count)
 
   defp stepped(nil, _notification), do: :ok
 

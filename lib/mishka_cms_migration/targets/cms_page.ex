@@ -34,19 +34,22 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   `/wrdprs`, and the report says so (`"path_made_ascii"`). The old address is not redirected.
 
   The source's front page is the page whose address is `/`, and its posts page the page at the
-  address of the posts: neither is told apart, since the address says it. A page whose path the
-  site already has, such as the site's home at `/`, also when the site's page is not live, waits
-  for an admin's decision (`"slug_taken"`, `MishkaCmsMigration.MigrationItem`'s Decide…); nothing
-  is ever written over a page an admin made. Connect to the existing record makes the item that
-  page, kept as it is, and the pages under it are written as the walk writes any child. Import as
-  new with another slug writes the item as a page of its own, its path's last part followed by its
-  source id, `/contact-29` for `/contact` and `/home-2` for a front page whose slug is `home`, and
-  the report says so (`"another_slug"`). A page under one that waits is skipped, as the walk does
-  for any item whose parent was not imported (`"parent_missing"`).
-
-  A live page is also refused where the site already answers its address by a pattern, such as
-  `/blog` where the Blog's `/:lang/blog` answers: the core says which page does, and the item fails
-  with its sentence. The same page is written as a draft, which answers nothing.
+  address of the posts: neither is told apart, since the address says it. A page whose address the
+  site already answers waits for an admin's decision (`"slug_taken"`,
+  `MishkaCmsMigration.MigrationItem`'s Decide…), also when the site's page is not live: the site
+  has a page at the same path, such as its home at `/`, or one whose path captures the language
+  answers the same public address, such as the site's `/:lang/about` for `/about` or the Blog's
+  `/:lang/blog` for `/blog`. Addresses are compared as the core's own check compares them
+  (`MishkaCmsCore.Runtime.PageEditions.urls/3` with the primary language unprefixed), so the page
+  the core would refuse to put live beside the site's is asked about first, never failed. The
+  site's pages that could answer are read in one query: those at the items' paths and addresses,
+  and those whose path captures the language. Nothing is ever written over a page an admin made.
+  Connect to the existing record makes the item that page, kept as it is, and the pages under it
+  are written as the walk writes any child. Import as new with another slug writes the item as a
+  page of its own, its path's last part followed by its source id, `/contact-29` for `/contact` and
+  `/home-2` for a front page whose slug is `home`, and the report says so (`"another_slug"`). A
+  page under one that waits is skipped, as the walk does for any item whose parent was not
+  imported, naming that page (`"parent_undecided: <parent>"`).
 
   ## Status
 
@@ -148,7 +151,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   require Ash.Query
 
-  alias MishkaCmsCore.Runtime.{Page, SiteLayout}
+  alias MishkaCmsCore.Runtime.{Languages, Page, PageEditions, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
@@ -166,6 +169,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   }
 
   @drafted ["pending", "private", "password", "future"]
+  @compared "prefix_others"
 
   @impl MishkaCmsMigration.Target
   def attrs(item, context) do
@@ -186,10 +190,14 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def existing(items, context) do
-    taken = items |> Enum.map(&path/1) |> Enum.reject(&is_nil/1) |> taken(context)
+    addressed =
+      for item <- items, path = path(item), do: {item, path, addresses(item, path, context)}
 
-    for item <- items,
-        page = taken[path(item)],
+    pages =
+      addressed |> Enum.flat_map(&stored_paths(&1, context)) |> Enum.uniq() |> taken(context)
+
+    for {item, path, addresses} <- addressed,
+        page = answering(pages, path, addresses, context.site_id),
         found = held(page, Target.decision(context, item, "slug_taken")),
         into: %{},
         do: {item.source_id, found}
@@ -280,14 +288,40 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp query(%URI{path: path}) when path in [nil, "", "/"], do: nil
   defp query(%URI{query: query}), do: query
 
-  defp taken([], _context), do: %{}
-
-  defp taken(paths, context),
+  defp addresses(item, path, context),
     do:
-      Page
-      |> Ash.Query.filter(path in ^paths)
-      |> Read.call(context)
-      |> Map.new(&{&1.path, &1})
+      PageEditions.urls(
+        %{path: path, language: Editions.language(item, context), extra: %{}},
+        context.site_id,
+        @compared
+      )
+
+  defp stored_paths({_item, path, addresses}, context) do
+    primary = Languages.primary(context.site_id)
+    [path | addresses] ++ Enum.map(addresses, &prefixed(&1, primary))
+  end
+
+  defp prefixed("/", primary), do: "/" <> primary
+  defp prefixed(address, primary), do: "/" <> primary <> address
+
+  defp taken([], _context), do: []
+
+  defp taken(paths, context) do
+    [captured, globbed] = Enum.map([":", "*"], &(&1 <> Languages.capture()))
+
+    Page
+    |> Ash.Query.filter(path in ^paths or contains(path, ^captured) or contains(path, ^globbed))
+    |> Ash.Query.select([:id, :path, :language, :extra, :updated_at])
+    |> Read.call(context)
+  end
+
+  defp answering(pages, path, addresses, site_id),
+    do:
+      Enum.find(pages, &(&1.path == path)) ||
+        Enum.find(pages, &answers?(&1, addresses, site_id))
+
+  defp answers?(page, addresses, site_id),
+    do: page |> PageEditions.urls(site_id, @compared) |> Enum.any?(&(&1 in addresses))
 
   defp held(page, "keep"), do: {:connected, page}
   defp held(_page, "import"), do: nil

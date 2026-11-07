@@ -133,6 +133,20 @@ defmodule MishkaCmsMigration.Resources.Changes.CheckConnection do
     )
   end
 
+  @doc """
+  What a refusal of `source` for `reason` says to the admin, translated: the words of a reason
+  `MishkaCmsMigration.Source` names, such as "Nothing answered at this address.", else
+  "Could not connect to …" with the reason. The New import window's Next says it as the save does
+  (`MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps`).
+  """
+  @spec message(module(), term()) :: String.t()
+  def message(source, reason),
+    do:
+      Gettext.dgettext(MishkaCmsCore.Gettext, "errors", Map.get(@messages, reason, @other),
+        source: source.label(),
+        reason: MishkaCmsMigration.Report.reason(reason)
+      )
+
   defp refused_on(false), do: {InvalidAttribute, :connection}
   defp refused_on(true), do: {InvalidArgument, :file}
 end

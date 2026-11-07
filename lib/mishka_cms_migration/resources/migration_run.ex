@@ -199,18 +199,30 @@ defmodule MishkaCmsMigration.MigrationRun do
   makes an application password, as a Gervaz key carries no description of its own. A source that
   reads a file asks for no Connection: the form shows its Export file instead, a dropzone taking
   one `.xml` file of up to 100 MB (see "The source's file"), the reason a file is refused under
-  it. Under them,
-  Choices for this run is a `:key_map` over `options` with a select for the authors, the pages and
-  the post addresses, each starting at the default the `sub_field` gives it, a toggle for
-  confirming the imported users' email, on, and a toggle for the comments, off; its description says why a post's old address is redirected rather than kept. The
-  authors, confirm users, post addresses and comments are the Blog's, asked only while the Blog target each is for
+  it. The window is Gervaz's `:wizard` of four steps, run by
+  `MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps` (Next checks a step, and Where from
+  tries the connection, before it moves on): Where from, then What to bring, a `:key_map` of
+  switches, all on but the comments (`bring_choices/1`, the Blog's each only while its target is
+  installed), then Languages, a select of the site's languages (`language_choices/1`), whose empty
+  choice keeps the source's languages, then the Review. Both are arguments of `:create`, folded
+  into the run's `options` with the Advanced options
+  (`MishkaCmsMigration.Resources.Changes.Choices`). The Advanced options, a collapsed group of the
+  Review, are Choices for this run, a `:key_map` over `options` with a select for the authors, the pages
+  and the post addresses, a toggle for confirming the imported users' email, on, and a toggle for
+  each of the site's own settings WordPress brings, the title, logo and icon, on; its description
+  says why a post's old address is redirected rather than kept. A kind or setting switched off is
+  left out as the admin's own leave-out (`left_out?/3`): the first run that meets its items records
+  them as Left out by you, and the Items page brings them back. `one_language` puts every item
+  with no language of the site's in that language (`one_language/2`). The authors, confirm users,
+  post addresses and comments are the Blog's, asked only while the Blog target each is for
   is installed (`run_choices/1`). For
   a master the form asks for the site the content moves to as well (`:master_create`). Its button,
-  Check and save, creates the run, which connects to the source first, or reads its file
+  Start the dry run, creates the run, which connects to the source first, or reads its file
   (`MishkaCmsMigration.Resources.Changes.CheckConnection`): a source that does not answer or
-  refuses the user keeps the form open with the reason, and nothing is saved. Gervaz takes a
-  button's label as a string or a function of no arguments, so one label fits a connection and a
-  file alike. A run that is not given a `source_host` takes the host its source reads from the
+  refuses the user returns the window to Where from with the reason under the connection, and an
+  error flash naming the step, and nothing is saved. While it runs the button reads "Checking the
+  source…" (its `loading_label`). Gervaz takes a button's label as a string or a function of no
+  arguments, so one label fits a connection and a file alike. A run that is not given a `source_host` takes the host its source reads from the
   connection (`c:MishkaCmsMigration.Source.host/1`).
   """
 
@@ -224,9 +236,12 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   use Gettext, backend: MishkaCmsCore.Gettext
 
+  require Ash.Query
+
   import Phoenix.Component, only: [sigil_H: 2]
   import MishkaGervaz.UIAdapters.Tailwind, only: [copy_button: 1]
 
+  alias Ash.Error.Changes.InvalidAttribute
   alias MishkaCmsCore.Accounts.Checks.AccessPermissions
   alias MishkaCmsCore.Runtime.Languages
   alias MishkaCmsCore.Runtime.Resources.Validations.TenantContext
@@ -240,8 +255,10 @@ defmodule MishkaCmsMigration.MigrationRun do
     SourceFile
   }
 
-  alias MishkaCmsMigration.Resources.Validations.{Connectable, SourceInstalled, Status}
+  alias MishkaCmsMigration.Resources.Calculations.Decisions
+  alias MishkaCmsMigration.Resources.Validations.{Connectable, SiteIdle, SourceInstalled, Status}
   alias MishkaCmsMigration.Workers.Helpers.Pipeline
+  alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps
   alias MishkaGervaz.Table.Web.UrlSync
 
   # Mishka Blog is optional: its pages are linked only for the kinds its targets write.
@@ -285,21 +302,68 @@ defmodule MishkaCmsMigration.MigrationRun do
       label: dgettext_noop("mishka_gervaz", "Confirm imported users' email")
     ],
     [
-      name: :comments,
+      name: :site_title,
       type: :toggle,
-      label: dgettext_noop("mishka_gervaz", "Bring the comments too")
+      label: dgettext_noop("mishka_gervaz", "Site title")
+    ],
+    [
+      name: :site_logo,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Site logo")
+    ],
+    [
+      name: :site_icon,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Site icon (favicon)")
     ]
+  ]
+  @bring_choices [
+    [name: :bring_posts, type: :toggle, label: dgettext_noop("mishka_gervaz", "Posts")],
+    [name: :bring_pages, type: :toggle, label: dgettext_noop("mishka_gervaz", "Pages")],
+    [
+      name: :bring_media,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Pictures and files")
+    ],
+    [
+      name: :bring_terms,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Categories and tags")
+    ],
+    [
+      name: :bring_users,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "Authors and users")
+    ],
+    [name: :bring_menus, type: :toggle, label: dgettext_noop("mishka_gervaz", "Menus")],
+    [name: :comments, type: :toggle, label: dgettext_noop("mishka_gervaz", "Comments")]
   ]
 
   @choice_kinds %{
     authors: "user",
     confirm_users: "user",
     post_address: "post_redirect",
-    comments: "comment"
+    comments: "comment",
+    bring_posts: "post",
+    bring_terms: "category",
+    bring_users: "user",
+    site_title: "setting",
+    site_logo: "setting",
+    site_icon: "setting"
   }
+  @brought_kinds %{
+    "user" => :bring_users,
+    "category" => :bring_terms,
+    "tag" => :bring_terms,
+    "media" => :bring_media,
+    "page" => :bring_pages,
+    "post" => :bring_posts,
+    "menu" => :bring_menus
+  }
+  @site_settings %{"title" => :site_title, "logo" => :site_logo, "icon" => :site_icon}
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
-  @pick_site dgettext_noop("errors", "Pick the site the content moves to.")
+  @pick_site dgettext_noop("errors", "Pick a site.")
   @type_address dgettext_noop("errors", "Type the site's address, such as https://example.com.")
   @busy dgettext_noop(
           "errors",
@@ -357,6 +421,18 @@ defmodule MishkaCmsMigration.MigrationRun do
         default: false,
         validator: {MishkaCmsMigration.MigrationRun, :switch},
         derives: "validate(boolean)"
+
+      for key <- ~w(bring_users bring_terms bring_media bring_pages bring_posts bring_menus
+                    site_title site_logo site_icon)a do
+        field key, :boolean,
+          default: true,
+          validator: {MishkaCmsMigration.MigrationRun, :switch},
+          derives: "validate(boolean)"
+      end
+
+      field :one_language, :string,
+        default: nil,
+        derives: "sanitize(trim) validate(string, max_len=16)"
     end
   end
 
@@ -404,7 +480,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
       source do
         preload do
-          always [:site]
+          always [:site, :decisions]
         end
       end
 
@@ -521,7 +597,7 @@ defmodule MishkaCmsMigration.MigrationRun do
 
         column :result do
           static true
-          requires [:status, :source, :report, :progress]
+          requires [:status, :source, :report, :progress, :decisions]
           label fn -> dgettext("mishka_gervaz", "Result") end
 
           ui do
@@ -778,6 +854,50 @@ defmodule MishkaCmsMigration.MigrationRun do
           end
         end
 
+        field :bring, :key_map do
+          virtual true
+
+          default %{
+            "bring_posts" => true,
+            "bring_pages" => true,
+            "bring_media" => true,
+            "bring_terms" => true,
+            "bring_users" => true,
+            "bring_menus" => true,
+            "comments" => false
+          }
+
+          options fn state -> MishkaCmsMigration.MigrationRun.bring_choices(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "What to bring") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Switch off what you do not want: it is listed as Left out by you, and you can bring it back on the Items page. Comments are off by default: a comment by a user of the site is written as theirs, and a guest's with the name and email the guest gave."
+              )
+            end
+          end
+        end
+
+        field :language, :select do
+          virtual true
+          options fn state -> MishkaCmsMigration.MigrationRun.language_choices(state) end
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Import everything in one language") end
+            placeholder fn -> dgettext("mishka_gervaz", "Keep the source's languages") end
+
+            description fn ->
+              dgettext(
+                "mishka_gervaz",
+                "Import everything in one language, and translate or edit it later. Items the source gives in one of your site's languages keep it. The list is the languages under Settings → Languages; a language missing there answers 404, so add it first."
+              )
+            end
+          end
+        end
+
         field :options, :key_map do
           default %{"authors" => "connect", "pages" => "draft", "post_address" => "blog"}
 
@@ -789,7 +909,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Mishka Blog serves each post at /blog/<slug>. Keeping a post's WordPress address, such as /2025/12/hello/, needs the Blog to serve posts there first, so a 301 redirect from it is offered instead. Pages arrive at their old paths, as drafts or live. Comments come only with Bring the comments too, which is off by default: a comment by a user of the site is written as theirs, and a guest's with the name and email the guest gave."
+                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: every post moves to /blog/<slug>, and the redirect sends a visitor of its old WordPress address there. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
               )
             end
           end
@@ -801,17 +921,93 @@ defmodule MishkaCmsMigration.MigrationRun do
           fields [:site_id, :connection, :file]
 
           ui do
+            label fn -> dgettext("mishka_gervaz", "1 of 4: Where from") end
+            columns 1
+          end
+        end
+
+        group :bring do
+          fields [:bring]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "2 of 4: What to bring") end
+            columns 1
+          end
+        end
+
+        group :language do
+          fields [:language]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "3 of 4: Languages") end
             columns 1
           end
         end
 
         group :options do
           fields [:options]
+          collapsed true
 
           ui do
+            label fn -> dgettext("mishka_gervaz", "Advanced options") end
             columns 1
           end
         end
+      end
+
+      layout do
+        mode :wizard
+
+        step :from do
+          groups [:connection]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Where from") end
+          end
+        end
+
+        step :bring do
+          groups [:bring]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "What to bring") end
+          end
+        end
+
+        step :language do
+          groups [:language]
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Languages") end
+          end
+        end
+
+        step :review do
+          groups [:options]
+          summary true
+
+          ui do
+            label fn -> dgettext("mishka_gervaz", "Review") end
+          end
+        end
+
+        notice :start_over do
+          position :form_top
+          visible fn state -> state.dirty? end
+
+          render fn _assigns, state ->
+            ImportSteps.start_over(%{id: state.static.id, __changed__: nil})
+          end
+        end
+
+        notice :review do
+          position {:before_group, :options}
+          render fn _assigns, state -> ImportSteps.review(%{state: state, __changed__: nil}) end
+        end
+      end
+
+      events do
+        step ImportSteps
       end
 
       uploads do
@@ -824,17 +1020,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       end
 
       submit do
-        create label: fn -> dgettext("mishka_gervaz", "Check and save") end
-        cancel label: fn -> dgettext("mishka_gervaz", "Cancel") end
+        create label: fn -> dgettext("mishka_gervaz", "Start the dry run") end,
+               loading_label: fn -> dgettext("mishka_gervaz", "Checking the source…") end
+
+        cancel active: false
         position :bottom
       end
 
       presentation do
         ui_adapter MishkaCmsCoreWeb.UIAdapters.Admin
-      end
-
-      hooks do
-        on_cancel fn state -> state end
       end
     end
   end
@@ -890,7 +1084,18 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The file a source that reads one is handed: the form's staged upload"
       end
 
+      argument :bring, :map do
+        allow_nil? true
+        description "The switches of what the run brings, folded into its options"
+      end
+
+      argument :language, :string do
+        allow_nil? true
+        description "The one language every item of an unknown or unpublished language is put in"
+      end
+
       validate {TenantContext, require_master: false}
+      change MishkaCmsMigration.Resources.Changes.Choices
       change &MishkaCmsMigration.MigrationRun.take_secret/2
       change {SourceFile, step: :take}
       change CheckConnection
@@ -919,8 +1124,19 @@ defmodule MishkaCmsMigration.MigrationRun do
         description "The file a source that reads one is handed: the form's staged upload"
       end
 
+      argument :bring, :map do
+        allow_nil? true
+        description "The switches of what the run brings, folded into its options"
+      end
+
+      argument :language, :string do
+        allow_nil? true
+        description "The one language every item of an unknown or unpublished language is put in"
+      end
+
       validate {TenantContext, require_master: true}
       validate present(:site_id), message: @pick_site
+      change MishkaCmsMigration.Resources.Changes.Choices
       change &MishkaCmsMigration.MigrationRun.take_secret/2
       change {SourceFile, step: :take}
       change CheckConnection
@@ -1089,6 +1305,15 @@ defmodule MishkaCmsMigration.MigrationRun do
       change set_attribute(:status, arg(:status))
 
       description "System-internal: saves the report a job of picked items merged and puts the run back"
+    end
+
+    update :refresh_decisions do
+      accept []
+      change atomic_update(:updated_at, expr(now()))
+
+      validate {TenantContext, require_master: false}
+
+      description "Tells the runs of a source host that its items' decisions changed, so the Runs table draws their Result again"
     end
 
     update :cancel do
@@ -1333,6 +1558,14 @@ defmodule MishkaCmsMigration.MigrationRun do
     end
   end
 
+  calculations do
+    calculate :decisions, :map, Decisions do
+      public? true
+
+      description "What waits for a decision now and what an admin decided among the items of the run's source host"
+    end
+  end
+
   aggregates do
     count :created_count, :items do
       public? true
@@ -1404,6 +1637,24 @@ defmodule MishkaCmsMigration.MigrationRun do
         not Enum.any?(MishkaCmsMigration.Source.form_fields(source), &required_secret?/1)
 
   defp required_secret?(field), do: field[:name] == :secret and field[:required] == true
+
+  @doc """
+  Whether `error`, what a step of a run or an admin's choice on an item answered, refuses it only
+  because a dry run or an import of the site is running now: the run's own
+  (`MishkaCmsMigration.Resources.Validations.Status.running?/1`), another run of its site
+  (`:one_active_per_site`), or any while an item is changed
+  (`MishkaCmsMigration.Resources.Validations.SiteIdle.running?/1`). Nothing is wrong with what
+  was asked, and the same request holds once that job is done, so the Items page says it as a
+  notice, not as a failure. An error that also holds anything else is not.
+  """
+  @spec refused_while_running?(term()) :: boolean()
+  def refused_while_running?(%{errors: [_ | _] = errors}),
+    do: Enum.all?(errors, &refused_while_running?/1)
+
+  def refused_while_running?(%InvalidAttribute{field: :site_id, message: @busy}), do: true
+
+  def refused_while_running?(error),
+    do: Status.running?(error) or SiteIdle.running?(error)
 
   @doc """
   What a cancelled run's alert says: that `:cancel` deleted what the run connected with, the export
@@ -1583,6 +1834,29 @@ defmodule MishkaCmsMigration.MigrationRun do
   def kind_icon(_other), do: "hero-cube"
 
   @doc """
+  Tells the runs of `run`'s source host on its site, as `user`, that the decisions on their items
+  changed (`:refresh_decisions`): one `UPDATE` of those runs, whose broadcast makes the Runs table
+  draw their Result chips again, with what waits for a decision and what was decided now
+  (`decisions` calculation). `:ok` also when no run could be told.
+  """
+  @spec refresh_decisions(map(), map()) :: :ok
+  def refresh_decisions(%{source_host: host, site_id: site_id}, user) do
+    __MODULE__
+    |> Ash.Query.filter(source_host == ^host)
+    |> Ash.bulk_update(:refresh_decisions, %{},
+      actor: user,
+      tenant: site_id,
+      strategy: :atomic,
+      notify?: true,
+      return_records?: true,
+      return_errors?: true,
+      load: [:decisions]
+    )
+
+    :ok
+  end
+
+  @doc """
   The Runs table's Result cell for `run`, drawn in the width its column gives it: its pills and
   chips wrap onto more lines rather than widen the column.
 
@@ -1599,10 +1873,14 @@ defmodule MishkaCmsMigration.MigrationRun do
       tooltip the kind in words (`kind_label/1`). "Nothing to move" when it counted nothing, and "—" before the first
       dry run.
 
+  The waiting pill counts what waits for a decision now (`decisions`), not what the dry run
+  counted, so it reads 0 once the admin decided everything; a Decided chip (`hero-check`) beside it
+  counts the items whose waiting decision the admin answered, and is not drawn while there are none.
+
   The data the page's tests read: `data-role="run-result"` on the cell, `"run-progress"` (with
   `data-kind`, `data-done` and `data-total`), `"run-outcome"` (`data-outcome`, `data-count` and
-  `data-reason`, the shared reason as the report keeps it) and `"run-kind"` (`data-kind`,
-  `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
+  `data-reason`, the shared reason as the report keeps it), `"run-decided"` (`data-count`) and
+  `"run-kind"` (`data-kind`, `data-count`). The bar's width is one of the admin sheet's `w-[N%]` classes (0 to 100), so it
   needs no `style` attribute.
   """
   @spec result_cell(map()) :: Phoenix.LiveView.Rendered.t()
@@ -1658,6 +1936,17 @@ defmodule MishkaCmsMigration.MigrationRun do
           {outcome.number}<span class="sr-only">{"\u00a0" <> outcome.label}</span>
         </span>
       </div>
+      <div :if={@decided} class="flex flex-wrap gap-[4px]">
+        <span
+          data-role="run-decided"
+          data-count={@decided.count}
+          title={@decided.title}
+          class="inline-flex items-center gap-[3px] rounded-[20px] bg-[#eeedfb] px-[6px] py-[2px] text-[10px] font-bold whitespace-nowrap text-[#5b57d6]"
+        >
+          <MishkaCmsCore.CoreComponents.icon name="hero-check" class="size-[10px] flex-none" />
+          {@decided.number}<span class="sr-only">{"\u00a0" <> @decided.label}</span>
+        </span>
+      </div>
       <div :if={@kinds != []} class="flex flex-wrap gap-[3px]">
         <span
           :for={kind <- @kinds}
@@ -1677,12 +1966,15 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   defp result(%{status: status} = run) when status in [:dry_running, :importing],
-    do: %{progress: progress(run), outcomes: [], kinds: [], note: nil}
+    do: %{progress: progress(run), outcomes: [], decided: nil, kinds: [], note: nil}
 
-  defp result(%{report: %{kinds: kinds} = report}) do
+  defp result(%{report: %{kinds: kinds} = report} = run) do
+    decisions = decisions(run)
+
     outcomes =
       for {outcome, count} <- result_outcomes(report),
-          do: outcome_pill(outcome, count, shared_reason(report, outcome))
+          count = waiting_now(outcome, count, decisions),
+          do: outcome_pill(outcome, count, shared_reason(report, outcome, count))
 
     chips =
       for %{kind: kind} = kind_counts <- kinds,
@@ -1690,10 +1982,38 @@ defmodule MishkaCmsMigration.MigrationRun do
           count > 0,
           do: kind_chip(kind, count)
 
-    %{progress: nil, outcomes: outcomes, kinds: chips, note: nothing_to_move(outcomes)}
+    %{
+      progress: nil,
+      outcomes: outcomes,
+      decided: decided_chip(decisions),
+      kinds: chips,
+      note: nothing_to_move(outcomes)
+    }
   end
 
-  defp result(_no_report), do: %{progress: nil, outcomes: [], kinds: [], note: "—"}
+  defp result(_no_report),
+    do: %{progress: nil, outcomes: [], decided: nil, kinds: [], note: "—"}
+
+  defp decisions(%{decisions: %{waiting: _waiting, decided: _decided} = decisions}),
+    do: decisions
+
+  defp decisions(_not_loaded), do: nil
+
+  defp waiting_now(:undecided, _reported, %{waiting: waiting}), do: waiting
+  defp waiting_now(_outcome, count, _decisions), do: count
+
+  defp decided_chip(%{decided: decided}) when decided > 0 do
+    number = MishkaCmsCore.Localized.number(decided)
+
+    %{
+      count: decided,
+      number: number,
+      label: dgettext("mishka_gervaz", "decided"),
+      title: dgettext("mishka_gervaz", "%{number} decided by you", number: number)
+    }
+  end
+
+  defp decided_chip(_none), do: nil
 
   defp outcome_pill(outcome, count, reason) do
     %{
@@ -1739,6 +2059,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp shortened({text, ""}), do: text
   defp shortened({text, _rest}), do: text <> "…"
+
+  defp shared_reason(_report, :undecided, 0), do: nil
+  defp shared_reason(report, outcome, _count), do: shared_reason(report, outcome)
 
   defp shared_reason(%{entries: entries}, outcome)
        when outcome in [:skipped, :failed, :undecided] do
@@ -1843,18 +2166,20 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp kind_noun("menu"), do: dgettext("mishka_gervaz", "menus")
   defp kind_noun(kind), do: kind
 
-  defp kind_one("user"), do: dgettext("mishka_gervaz", "user")
-  defp kind_one("category"), do: dgettext("mishka_gervaz", "category")
-  defp kind_one("tag"), do: dgettext("mishka_gervaz", "tag")
-  defp kind_one("media"), do: dgettext("mishka_gervaz", "file")
-  defp kind_one("setting"), do: dgettext("mishka_gervaz", "setting")
-  defp kind_one("stylesheet"), do: dgettext("mishka_gervaz", "stylesheet")
-  defp kind_one("page"), do: dgettext("mishka_gervaz", "page")
-  defp kind_one("post"), do: dgettext("mishka_gervaz", "post")
-  defp kind_one("comment"), do: dgettext("mishka_gervaz", "comment")
-  defp kind_one("post_redirect"), do: dgettext("mishka_gervaz", "redirect")
-  defp kind_one("menu"), do: dgettext("mishka_gervaz", "menu")
-  defp kind_one(kind), do: kind
+  @doc "One item of `kind`, as a sentence names it, such as page or category."
+  @spec kind_one(String.t()) :: String.t()
+  def kind_one("user"), do: dgettext("mishka_gervaz", "user")
+  def kind_one("category"), do: dgettext("mishka_gervaz", "category")
+  def kind_one("tag"), do: dgettext("mishka_gervaz", "tag")
+  def kind_one("media"), do: dgettext("mishka_gervaz", "file")
+  def kind_one("setting"), do: dgettext("mishka_gervaz", "setting")
+  def kind_one("stylesheet"), do: dgettext("mishka_gervaz", "stylesheet")
+  def kind_one("page"), do: dgettext("mishka_gervaz", "page")
+  def kind_one("post"), do: dgettext("mishka_gervaz", "post")
+  def kind_one("comment"), do: dgettext("mishka_gervaz", "comment")
+  def kind_one("post_redirect"), do: dgettext("mishka_gervaz", "redirect")
+  def kind_one("menu"), do: dgettext("mishka_gervaz", "menu")
+  def kind_one(kind), do: kind
 
   @doc false
   def switch(field, "true"), do: {:ok, field, true}
@@ -1902,8 +2227,75 @@ defmodule MishkaCmsMigration.MigrationRun do
   @spec run_choices(map()) :: [keyword()]
   def run_choices(_state), do: Enum.filter(@run_choices, &offered?(@choice_kinds[&1[:name]]))
 
+  @doc """
+  The New import window's "What to bring" switches: posts, pages, pictures and files, categories
+  and tags, authors and users, menus and comments, each only while the target it is for is
+  installed (`MishkaCmsMigration.Target.fetch/1`), as `run_choices/1` offers its own.
+  """
+  @spec bring_choices(map()) :: [keyword()]
+  def bring_choices(_state), do: Enum.filter(@bring_choices, &offered?(@choice_kinds[&1[:name]]))
+
+  @doc """
+  The New import window's Languages select: the languages of the site the run is for, its main
+  language first (`MishkaCmsCore.Runtime.Languages.site/1`), each as `{name, code}`. Its empty
+  choice keeps the source's languages. The site is the signed-in admin's, or, for a master, the one
+  picked in the form. It reads the site's languages from the runtime settings, no query.
+  """
+  @spec language_choices(map()) :: [{String.t(), String.t()}]
+  def language_choices(state),
+    do: for(code <- state |> window_site() |> Languages.site(), do: {language_name(code), code})
+
+  defp window_site(%{form: %{params: %{"site_id" => site_id}}}) when site_id not in [nil, ""],
+    do: site_id
+
+  defp window_site(%{current_user: %{site_id: site_id}}), do: site_id
+  defp window_site(_state), do: nil
+
   defp offered?(nil), do: true
   defp offered?(kind), do: match?({:ok, _target}, MishkaCmsMigration.Target.fetch(kind))
+
+  @doc """
+  Whether the run's choices (`options`, as `MishkaCmsMigration.MigrationRun.Options`) leave the item
+  of `kind` and `source_id` out: the kinds switched off in the New import window (`bring_users`,
+  `bring_terms`, `bring_media`, `bring_pages`, `bring_posts`, `bring_menus`) and the site settings
+  switched off in its Advanced options (`site_title`, `site_logo`, `site_icon`). The Workers decide
+  it for an item no run has met; the admin's own leave-out and Bring back stay what they chose.
+  """
+  @spec left_out?(struct(), String.t(), String.t()) :: boolean()
+  def left_out?(options, "setting", source_id),
+    do: Map.get(options, Map.get(@site_settings, source_id)) == false
+
+  def left_out?(options, kind, _source_id),
+    do: Map.get(options, Map.get(@brought_kinds, kind)) == false
+
+  @doc """
+  The language code the run puts every item of an unknown language, or of one the site does not
+  publish in, in (`one_language` of its options), or `nil` when the run keeps the source's
+  languages or the code is not one of the site's (`MishkaCmsCore.Runtime.Languages.site/1`).
+  """
+  @spec one_language(struct() | map() | nil, String.t() | nil) :: String.t() | nil
+  def one_language(%{one_language: code}, site_id), do: published(code, site_id)
+  def one_language(%{"one_language" => code}, site_id), do: published(code, site_id)
+  def one_language(_options, _site_id), do: nil
+
+  defp published(code, site_id) when is_binary(code) and code != "",
+    do: if(code in Languages.site(site_id), do: code)
+
+  defp published(_none, _site_id), do: nil
+
+  @doc """
+  What the Items page says in one line for a run that put every item of an unknown or unpublished
+  language in `language` (`one_language/2`): the items it covers keep that language, and they can
+  be translated or edited later.
+  """
+  @spec one_language_words(String.t()) :: String.t()
+  def one_language_words(language),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "This run puts every item with no language of your site in %{language}. Translate or edit them later.",
+        language: language_name(language)
+      )
 
   @doc "Every outcome as a `{word, outcome}` pair, in the order the report counts them."
   @spec outcome_options() :: [{String.t(), atom()}]
@@ -2081,14 +2473,24 @@ defmodule MishkaCmsMigration.MigrationRun do
   @doc """
   Why an item was skipped or failed, or what was written otherwise than the source has it (a
   `MishkaCmsMigration.Report` entry's `reason`), as the admin reads it, each of its parts (joined by
-  `"; "`) in words. A plugin's own reason, and what a source or the CMS answered, read as they are.
+  `"; "`) in words, as one sentence: a part after the first starts in lower case, unless it starts
+  with an abbreviation such as URL. A plugin's own reason, and what a source or the CMS answered,
+  read as they are.
   Given the item's `kind`, a reason about the item itself names it: `"deleted_in_cms"` reads "This
   page was deleted in Mishka CMS after it was imported", and without a kind, as a run's summary of
   items of every kind reads it, "Deleted in Mishka CMS after it was imported".
   """
   @spec reason_label(String.t(), String.t() | nil) :: String.t()
-  def reason_label(reason, kind \\ nil),
-    do: reason |> String.split("; ") |> Enum.map_join("; ", &said(&1, kind))
+  def reason_label(reason, kind \\ nil) do
+    [first | rest] = reason |> String.split("; ") |> Enum.map(&said(&1, kind))
+    Enum.join([first | Enum.map(rest, &lower_first/1)], "; ")
+  end
+
+  defp lower_first(<<first::utf8, second::utf8, _rest::binary>> = text)
+       when first in ?A..?Z and second not in ?A..?Z,
+       do: String.downcase(<<first::utf8>>) <> binary_part(text, 1, byte_size(text) - 1)
+
+  defp lower_first(text), do: text
 
   @doc """
   What makes the links an import writes differ from the source's addresses
@@ -2125,7 +2527,63 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "Restored from the archive, as you decided")
 
   defp said("duplicate_in_source"), do: dgettext("mishka_gervaz", "Listed twice by the source")
-  defp said("parent_missing"), do: dgettext("mishka_gervaz", "Its parent was not imported")
+
+  defp said("parent_missing: " <> parent),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its parent %{parent} is not imported yet: import it first, then this one again",
+        parent: parent
+      )
+
+  defp said("parent_undecided: " <> parent),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Its parent %{parent} needs your decision: decide it and import it, then this one again",
+        parent: parent
+      )
+
+  defp said("parent_missing"),
+    do: dgettext("mishka_gervaz", "Its parent has no record in Mishka CMS yet")
+
+  defp said("ancestor_undecided: " <> above),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "%{above}, above its parent, needs your decision: decide it, then import the branch, parents first",
+        above: above
+      )
+
+  defp said("ancestor_missing: " <> above),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "%{above}, above its parent, is not imported yet: import the branch, parents first",
+        above: above
+      )
+
+  defp said("ancestor_not_listed: " <> id),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The source does not list #%{id}, above its parent: restore it there, then import the branch",
+        id: id
+      )
+
+  defp said("without_parent: " <> parent),
+    do:
+      dgettext("mishka_gervaz", "Imported without its parent %{parent}, as you decided",
+        parent: parent
+      )
+
+  defp said("parent_not_listed: " <> id),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "The source does not list its parent #%{id}: restore it there, then import this one again",
+        id: id
+      )
 
   defp said("waits_for: " <> kinds),
     do: dgettext("mishka_gervaz", "Waits until its %{kinds} are imported", kinds: nouns(kinds))
@@ -2409,7 +2867,14 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp language_name(code), do: Languages.name(code) || code
 
-  defp nouns(kinds), do: kinds |> String.split(", ") |> Enum.map(&kind_noun/1) |> Languages.join()
+  defp nouns(kinds), do: kinds |> String.split(", ") |> kind_nouns()
+
+  @doc """
+  `kinds` named together as a sentence says them, such as "pages, posts and tags", in the reader's
+  language (`MishkaCmsCore.Runtime.Languages.join/1`).
+  """
+  @spec kind_nouns([String.t()]) :: String.t()
+  def kind_nouns(kinds), do: kinds |> Enum.map(&kind_noun/1) |> Languages.join()
 
   @doc """
   What the run's PubSub notifications carry (`pub_sub`'s `transform`): the notification with the

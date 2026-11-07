@@ -107,6 +107,8 @@ defmodule MishkaCmsMigration do
       define :bring_back_item, action: :bring_back
       define :map_item, action: :choose, args: [:mapped_id]
       define :decide_item, action: :choose, args: [:decision]
+      define :decide_items, action: :decide, args: [:conflict, :decision]
+      define :items_waiting_for_decision, action: :waiting_for_decision, args: [:source_host]
     end
 
     resource MishkaCmsMigration.MigrationLog do

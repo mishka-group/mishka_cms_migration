@@ -26,8 +26,8 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
     %{site: site, admin: migration_admin!(site, @admin)}
   end
 
-  defp wordpress_run!(site, admin) do
-    %{source: "wordpress", connection: @connection, secret: "app password"}
+  defp wordpress_run!(site, admin, options \\ %{}) do
+    %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
   end
 
@@ -245,6 +245,62 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
       assert outcomes(run)["title"] == {:skipped, "edited_in_cms"}
       assert settings(site)["site.title"] == "Renamed in the CMS"
+    end
+  end
+
+  describe "a run with a site setting switched off in the New import window" do
+    test "leaves that setting out, as the admin's own leave-out, in the list and in the import",
+         %{site: site, admin: admin} do
+      run =
+        site |> wordpress_run!(admin, %{site_icon: false, site_logo: false}) |> dry_run!(admin)
+
+      assert %{
+               "title" => {:created, nil},
+               "logo" => {:skipped, "left_out_by_admin"},
+               "icon" => {:skipped, "left_out_by_admin"}
+             } = Map.take(outcomes(run), ["title", "logo", "icon"])
+
+      assert %{left_out: true, plan: :skipped, plan_reason: "left_out_by_admin"} =
+               item(site, "icon")
+
+      assert MishkaCmsMigration.MigrationItem.standing(item(site, "icon")) == :left_out
+      refute item(site, "title").left_out
+
+      import!(run, admin)
+
+      assert settings(site) == %{"site.title" => "Mishka Test Blog"}
+    end
+
+    test "can be brought back on the Items page, and a later dry run does not leave it out again",
+         %{site: site, admin: admin} do
+      run = site |> wordpress_run!(admin, %{site_icon: false}) |> dry_run!(admin)
+      assert item(site, "icon").left_out
+
+      MishkaCmsMigration.bring_back_item!(item(site, "icon"), actor: admin, tenant: site.id)
+      run = dry_run!(run, admin)
+
+      assert outcomes(run)["icon"] == {:created, nil}
+      refute item(site, "icon").left_out
+
+      run = import!(run, admin)
+      assert outcomes(run)["icon"] == {:created, nil}
+      assert settings(site)["site.favicon"] == media(site, "site-icon").relative_path
+    end
+
+    test "lists the site's settings like any item, each with Leave out and Bring back",
+         %{site: site, admin: admin} do
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+
+      for id <- ["title", "logo", "icon"] do
+        refute item(site, id).left_out
+
+        left = MishkaCmsMigration.leave_out_item!(item(site, id), actor: admin, tenant: site.id)
+        assert left.left_out
+        assert MishkaCmsMigration.MigrationItem.standing(left) == :left_out
+
+        back = MishkaCmsMigration.bring_back_item!(left, actor: admin, tenant: site.id)
+        refute back.left_out
+      end
     end
   end
 end

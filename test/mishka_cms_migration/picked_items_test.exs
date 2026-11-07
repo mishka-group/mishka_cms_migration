@@ -318,11 +318,14 @@ defmodule MishkaCmsMigration.PickedItemsTest do
                MishkaCmsMigration.import_items(run, [id], actor: admin, tenant: site.id)
 
       for step <- [&MishkaCmsMigration.import_items/3, &MishkaCmsMigration.dry_run_items/3] do
-        assert {:error, %{errors: [%{field: :status} = error]}} =
+        assert {:error, %{errors: [%{field: :status} = error]} = refused} =
                  step.(run, [id], actor: admin, tenant: site.id)
 
         assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
-                 "The run cannot do that while it is importing."
+                 "An import of this run is running. Wait until it finishes, then try again."
+
+        refute error.message =~ "%{"
+        assert MigrationRun.refused_while_running?(refused)
       end
 
       assert [%{worker: "MishkaCmsMigration.Workers.ImportWorker"}] =
@@ -330,6 +333,19 @@ defmodule MishkaCmsMigration.PickedItemsTest do
 
       assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
       assert %{outcome: :created} = item(site, "tag", "13")
+
+      dry_running =
+        run.id
+        |> MishkaCmsMigration.get_run!(actor: admin, tenant: site.id)
+        |> MishkaCmsMigration.start_dry_run!(actor: admin, tenant: site.id)
+
+      assert {:error, %{errors: [%{field: :status} = error]} = refused} =
+               MishkaCmsMigration.import_items(dry_running, [id], actor: admin, tenant: site.id)
+
+      assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
+               "A dry run of this run is running. Wait until it finishes, then try again."
+
+      assert MigrationRun.refused_while_running?(refused)
     end
   end
 
@@ -341,11 +357,13 @@ defmodule MishkaCmsMigration.PickedItemsTest do
       [id] = ids(site, [{"tag", "13"}])
 
       for step <- [&MishkaCmsMigration.import_items/3, &MishkaCmsMigration.dry_run_items/3] do
-        assert {:error, %{errors: [%{field: :items} = error]}} =
+        assert {:error, %{errors: [%{field: :items} = error]} = refused} =
                  step.(run, [id], actor: migrator, tenant: site.id)
 
         assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
                  "You may not change tags on this site."
+
+        refute MigrationRun.refused_while_running?(refused)
       end
 
       assert all_enqueued(queue: :migration) == []
@@ -389,10 +407,12 @@ defmodule MishkaCmsMigration.PickedItemsTest do
             &MishkaCmsMigration.dry_run_items(run, [id], actor: admin, tenant: &1),
             &MishkaCmsMigration.import_items(run, [id], actor: admin, tenant: &1)
           ] do
-        assert {:error, %{errors: [error]}} = step.(site.id)
+        assert {:error, %{errors: [error]} = refused} = step.(site.id)
 
         assert MishkaGervaz.Errors.translate_error(error.message, error.vars) ==
                  "This run no longer holds its WordPress password. Start a New import."
+
+        refute MigrationRun.refused_while_running?(refused)
       end
 
       assert all_enqueued(queue: :migration) == []
@@ -417,6 +437,7 @@ defmodule MishkaCmsMigration.PickedItemsTest do
           ] do
         assert {:error, error} = step.(site.id)
         assert Exception.message(error) =~ "still waiting or running"
+        assert MigrationRun.refused_while_running?(error)
       end
 
       assert MishkaCmsMigration.get_run!(done.id, actor: admin, tenant: site.id).status == :done
