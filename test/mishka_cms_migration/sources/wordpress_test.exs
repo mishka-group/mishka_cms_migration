@@ -527,7 +527,11 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       redirects = items!("post_redirect")
       posts = Map.new(recorded("posts"), &{to_string(&1["id"]), &1})
 
-      assert redirects["44"].attrs == %{"from" => "/2025/12/release-1-0-announcement/"}
+      assert redirects["44"].attrs == %{
+               "from" => "/2025/12/release-1-0-announcement/",
+               "old_from" => []
+             }
+
       assert redirects["44"].title == "Release 1.0 announcement"
       assert redirects["44"].modified_at
 

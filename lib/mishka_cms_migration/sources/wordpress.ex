@@ -177,7 +177,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
       and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
       with an address of its own; `nil` for any other, such as a draft, whose `link` is
-      `/?p=39`, an address no redirect can answer.
+      `/?p=39`, an address no redirect can answer. Its `"old_from"` are the addresses the post had
+      under its earlier slugs, WordPress's `_wp_old_slug`, each `"from"` with its slug's segment
+      written as that slug (`/2025/12/hello-world/`): a row that names its `"old_slugs"`, as the
+      export file source's do, has them; the REST API does not answer `_wp_old_slug`, so a post
+      read from it has none (`[]`).
     * menu — one menu: its `source_id` is the menu's id (`navigation-` and the post's id for a
       block menu, whose `attrs` say `"block"` and, when a classic menu has the same links,
       `"same_as"`, that menu's name), `title` its name, and `attrs` keeps its
@@ -749,7 +753,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          source_id: id,
          title: title,
          modified_at: Map.get(row, "modified_gmt"),
-         attrs: %{"from" => old_path(row)}
+         attrs: %{"from" => old_path(row), "old_from" => old_paths(old_path(row), row)}
        }}
 
   def normalize(%{"id" => id, "name" => name} = row, kind, context)
@@ -1398,6 +1402,27 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp own_path(%URI{path: "/" <> rest = path}) when rest != "", do: path
   defp own_path(_no_path), do: nil
+
+  defp old_paths("/" <> _ = path, %{"slug" => slug, "old_slugs" => [_ | _] = old_slugs})
+       when is_binary(slug) do
+    segments = String.split(path, "/")
+    current = decoded(slug)
+
+    for old_slug <- old_slugs,
+        decoded(old_slug) != current,
+        renamed = Enum.map(segments, &renamed(&1, current, old_slug)),
+        renamed != segments,
+        uniq: true,
+        do: Enum.join(renamed, "/")
+  end
+
+  defp old_paths(_no_path, _row), do: []
+
+  defp renamed(segment, current, old_slug),
+    do: segment |> decoded() |> Kernel.==(current) |> old_segment(segment, old_slug)
+
+  defp old_segment(true, _segment, old_slug), do: old_slug
+  defp old_segment(false, segment, _old_slug), do: segment
 
   defp post_type(%{"_links" => %{"up" => [%{"post_type" => type} | _]}}), do: type
   defp post_type(_row), do: nil

@@ -68,8 +68,10 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       whether it is sticky and its format;
     * comment — each `wp:comment` of an item that is not in the trash, approved or held for
       moderation, with its post, parent, author, text, status, type and dates;
-    * post_redirect — each post again, its id, title, status, address and modified time, its old
-      address being the path of its `<link>`;
+    * post_redirect — each post again, its id, title, status, slug, address and modified time, its
+      old address being the path of its `<link>`, and its `"old_slugs"`, every `_wp_old_slug` it
+      has, which WordPress keeps when a published post's slug changes and which are not kept in a
+      post's `meta`;
     * menu — each `nav_menu` term (`wp:term`, which an export may list twice) with its
       `nav_menu_item` items, whose own fields are their meta (`_menu_item_type`,
       `_menu_item_object`, `_menu_item_object_id`, `_menu_item_menu_item_parent`,
@@ -155,7 +157,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   @wpml_meta ~w(_wpml_import_language_code _wpml_import_source_language_code
                 _wpml_import_translation_group)
   @mapped_meta ~w(_thumbnail_id _wp_page_template _wp_attached_file _wp_attachment_metadata
-                  _wp_attachment_image_alt) ++ @wpml_meta
+                  _wp_attachment_image_alt _wp_old_slug) ++ @wpml_meta
 
   @indexed_media ~w(id slug link source_url alt_text media_details)
 
@@ -532,7 +534,12 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     do: [entry(type, element, conn)]
 
   defp item_rows("post", _status, element, {"post_redirect", _conn}),
-    do: [element |> posted(%{}) |> Map.take(~w(id title status link modified_gmt))]
+    do: [
+      element
+      |> posted(%{})
+      |> Map.take(~w(id title status slug link modified_gmt))
+      |> Map.put("old_slugs", old_slugs(element))
+    ]
 
   defp item_rows(type, _status, element, {"comment", _conn}), do: comments(type, element)
   defp item_rows(_type, _status, _element, _asked), do: []
@@ -891,6 +898,16 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp comment_type(type) when type in [nil, ""], do: "comment"
   defp comment_type(type), do: type
+
+  defp old_slugs(element),
+    do:
+      for(
+        meta <- Export.all(element, "wp:postmeta"),
+        text(meta, "wp:meta_key") == "_wp_old_slug",
+        slug = text(meta, "wp:meta_value"),
+        slug not in [nil, ""],
+        do: slug
+      )
 
   defp meta(element, name),
     do: Map.new(Export.all(element, name), &{text(&1, "wp:meta_key"), text(&1, "wp:meta_value")})

@@ -328,6 +328,53 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
              }
     end
 
+    @tag :tmp_dir
+    test "carry each post's earlier slugs as the addresses it had, and none in its meta",
+         %{tmp_dir: dir} do
+      path =
+        export!(dir, """
+        <item>
+          <title><![CDATA[Hello again]]></title>
+          <link>https://small.example.com/2026/02/hello-again/</link>
+          <wp:post_id>7</wp:post_id>
+          <wp:post_date>2026-02-02 10:00:00</wp:post_date>
+          <wp:post_name>hello-again</wp:post_name>
+          <wp:status>publish</wp:status>
+          <wp:post_type>post</wp:post_type>
+          <wp:postmeta>
+            <wp:meta_key>_wp_old_slug</wp:meta_key>
+            <wp:meta_value><![CDATA[hello-world]]></wp:meta_value>
+          </wp:postmeta>
+          <wp:postmeta>
+            <wp:meta_key>_wp_old_slug</wp:meta_key>
+            <wp:meta_value><![CDATA[%d8%b3%d9%84%d8%a7%d9%85]]></wp:meta_value>
+          </wp:postmeta>
+        </item>
+        <item>
+          <title><![CDATA[A draft]]></title>
+          <link>https://small.example.com/?p=8</link>
+          <wp:post_id>8</wp:post_id>
+          <wp:post_name>a-draft</wp:post_name>
+          <wp:status>draft</wp:status>
+          <wp:post_type>post</wp:post_type>
+          <wp:postmeta>
+            <wp:meta_key>_wp_old_slug</wp:meta_key>
+            <wp:meta_value><![CDATA[first-draft]]></wp:meta_value>
+          </wp:postmeta>
+        </item>
+        """)
+
+      redirects = file_items!(path, "post_redirect")
+
+      assert redirects["7"].attrs == %{
+               "from" => "/2026/02/hello-again/",
+               "old_from" => ["/2026/02/hello-world/", "/2026/02/%d8%b3%d9%84%d8%a7%d9%85/"]
+             }
+
+      assert redirects["8"].attrs == %{"from" => nil, "old_from" => []}
+      refute Map.has_key?(file_items!(path, "post")["7"].extra["meta"], "_wp_old_slug")
+    end
+
     test "carry what Rank Math and Yoast SEO kept for a post or page, their variables as the CMS's own" do
       posts = file_items!(@all, "post")
       hero = Enum.find(recorded("media"), &(&1["slug"] == "hero"))
