@@ -8,7 +8,8 @@ if Code.ensure_loaded?(MishkaBlog.Tag) do
     The `"tag"` items of a source written as the Blog's tags (`MishkaBlog.Tag`), through the
     `:create` and `:update` an admin's own tag form runs, on the run's site and as the admin who
     pressed Import: the admin needs the Blog's `admin:dashboard:blog:post`, and the Blog's own
-    rules decide the rest, such as one slug per site and how a slug is written (its `slugify`).
+    rules decide the rest, such as one slug per site and how a slug is written (the scripts of the
+    site's languages stay, Latin accents go).
 
     An item's title is the tag's name, its `"slug"` and `"description"` the tag's own (an empty
     description is none), and its parent, for a source whose tags nest, the tag's parent tag. A tag
@@ -43,7 +44,7 @@ if Code.ensure_loaded?(MishkaBlog.Tag) do
     def attrs(item, context) do
       %{
         name: item.title,
-        slug: BySlug.wanted(item, context),
+        slug: BySlug.wanted(__MODULE__, item, context),
         description: description(item.attrs["description"]),
         parent_tag_id: context.parent_id
       }
@@ -51,7 +52,8 @@ if Code.ensure_loaded?(MishkaBlog.Tag) do
     end
 
     @impl MishkaCmsMigration.Target
-    def note(item, context), do: Editions.note(item, context, BySlug.note(item, context))
+    def note(item, context),
+      do: Editions.note(item, context, BySlug.note(__MODULE__, item, context))
 
     defp description(""), do: nil
     defp description(description), do: description

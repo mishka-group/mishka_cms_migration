@@ -8,8 +8,8 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     The `"category"` items of a source written as the Blog's categories (`MishkaBlog.Collection`),
     through the `:create` and `:update` an admin's own category form runs, on the run's site and
     as the admin who pressed Import: the admin needs the Blog's `admin:dashboard:blog:post`, and
-    the Blog's own rules decide the rest, such as one slug per site and how a slug is written (its
-    `slugify`).
+    the Blog's own rules decide the rest, such as one slug per site and how a slug is written (the
+    scripts of the site's languages stay, Latin accents go).
 
     An item's title is the category's name, its `"slug"` and `"description"` the category's own
     (an empty description is none), and its parent the category's parent category: the walk writes
@@ -48,7 +48,7 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     def attrs(item, context) do
       %{
         name: item.title,
-        slug: BySlug.wanted(item, context),
+        slug: BySlug.wanted(__MODULE__, item, context),
         description: description(item.attrs["description"]),
         status: :active,
         parent_collection_id: context.parent_id
@@ -57,7 +57,8 @@ if Code.ensure_loaded?(MishkaBlog.Collection) do
     end
 
     @impl MishkaCmsMigration.Target
-    def note(item, context), do: Editions.note(item, context, BySlug.note(item, context))
+    def note(item, context),
+      do: Editions.note(item, context, BySlug.note(__MODULE__, item, context))
 
     defp description(""), do: nil
     defp description(description), do: description

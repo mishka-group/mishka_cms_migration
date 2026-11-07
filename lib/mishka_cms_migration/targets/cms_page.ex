@@ -30,8 +30,11 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   `"permalink_template"` it answers (`MishkaCmsMigration.Sources.WordPress` keeps it in `extra`)
   with the page's slug in it. The core serves only ASCII paths, so a segment that is not made of
   letters, digits and `- _ .` (a slug written in another script, which WordPress keeps
-  percent-encoded) is decoded and transliterated the way the core slugs a name, `/وردپرس` being
-  `/wrdprs`, and the report says so (`"path_made_ascii"`). The old address is not redirected.
+  percent-encoded) is decoded and written the way the core names things, Latin letters only
+  (`/Café` is `/cafe`) and the report says so (`"path_made_ascii"`). A segment with no Latin letter
+  at all (`/fa/وردپرس`) is written as `MishkaCmsMigration.Targets.Helpers.BySlug.generated/2`
+  makes it (`/fa/page-1a2b3c4d`), the same for the same segment, so the pages under it stay under
+  it and a link to it finds it. The old address is not redirected.
 
   The source's front page is the page whose address is `/`, and its posts page the page at the
   address of the posts: neither is told apart, since the address says it. A page whose address the
@@ -152,6 +155,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   require Ash.Query
 
   alias MishkaCmsCore.Runtime.{Languages, Page, PageEditions, SiteLayout}
+  alias MishkaCmsCore.Runtime.Resources.Changes.InternalName
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
@@ -381,7 +385,9 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp segment(segment), do: segment(segment, String.match?(segment, ~r/\A[A-Za-z0-9_.-]*\z/))
 
   defp segment(segment, true), do: segment
-  defp segment(segment, false), do: segment |> URI.decode() |> Slug.slugify()
+  defp segment(segment, false), do: segment |> URI.decode() |> latin()
+
+  defp latin(segment), do: InternalName.slug(segment) || BySlug.generated("page", segment)
 
   defp template(item, context),
     do:

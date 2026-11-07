@@ -30,6 +30,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   alias MishkaCmsMigration.MigrationRun.Options
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Targets.{BlogTag, PostRedirect}
+  alias MishkaCmsMigration.Targets.Helpers.BySlug
   alias MishkaCmsMigration.Test.Plugins.ContentConverter
   alias MishkaCmsMigrationWeb.Live.Admin.Dashboard.PasswordNotice
 
@@ -41,12 +42,18 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
   setup do
     stub!()
     site = create_site!()
+    persian!(site)
     %{site: site, admin: migration_admin!(site, @admin)}
   end
 
   defp wordpress_run!(site, admin, options \\ %{}) do
     %{source: "wordpress", connection: @connection, secret: "app password", options: options}
     |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+  end
+
+  defp persian!(site) do
+    forget_settings(~w(site.languages), [site.id])
+    {:ok, _} = Settings.put("site.languages", ["fa", "en"], site_id: site.id)
   end
 
   defp imported!(site, admin, options \\ %{}),
@@ -320,29 +327,59 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       assert is_nil(parent_name(collections, "Tutorials"))
     end
 
-    test "decodes a slug WordPress keeps percent-encoded before the Blog writes it", %{
+    test "keeps a Persian slug WordPress keeps percent-encoded unchanged on a Persian site", %{
       site: site,
       admin: admin
     } do
       imported!(site, admin)
 
-      assert blog(Tag, site)["وردپرس"].slug == "wrdprs"
-      assert blog(Collection, site)["آموزش‌ها"].slug == "amwzsh"
+      assert blog(Tag, site)["وردپرس"].slug == "وردپرس"
+      assert blog(Collection, site)["آموزش‌ها"].slug == "آموزش"
+      assert posts(site)["نصب وردپرس روی سرور"].slug == "نصب-وردپرس-روی-سرور"
     end
 
     test "writes them, and the posts, in the language the site leads with", %{
       site: site,
       admin: admin
     } do
-      forget_settings(~w(site.languages), [site.id])
-      {:ok, _} = Settings.put("site.languages", ["fa", "en"], site_id: site.id)
-
       imported!(site, admin)
 
       for resource <- [Collection, Tag],
           do: assert(resource |> blog(site) |> Map.values() |> Enum.all?(&(&1.language == "fa")))
 
       assert site |> posts() |> Map.values() |> Enum.map(& &1.language) |> Enum.uniq() == ["fa"]
+    end
+  end
+
+  describe "a slug as the Blog writes it" do
+    test "has its Latin accents removed, as WordPress does", %{site: site} do
+      context = %{site_id: site.id}
+
+      assert BySlug.slug(BlogTag, "Café Crème", "en", context) == "cafe-creme"
+
+      assert BySlug.slug(MishkaCmsMigration.Targets.BlogPost, "snake_case_name", "en", context) ==
+               "snake_case_name"
+    end
+
+    test "keeps the scripts of the site's languages, in the record's language", %{site: site} do
+      context = %{site_id: site.id}
+
+      assert BySlug.slug(BlogTag, "وردپرس", "fa", context) == "وردپرس"
+      assert BySlug.slug(BlogTag, "كتاب", "fa", context) == "کتاب"
+      assert BySlug.slug(BlogTag, "Привет", "fa", context) == BySlug.generated("tag", "Привет")
+    end
+
+    test "kept nothing of by the site's languages is generated, the same for the same slug", %{
+      site: site
+    } do
+      context = %{site_id: site.id}
+      forget_settings(~w(site.languages), [site.id])
+      {:ok, _} = Settings.put("site.languages", ["en"], site_id: site.id)
+
+      assert "tag-" <> hex = BySlug.slug(BlogTag, "وردپرس", "en", context)
+      assert hex =~ ~r/\A[0-9a-f]{8}\z/
+      assert BySlug.slug(BlogTag, "وردپرس", "en", context) == "tag-" <> hex
+      assert BySlug.slug(BlogTag, "وردپرس", "fa", context) == "وردپرس"
     end
   end
 
@@ -483,8 +520,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
 
     test "a slug WordPress keeps percent-encoded is matched, and made anew, as the Blog stores it",
          %{site: site, admin: admin} do
-      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "wrdprs"})
-      collection!(site, admin, %{name: "Tutorials, in Persian", slug: "amwzsh"})
+      tag = tag!(site, admin, %{name: "WordPress, in Persian", slug: "وردپرس"})
+      collection!(site, admin, %{name: "Tutorials, in Persian", slug: "آموزش"})
 
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
@@ -496,7 +533,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       run = imported!(site, admin)
 
       assert %{"20" => {:skipped, "connected"}} = outcomes(run, "tag")
-      assert blog(Collection, site)["آموزش‌ها"].slug == "amwzsh-9"
+      assert blog(Collection, site)["آموزش‌ها"].slug == "آموزش-9"
 
       post = posts(site)["نصب وردپرس روی سرور"]
       assert Enum.map(post.tenant_tags, & &1.id) == [tag.id]
@@ -1739,7 +1776,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                redirects[@release]
 
       for row <- published(),
-          do: assert(redirects[old_path(row)].to == "/blog/" <> posts[row["title"]["raw"]].slug)
+          do:
+            assert(
+              redirects[old_path(row)].to ==
+                "/blog/" <> URI.encode(posts[row["title"]["raw"]].slug, &URI.char_unreserved?/1)
+            )
 
       refute is_map_key(redirects, "/2026/03/private-team-notes")
       assert redirects(other) == %{}

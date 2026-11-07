@@ -85,7 +85,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
 
   ## The record
 
-  A file is named by its `"slug"`, made as the core slugs a name (`hero`, `وردپرس` as `wrdprs`),
+  A file is named by its `"slug"`, made as the core names a file (`Hero` as `hero`, a name with no Latin letters has none),
   with its own extension, or `media-<source id>` for a slug that leaves nothing: a source's slugs
   are unique among its files, and a name the site already has is refused by the core, failing the
   item with its sentence. Its description is its `"alt_text"`, or without one its `"caption"`, or
@@ -120,9 +120,10 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   require Ash.Query
 
   alias MishkaCmsCore.Runtime.{FileSignature, Media, MediaCategory, Redirect, Redirects}
+  alias MishkaCmsCore.Runtime.Resources.Changes.InternalName
   alias MishkaCmsMigration.{Source, Target}
   alias MishkaCmsMigration.Source.Item
-  alias MishkaCmsMigration.Targets.Helpers.{BySlug, Read, Written}
+  alias MishkaCmsMigration.Targets.Helpers.{Read, Written}
   alias MishkaGervaz.Resource.Info
 
   @schemes ["http", "https"]
@@ -480,7 +481,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp signed(false, _response), do: {:skipped, "wrong_bytes"}
 
   defp name(%Item{attrs: %{"slug" => slug}} = item) when is_binary(slug),
-    do: slug |> Slug.slugify() |> named(item)
+    do: slug |> InternalName.slug() |> named(item)
 
   defp name(item), do: named(nil, item)
 
@@ -504,7 +505,7 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   defp kept_text(text), do: String.slice(text, 0, 1000)
 
   defp folder_id(context) do
-    folder = BySlug.slug({MediaCategory, :create, :name}, context.source)
+    folder = InternalName.slug(context.source)
 
     MediaCategory
     |> Ash.Query.filter(name == ^folder and is_nil(parent_id))

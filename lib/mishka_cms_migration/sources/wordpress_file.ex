@@ -595,6 +595,13 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp labelled("", title), do: title || ""
   defp labelled(own, _title), do: own
 
+  defp slug(login) do
+    case MishkaSlug.slugify(login || "") do
+      {:ok, slug} -> slug
+      {:error, _nothing_left} -> nil
+    end
+  end
+
   defp user(element) do
     login = text(element, "wp:author_login")
 
@@ -605,7 +612,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       "first_name" => text(element, "wp:author_first_name"),
       "last_name" => text(element, "wp:author_last_name"),
       "email" => text(element, "wp:author_email"),
-      "slug" => Slug.slugify(login || "")
+      "slug" => slug(login)
     }
   end
 

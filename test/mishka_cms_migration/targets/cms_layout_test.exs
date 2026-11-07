@@ -548,6 +548,28 @@ defmodule MishkaCmsMigration.Targets.CmsLayoutTest do
       assert component(site, "nav-footer").template == own.template
     end
 
+    test "names a component from the source id when the menu's slug has no Latin letters, never failing on the name",
+         %{site: site, admin: admin} do
+      layout!(site)
+
+      stub!(%{
+        "/wp-json/wp/v2/navigation" =>
+          {"application/json",
+           Jason.encode!(
+             for post <- recorded("navigation"),
+                 do: %{post | "slug" => "%d9%81%d9%88%d8%aa%d8%b1"}
+           )}
+      })
+
+      site |> wordpress_run!(admin) |> dry_run!(admin)
+      decide!(site, admin, "component", "navigation-105")
+
+      run = imported!(site, admin)
+
+      assert {:created, _notes} = outcomes(run)["navigation-105"]
+      assert component(site, "nav-navigation-105")
+    end
+
     test "makes a second menu of the run that would take the same component name wait, never fail on the name",
          %{site: site, admin: admin} do
       layout!(site)
