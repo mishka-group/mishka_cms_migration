@@ -35,7 +35,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   The source's front page is the page whose address is `/`. Its posts page, where WordPress draws
   the list of posts and not the page, is skipped as `"posts_list_here"` while the run serves the
-  Blog's list there (the run's `posts_page` `"source"` and the source's `front_page` naming the page
+  Blog's list there (the run's `blog_pages` `"use"`, `posts_page` `"source"` and the source's `front_page` naming the page
   and its address, `MishkaCmsMigration.Targets.Helpers.BlogPages`); otherwise it is a page as any other. A page whose address the
   site already answers waits for an admin's decision (`"slug_taken"`,
   `MishkaCmsMigration.MigrationItem`'s Decide…), also when the site's page is not live: the site
@@ -213,7 +213,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   # THE SOURCE'S POSTS PAGE, where the run serves the Blog's list of posts instead
   # (`MishkaCmsMigration.Targets.Helpers.BlogPages`): WordPress draws the list there, not the page.
   defp posts_page?(%Item{source_id: id}, %{
-         options: %{posts_page: "source"},
+         options: %{posts_page: "source", blog_pages: "use"},
          front_page: %{"page_for_posts" => id, "posts_page_link" => link}
        })
        when is_binary(link),

@@ -150,9 +150,12 @@ defmodule MishkaCmsMigration.Target do
   An import may need the site set up before any item is written, such as the Blog's pages that a
   post's address comes from. `before_import/1` is handed the context `attrs/2` gets (no parent and
   no record) once an import job starts, before it walks the first kind, for each installed target
-  of a kind the job walks, in the order the source walks them; a dry run asks none. It answers
-  `:ok`, or `{:error, reason}`, which fails the job with `reason`. It runs again in every import
-  job, so it writes only what is not yet as it should be. `use` answers `:ok`.
+  of a kind the job walks, in the order the source walks them, and once a dry run of the whole run
+  starts too, whose context's `mode` is `:dry_run`: it then writes nothing and plans what the
+  import would do. It answers `:ok`, `{:ok, facts}`, facts put in the run's `extra` for its details
+  to show (what it did, or in a dry run would do), or `{:error, reason}`, which fails the job with
+  `reason`. It runs again in every import job, so it writes only what is not yet as it should be.
+  `use` answers `:ok`.
 
   ## What the CMS already holds
 
@@ -357,7 +360,7 @@ defmodule MishkaCmsMigration.Target do
   Sets up what the site needs before an import writes any item, or answers `{:error, reason}` (see
   "What the site needs first"). `use` answers `:ok`.
   """
-  @callback before_import(context()) :: :ok | {:error, term()}
+  @callback before_import(context()) :: :ok | {:ok, map()} | {:error, term()}
 
   @doc """
   What the target adds to the item's own record (`MishkaCmsMigration.MigrationItem`) when an import

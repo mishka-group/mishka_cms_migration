@@ -60,10 +60,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
   Team and أميرة حداد skipped: their parent was not imported." Nothing is read for it either.
 
   The page follows its run's broadcasts (`"migration_run:<site_id>:updated"`), keeping only its
-  status: while the run's dry run or import runs, the Decisions panel and the expanded branch
-  disable what would change an item or start a job, and say why; anything still refused, such as
-  a row action pressed then, says what the run is doing in words
-  (`MishkaCmsMigration.Resources.Validations.Status`).
+  status. It skips the run's `:refresh_decisions` broadcast, which never moves the status: this
+  page sends one while a job runs, and it carries the status read then, which the job's own
+  broadcast may have moved on from by the time it arrives. While the run's dry run or import
+  runs, the Decisions panel and the expanded branch disable what would change an item or start a
+  job, and say why; anything still refused, such as a row action pressed then, says what the run
+  is doing in words (`MishkaCmsMigration.Resources.Validations.Status`).
 
   ## Map to… and the Map view
 
@@ -257,6 +259,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Item.Index do
      |> branch_changed(notification.data)
      |> decisions_changed()}
   end
+
+  def handle_info(
+        %Phoenix.Socket.Broadcast{
+          topic: "migration_run" <> _rest,
+          payload: %Ash.Notifier.Notification{action: %{name: :refresh_decisions}}
+        },
+        socket
+      ),
+      do: {:noreply, socket}
 
   def handle_info(
         %Phoenix.Socket.Broadcast{

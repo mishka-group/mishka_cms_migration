@@ -36,6 +36,12 @@ defmodule MishkaCmsMigration.MigrationRun do
       source's posts page (its `"front_page"` facts, else the page whose address is the posts'),
       `"front"` at `/`, the id of one of the site's pages at that page's address (the page is
       archived to free it), or `"blog"` at the Blog's own `/blog`.
+    * `:blog_pages` — `"use"` (the default) uses the site's Blog pages, moved where the post
+      addresses and posts list page choices put them, and creates the missing ones there;
+      `"create"` creates the missing ones at the Blog's default `/blog/...` paths and leaves the
+      site's own where they are, so the source's addresses reach them through 301s. Either way a
+      page of the site's own at the path one would take is left alone, and that Blog page waits
+      (`MishkaCmsMigration.Targets.Helpers.BlogPages`).
     * `:confirm_users` — whether the users the authors choice creates have their email confirmed;
       `true` by default. Either way no "Confirm your email" mail is sent; a user left unconfirmed
       is confirmed later from the Users table's bulk Confirm email.
@@ -317,6 +323,18 @@ defmodule MishkaCmsMigration.MigrationRun do
       ]
     ],
     [
+      name: :blog_pages,
+      type: :select,
+      label: dgettext_noop("mishka_gervaz", "Blog pages"),
+      options: [
+        {dgettext_noop(
+           "mishka_gervaz",
+           "Use the site's Blog pages and create any that are missing"
+         ), "use"},
+        {dgettext_noop("mishka_gervaz", "Create Blog's default pages"), "create"}
+      ]
+    ],
+    [
       name: :confirm_users,
       type: :toggle,
       label: dgettext_noop("mishka_gervaz", "Confirm imported users' email")
@@ -364,6 +382,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     confirm_users: "user",
     post_address: "post_redirect",
     posts_page: "post",
+    blog_pages: "post",
     comments: "comment",
     bring_posts: "post",
     bring_terms: "category",
@@ -437,6 +456,10 @@ defmodule MishkaCmsMigration.MigrationRun do
         default: "source",
         validator: {MishkaCmsMigration.MigrationRun, :posts_page},
         derives: "sanitize(trim) validate(string, not_empty, max_len=36)"
+
+      field :blog_pages, :string,
+        default: "use",
+        derives: "sanitize(trim) validate(enum=String[use::create])"
 
       field :confirm_users, :boolean,
         default: true,
@@ -929,7 +952,8 @@ defmodule MishkaCmsMigration.MigrationRun do
             "authors" => "connect",
             "pages" => "draft",
             "post_address" => "keep",
-            "posts_page" => "source"
+            "posts_page" => "source",
+            "blog_pages" => "use"
           }
 
           options fn state -> MishkaCmsMigration.MigrationRun.run_choices(state) end
@@ -940,7 +964,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
+                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Blog pages: your site's Blog pages, with any missing ones created where the run serves posts, or the Blog's default /blog pages, which your old addresses reach through 301s. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
               )
             end
           end
@@ -2280,7 +2304,7 @@ defmodule MishkaCmsMigration.MigrationRun do
   post addresses selects and the confirm users and comments toggles, each Blog one only while the
   Blog target it is for is installed (`MishkaCmsMigration.Target.fetch/1`): Authors and Confirm
   imported users' email for `"user"`, Post addresses for
-  `"post_redirect"` and the comments for `"comment"`. A node without the Blog asks for the pages
+  `"post_redirect"`, Posts list page and Blog pages for `"post"` and the comments for `"comment"`. A node without the Blog asks for the pages
   alone.
   """
   @spec run_choices(map()) :: [keyword()]

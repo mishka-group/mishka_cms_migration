@@ -167,8 +167,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     defp own_address?(_item), do: false
 
-    defp kept?(%{options: %{post_address: "keep"}, permalinks: %{"pattern" => "/" <> _}}),
-      do: true
+    defp kept?(%{
+           options: %{post_address: "keep", blog_pages: "use"},
+           permalinks: %{"pattern" => "/" <> _}
+         }),
+         do: true
 
     defp kept?(_context), do: false
 
