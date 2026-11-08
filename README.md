@@ -87,7 +87,7 @@ Mishka CMS Migration is an extension of [Mishka CMS: Open-Source Multi-Site CMS]
 Add it from Hex, then follow [In a host](#-in-a-host):
 
 ```elixir
-{:mishka_cms_migration, "~> 0.0.2"}
+{:mishka_cms_migration, "~> 0.0.3"}
 ```
 
 Open the Migration entry in the admin sidebar, press New import, and start with a dry run.
