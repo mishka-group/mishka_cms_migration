@@ -943,6 +943,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       fact("signed_in_as", gettext("Signed in as"), extra["signed_in_as"]),
       fact("structure", gettext("Post addresses found"), structure(extra["permalinks"])),
       fact("misfits", gettext("Posts outside that shape"), misfits(extra["permalinks"])),
+      fact("blog_pages", gettext("Blog pages"), blog_pages_done(extra["blog_pages"], run.status)),
       fact("redirects", gettext("Redirects written"), redirects(run))
     ]
     |> Enum.reject(&is_nil/1)
@@ -961,6 +962,60 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
       )
 
   defp misfits(_none), do: nil
+
+  # WHAT THE RUN DID WITH THE BLOG'S PAGES, or in a dry run will do
+  # (`MishkaCmsMigration.Targets.Helpers.BlogPages`), one sentence per kind of step.
+  defp blog_pages_done([_ | _] = steps, status) do
+    by_action = Enum.group_by(steps, & &1["action"])
+
+    Enum.map_join(
+      for(
+        action <- ~w(create move taken not_allowed),
+        found = by_action[action],
+        do: {action, found}
+      ),
+      " ",
+      fn {action, found} -> step_words(action, found, status) end
+    )
+  end
+
+  defp blog_pages_done(_none, _status), do: nil
+
+  defp step_words("create", steps, :dry_run),
+    do: gettext("Creates %{paths}.", paths: shown_paths(steps, "path"))
+
+  defp step_words("create", steps, _status),
+    do: gettext("Created %{paths}.", paths: shown_paths(steps, "path"))
+
+  defp step_words("move", steps, :dry_run),
+    do: gettext("Moves %{moves}.", moves: shown_moves(steps))
+
+  defp step_words("move", steps, _status),
+    do: gettext("Moved %{moves}.", moves: shown_moves(steps))
+
+  defp step_words("taken", steps, _status),
+    do:
+      gettext("Needs your decision: %{paths} is already a page of yours; move it and run again.",
+        paths: shown_paths(steps, "path")
+      )
+
+  defp step_words("not_allowed", steps, _status),
+    do:
+      gettext("%{paths} waits for an admin who may set up the Blog's components and pages.",
+        paths: shown_paths(steps, "path")
+      )
+
+  defp shown_paths(steps, key), do: Enum.map_join(steps, ", ", &shown_path(&1[key]))
+
+  defp shown_moves(steps),
+    do:
+      Enum.map_join(steps, ", ", fn step ->
+        gettext("%{from} to %{to}", from: shown_path(step["from"]), to: shown_path(step["path"]))
+      end)
+
+  defp shown_path("/:lang"), do: "/"
+  defp shown_path("/:lang" <> path), do: path
+  defp shown_path(path), do: path
 
   defp redirects(%MigrationRun{status: :done, report: %{kinds: kinds}}) do
     case Enum.find(kinds, &(&1.kind == "post_redirect")) do
@@ -1016,6 +1071,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         words: posts_page(options.posts_page)
       },
       %{
+        key: "blog_pages",
+        label: gettext("Blog pages"),
+        value: options.blog_pages,
+        words: blog_pages(options.blog_pages)
+      },
+      %{
         key: "confirm_users",
         label: gettext("Imported users' email"),
         value: options.confirm_users,
@@ -1050,6 +1111,9 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp posts_page("blog"), do: gettext("At the Blog's /blog")
   defp posts_page("source"), do: gettext("At WordPress's posts page")
   defp posts_page(_page), do: gettext("At the address of the page you picked")
+
+  defp blog_pages("create"), do: gettext("The Blog's default /blog pages, created where missing")
+  defp blog_pages(_use), do: gettext("The site's own, with any missing ones created")
 
   defp confirm_users(true), do: gettext("Confirmed")
   defp confirm_users(_false), do: gettext("Left unconfirmed, to confirm from Users")

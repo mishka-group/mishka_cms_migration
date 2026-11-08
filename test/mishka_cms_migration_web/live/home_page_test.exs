@@ -441,7 +441,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "pages" => {defaults.pages, ["draft", "publish"]},
                "post_address" =>
                  {defaults.post_address, ["keep", "blog", "blog_without_redirects"]},
-               "posts_page" => {defaults.posts_page, ["source", "front", "blog"]}
+               "posts_page" => {defaults.posts_page, ["source", "front", "blog"]},
+               "blog_pages" => {defaults.blog_pages, ["use", "create"]}
              }
 
       for label <- [
@@ -521,6 +522,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "pages" => "draft",
                "post_address" => "blog_without_redirects",
                "posts_page" => "source",
+               "blog_pages" => "use",
                "confirm_users" => true,
                "comments" => false,
                "bring_users" => true,
@@ -1731,6 +1733,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "draft",
                "blog_without_redirects",
                "source",
+               "use",
                "true",
                "false"
              ]

@@ -19,6 +19,7 @@ defmodule MishkaCmsMigration.DataCase do
   (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
   for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), a node without
   the Blog (`without_blog!/0`, `with_blog!/0`), a site whose Blog pages are routed (`blog_routed!/1`),
+  a site routed with the pages it has (`site_routed!/1`),
   the items an import recorded (`imported_items/1`),
   and the SQL a block ran (`queries_while/1`).
 
@@ -131,7 +132,14 @@ defmodule MishkaCmsMigration.DataCase do
   """
   def blog_routed!(site) do
     MishkaBlog.Provision.ensure!(site)
+    site_routed!(site)
+  end
 
+  @doc """
+  Puts `site` and the pages it has in the routing tables, as `blog_routed!/1` does with no Blog
+  pages provisioned first.
+  """
+  def site_routed!(site) do
     :ok =
       MishkaCmsCore.Runtime.States.SiteState.save(%{
         id: site.id,

@@ -25,8 +25,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     ## Its address
 
     The Blog serves a post at its post page's path (`MishkaBlog.Address`). An import first moves the
-    site's Blog pages as the run chose (`before_import/1`,
-    `MishkaCmsMigration.Targets.Helpers.BlogPages`): with `post_address` `"keep"` the post page's
+    site's Blog pages and creates the missing ones as the run chose (`before_import/1`,
+    `MishkaCmsMigration.Targets.Helpers.BlogPages`, which a dry run plans): with `blog_pages`
+    `"use"` and `post_address` `"keep"` the post page's
     path is the source's permalink structure, so `/2026/02/hello/` is served as it was. Each post
     is written with its WordPress id as its `number`, which `/archives/:post_id` reads. A post whose
     address is a page of the site, where the page wins, waits for an admin's decision in an import

@@ -140,6 +140,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                "pages" => "publish",
                "post_address" => "keep",
                "posts_page" => "source",
+               "blog_pages" => "use",
                "confirm_users" => true,
                "comments" => false,
                "bring_users" => true,
@@ -160,6 +161,7 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                 pages: "publish",
                 post_address: "keep",
                 posts_page: "source",
+                blog_pages: "use",
                 confirm_users: true,
                 comments: false,
                 bring_posts: true,
@@ -172,7 +174,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
             {%{pages: "maybe"}, :pages},
             {%{mode: "x"}, :mode},
             {%{comments: "maybe"}, :comments},
-            {%{posts_page: "somewhere"}, :posts_page}
+            {%{posts_page: "somewhere"}, :posts_page},
+            {%{blog_pages: "somewhere"}, :blog_pages}
           ] do
         assert {:error,
                 %Ash.Error.Invalid{
