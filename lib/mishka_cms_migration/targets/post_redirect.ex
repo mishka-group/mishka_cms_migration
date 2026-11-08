@@ -61,7 +61,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     A dry run reads the records an earlier run wrote, as the import does, and the plans it recorded
     for the items it walked before this kind, so it says what the import will do: an item whose
     record it plans to write is planned as created (skipped as `"not_served"` when it writes it as
-    a draft), and one whose record it does not is skipped as the import skips it.
+    a draft, as it writes every page unless the run's `pages` is `"publish"`), and one whose record it does not is skipped as the import skips it. A record it plans
+    to write has no address yet, so with `"keep"` and a permalink structure the source's posts
+    share, the post's, category's or tag's own WordPress address is planned as `"same_address"`:
+    the import serves the record there. A term in another language than the site's first, whose
+    WordPress address carries no language, is served under its language and redirected after all.
 
     An old address the site already redirects, by a rule of an admin's own or of another source's
     run, is refused by the core's one-rule-per-address identity, and the item fails with the core's
@@ -123,19 +127,46 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     end
 
     defp found(%{attrs: %{"from" => "/" <> _}} = item, addresses, context),
-      do: addresses |> Map.get(to(item)) |> paged(item) |> moved(item, context.mode)
+      do: addresses |> Map.get(to(item)) |> paged(item) |> moved(item, context)
 
     defp found(_no_old_address, _addresses, _context), do: {:skipped, "no_old_address"}
 
-    defp moved(:not_served, _item, _mode), do: {:skipped, "not_served"}
-    defp moved(:planned, _item, :dry_run), do: nil
+    defp moved(:not_served, _item, _context), do: {:skipped, "not_served"}
 
-    defp moved(nil, %{attrs: %{"to" => %{"kind" => "post"}}}, _mode),
+    defp moved(:planned, item, %{mode: :dry_run} = context),
+      do: (own_address?(item) and kept?(context)) |> kept_planned()
+
+    defp moved(nil, %{attrs: %{"to" => %{"kind" => "post"}}}, _context),
       do: {:skipped, "post_missing"}
 
-    defp moved(nil, _item, _mode), do: {:skipped, "not_imported"}
-    defp moved(to, %{attrs: %{"query" => nil, "from" => from}}, _mode), do: unmoved(from, to)
-    defp moved(_to, _queried, _mode), do: nil
+    defp moved(nil, _item, _context), do: {:skipped, "not_imported"}
+    defp moved(to, %{attrs: %{"query" => nil, "from" => from}}, _context), do: unmoved(from, to)
+    defp moved(_to, _queried, _context), do: nil
+
+    defp kept_planned(true), do: {:skipped, "same_address"}
+    defp kept_planned(false), do: nil
+
+    # A post's, a category's or a tag's own WordPress address, which a run that keeps the source's
+    # addresses serves the record at.
+    defp own_address?(%{
+           source_id: id,
+           attrs: %{"query" => nil, "to" => %{"kind" => "post", "id" => id}}
+         }),
+         do: true
+
+    defp own_address?(%{
+           source_id: key,
+           attrs: %{"query" => nil, "to" => %{"kind" => kind, "id" => id}}
+         })
+         when kind in ["category", "tag"],
+         do: key == kind <> ":" <> id
+
+    defp own_address?(_item), do: false
+
+    defp kept?(%{options: %{post_address: "keep"}, permalinks: %{"pattern" => "/" <> _}}),
+      do: true
+
+    defp kept?(_context), do: false
 
     defp unmoved(from, to),
       do: from |> Redirects.normalize_path() |> same(Redirects.normalize_path(to))
@@ -174,12 +205,22 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       do:
         for(
           {id, reason} <- Written.planned(kind, missing, context),
-          do: {{kind, id}, reason |> to_string() |> String.contains?("draft_from_") |> drafted()}
+          do: {{kind, id}, planned_served(kind, reason, context)}
         )
 
     defp planned(_kind, _missing, _context), do: []
 
-    # A record the walk plans to write as a draft (`"draft_from_password"`) will not be served.
+    # A record the walk plans to write as a draft (`"draft_from_password"`), and any page a run that
+    # does not publish its pages writes, will not be served.
+    defp planned_served("page", reason, %{options: %{pages: "publish"}}),
+      do: draft_planned(reason)
+
+    defp planned_served("page", _reason, _draft_pages), do: :not_served
+    defp planned_served(_kind, reason, _context), do: draft_planned(reason)
+
+    defp draft_planned(reason),
+      do: reason |> to_string() |> String.contains?("draft_from_") |> drafted()
+
     defp drafted(true), do: :not_served
     defp drafted(false), do: :planned
 

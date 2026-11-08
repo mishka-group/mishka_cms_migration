@@ -1763,7 +1763,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       site: site,
       admin: admin
     } do
-      run = site |> wordpress_run!(admin) |> dry_run!(admin)
+      run = site |> wordpress_run!(admin, %{post_address: "blog"}) |> dry_run!(admin)
       unpublished = length(recorded("posts")) - length(published()) - length(behind_password())
       planned = post_outcomes(run)
 

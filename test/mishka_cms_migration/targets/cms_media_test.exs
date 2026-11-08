@@ -337,6 +337,10 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert %{"4" => hero, "30" => again} = hashes(site)
       assert hero == sha256(seeded("hero.jpg"))
       assert again == sha256(other_bytes())
+
+      # A later dry run downloads nothing, and plans the file to wait for that decision again.
+      planned = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(planned)["7"] == {:undecided, "same_file: Hero image"}
     end
 
     test "Use the original stores no second file, redirects the old address to the original and points content at it",

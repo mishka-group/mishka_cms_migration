@@ -1525,8 +1525,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "Dry run ready"
              )
 
-      assert outcomes(view) == %{"created" => 299, "skipped" => 39, "undecided" => 5}
-      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="not_chosen"]|)
+      assert outcomes(view) == %{"created" => 258, "skipped" => 80, "undecided" => 5}
+      assert has_element?(view, ~s|[data-role="run-outcome"][data-reason="same_address"]|)
 
       assert kinds(view) == %{
                "user" => 5,
@@ -1557,7 +1557,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
              }
 
       assert detailed_counts(view, "run-details-outcome", "data-outcome") ==
-               %{"created" => 299, "skipped" => 39, "undecided" => 5}
+               %{"created" => 258, "skipped" => 80, "undecided" => 5}
 
       assert has_element?(
                view,

@@ -235,12 +235,15 @@ defmodule MishkaCmsMigration.Targets.CmsPageTest do
     test "leaves out the pages under one that waits, which the walk does for any item whose parent is not imported",
          %{site: site, admin: admin} do
       create_page!(site_id: site.id, path: "/docs")
-      run = imported!(site, admin)
+      dry = site |> wordpress_run!(admin) |> dry_run!(admin)
+      run = import!(dry, admin)
 
-      assert %{
-               "27" => {:undecided, "slug_taken"},
-               "28" => {:skipped, "parent_undecided: Docs (#27)"}
-             } = outcomes(run)
+      for planned <- [dry, run] do
+        assert %{
+                 "27" => {:undecided, "slug_taken"},
+                 "28" => {:skipped, "parent_undecided: Docs (#27)"}
+               } = outcomes(planned)
+      end
 
       refute is_map_key(pages(site), "/docs/getting-started")
     end

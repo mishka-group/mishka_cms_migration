@@ -154,6 +154,25 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
       end
     end
 
+    test "a first dry run plans each page, term, post and redirect as its import leaves it", %{
+      site: site,
+      admin: admin
+    } do
+      dry = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+      planned = Map.new(dry.report.entries, &{{&1.kind, &1.source_id}, &1.outcome})
+      run = import!(dry, admin)
+
+      # A file is downloaded only in the import, and the stub serves some no bytes.
+      differ =
+        for %{kind: kind, source_id: id, outcome: outcome} <- run.report.entries,
+            kind in ~w(category tag page post post_redirect),
+            not String.starts_with?(id, "media:"),
+            planned[{kind, id}] != outcome,
+            do: {kind, id, planned[{kind, id}], outcome}
+
+      assert differ == []
+    end
+
     test "a second import moves no page again and writes no redirect again", %{
       site: site,
       admin: admin
