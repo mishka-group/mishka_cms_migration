@@ -72,13 +72,18 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       (`MishkaCmsMigration.Sources.WordPress.Addresses`): each post's `<link>`, the address it had
       under each `_wp_old_slug` (which WordPress keeps when a published post's slug changes, and
       which is not kept in a post's `meta`) and `/?p=<id>`; each published page's `/?page_id=<id>`;
-      each file's attachment page and `/?attachment_id=<id>`; each category's, tag's and author's
+      each file's attachment page, the one it had under each `_wp_old_slug`, and
+      `/?attachment_id=<id>`; each category's, tag's and author's
       archive, made from the bases the posts' addresses tell (`"permalinks"`, an export carrying
       no term address) and the category's parents, the tag's slug or the author's `slug` (an
       export does not carry WordPress's `user_nicename`, which WordPress makes of the login, lower
       case and with no character an address cannot hold, as the `slug` is made), with
-      `/?cat=<id>`, `/?tag=<slug>` and `/?author=<id>`; and the feeds and date archives of the
-      published posts;
+      `/?cat=<id>`, `/?tag=<slug>` and `/?author=<id>`, and the pages of each archive by the
+      published posts the term or author has; and the feeds, date archives and pages of the list of
+      the published posts, at the front and at the posts page. An export carries no options, so the
+      posts page is the one published page at the top level, other than the front, with no
+      content, as WordPress leaves the page it draws its list on; with none, or more than one, the
+      list is the front's alone;
     * menu — each `nav_menu` term (`wp:term`, which an export may list twice) with its
       `nav_menu_item` items, whose own fields are their meta (`_menu_item_type`,
       `_menu_item_object`, `_menu_item_object_id`, `_menu_item_menu_item_parent`,
@@ -184,6 +189,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     kits: %{},
     editions: @editions,
     published: [],
+    empty_pages: [],
     parents: %{}
   }
 
@@ -327,12 +333,28 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
 
   defp counted(found, "post", "publish", element),
     do:
-      Enum.reduce(Export.all(element, "category"), found, fn reference, found ->
-        key = {Export.attribute(reference, "domain"), Export.attribute(reference, "nicename")}
+      element
+      |> Export.all("category")
+      |> Enum.map(&{Export.attribute(&1, "domain"), Export.attribute(&1, "nicename")})
+      |> Enum.concat([{"author", text(element, "dc:creator")}])
+      |> Enum.reduce(found, fn key, found ->
         update_in(found, [:counts, key], &((&1 || 0) + 1))
       end)
 
+  defp counted(found, "page", "publish", element),
+    do: element |> empty_page?() |> empty_page(found, text(element, "link"))
+
   defp counted(found, _type, _status, _element), do: found
+
+  defp empty_page?(element),
+    do:
+      text(element, "wp:post_parent") in [nil, "0"] and
+        String.trim(text(element, "content:encoded") || "") == ""
+
+  defp empty_page(true, found, link) when is_binary(link),
+    do: update_in(found.empty_pages, &[link | &1])
+
+  defp empty_page(_with_content, found, _link), do: found
 
   defp parent_indexed(found, "wp:category", slug, parent),
     do: put_in(found, [:parents, slug], {slug, parent})
@@ -445,12 +467,21 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
        elementor: kit(found.kits),
        under: under(Map.get(rows, "/wp/v2/pages", []), home),
        published: Enum.reverse(found.published),
+       posts_page: posts_page(found.empty_pages, home),
        parents: found.parents
      }}
   end
 
   defp connected({:ok, _not_an_export}, _path), do: {:error, :unreadable_file}
+
   defp connected(refused, _path), do: refused
+
+  defp posts_page(links, home) do
+    case Enum.reject(links, &(own(&1) == home <> "/")) do
+      [link] -> link
+      _none_or_unsure -> nil
+    end
+  end
 
   # The kit made last, which an export cannot tell from the active one.
   defp kit(kits) when map_size(kits) == 0, do: %{}
@@ -527,7 +558,11 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp rows("wp:author", element, "user", _conn), do: [user(element)]
 
   defp rows("wp:author", element, "post_redirect", conn),
-    do: element |> user() |> addressed("user", conn, & &1["slug"])
+    do:
+      element
+      |> user()
+      |> Map.put("count", Map.get(conn.counts, {"author", text(element, "wp:author_login")}, 0))
+      |> addressed("user", conn, & &1["slug"])
 
   defp rows("wp:category", element, "post_redirect", conn),
     do:
@@ -549,7 +584,8 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       Addresses.archives(
         conn.published,
         conn.index["permalinks"]["structure"],
-        conn.index["home"]
+        conn.index["home"],
+        conn.posts_page
       )
 
   defp rows("wp:category", element, "category", conn), do: [term("wp:category", element, conn)]
@@ -581,7 +617,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
     do: element |> posted(%{}) |> Addresses.page()
 
   defp item_rows("attachment", _status, element, {"post_redirect", _conn}),
-    do: element |> posted(%{}) |> Addresses.media()
+    do: element |> posted(%{}) |> Map.put("old_slugs", old_slugs(element)) |> Addresses.media()
 
   defp item_rows(type, _status, element, {"comment", _conn}), do: comments(type, element)
   defp item_rows(_type, _status, _element, _asked), do: []

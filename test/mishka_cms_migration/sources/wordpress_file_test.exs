@@ -60,6 +60,18 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
     built!(WordPressFile, conn, file_rows(conn, kind, nil), kind)
   end
 
+  # What an export tells that the REST recording does not: a file's earlier slugs, and the posts
+  # page, which the recording's settings, read without the right, do not name.
+  defp export_only("post_redirect", items),
+    do:
+      for(
+        id <- ids(items),
+        String.match?(id, ~r/^media:\d+~/) or String.starts_with?(id, "archive:/blog/"),
+        do: id
+      )
+
+  defp export_only(_kind, _items), do: []
+
   defp file_rows(conn, kind, cursor) do
     assert {:ok, rows, next} = WordPressFile.list(conn, kind, cursor)
     rows ++ if(next, do: file_rows(conn, kind, next), else: [])
@@ -282,7 +294,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
         from_rest = rest_items!(kind)
         from_file = file_items!(@all, kind)
 
-        assert ids(from_file) == ids(from_rest), kind
+        assert ids(from_file) -- export_only(kind, from_file) == ids(from_rest), kind
 
         for {id, rest_item} <- from_rest do
           file_item = from_file[id]
@@ -397,6 +409,100 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       refute Map.has_key?(file_items!(path, "post")["7"].extra["meta"], "_wp_old_slug")
     end
 
+    @tag :tmp_dir
+    test "page the posts page's list and an author's archive, and keep a file's earlier attachment page",
+         %{tmp_dir: dir} do
+      page = fn id, link, parent, content ->
+        """
+        <item>
+          <link>https://small.example.com#{link}</link>
+          <content:encoded><![CDATA[#{content}]]></content:encoded>
+          <wp:post_id>#{id}</wp:post_id>
+          <wp:status>publish</wp:status>
+          <wp:post_parent>#{parent}</wp:post_parent>
+          <wp:post_type>page</wp:post_type>
+        </item>
+        """
+      end
+
+      posts =
+        for id <- 1..11 do
+          """
+          <item>
+            <link>https://small.example.com/post-#{id}/</link>
+            <dc:creator>nadia</dc:creator>
+            <wp:post_id>#{100 + id}</wp:post_id>
+            <wp:post_date>2026-02-02 10:00:00</wp:post_date>
+            <wp:post_name>post-#{id}</wp:post_name>
+            <wp:status>publish</wp:status>
+            <wp:post_type>post</wp:post_type>
+          </item>
+          """
+        end
+
+      path =
+        export!(dir, """
+        <wp:author><wp:author_id>3</wp:author_id><wp:author_login>nadia</wp:author_login></wp:author>
+        #{page.(20, "/", 0, "")}
+        #{page.(21, "/blog/", 0, "")}
+        #{page.(22, "/about/", 0, "<p>About us</p>")}
+        #{page.(23, "/about/team/", 22, "")}
+        #{Enum.join(posts)}
+        <item>
+          <link>https://small.example.com/post-1/hero/</link>
+          <wp:post_id>4</wp:post_id>
+          <wp:post_name>hero</wp:post_name>
+          <wp:status>inherit</wp:status>
+          <wp:post_type>attachment</wp:post_type>
+          <wp:postmeta>
+            <wp:meta_key>_wp_old_slug</wp:meta_key>
+            <wp:meta_value><![CDATA[hero-image]]></wp:meta_value>
+          </wp:postmeta>
+        </item>
+        """)
+
+      redirects = file_items!(path, "post_redirect")
+      list = %{"kind" => "list", "id" => nil}
+
+      assert redirects["archive:/blog/feed"].attrs["to"] == list
+      assert redirects["archive:/blog/page/2"].attrs["to"] == Map.put(list, "page", 2)
+      refute is_map_key(redirects, "archive:/about/page/2")
+
+      assert redirects["user:3/page/2"].attrs == %{
+               "from" => "/author/nadia/page/2",
+               "query" => nil,
+               "to" => %{"kind" => "user", "id" => "3", "page" => 2}
+             }
+
+      assert redirects["media:4~hero-image"].attrs == %{
+               "from" => "/post-1/hero-image/",
+               "query" => nil,
+               "to" => %{"kind" => "media", "id" => "4"}
+             }
+    end
+
+    @tag :tmp_dir
+    test "page no list but the front's when the export has no one empty page at the top",
+         %{tmp_dir: dir} do
+      page = fn id, link ->
+        """
+        <item>
+          <link>https://small.example.com#{link}</link>
+          <wp:post_id>#{id}</wp:post_id>
+          <wp:status>publish</wp:status>
+          <wp:post_parent>0</wp:post_parent>
+          <wp:post_type>page</wp:post_type>
+        </item>
+        """
+      end
+
+      path = export!(dir, page.(21, "/blog/") <> page.(22, "/news/"))
+      ids = path |> file_items!("post_redirect") |> Map.keys()
+
+      assert "archive:/feed" in ids
+      refute Enum.any?(ids, &String.starts_with?(&1, ["archive:/blog", "archive:/news"]))
+    end
+
     test "carry what Rank Math and Yoast SEO kept for a post or page, their variables as the CMS's own" do
       posts = file_items!(@all, "post")
       hero = Enum.find(recorded("media"), &(&1["slug"] == "hero"))
@@ -476,16 +582,23 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
       file = site |> file_run!(admin, @all) |> dry_run!(admin)
       pingbacks = length(recorded("comments-pingback"))
+      export_only = length(export_only("post_redirect", file_items!(@all, "post_redirect")))
 
       assert {file.status, file.source_host, file.extra["name"]} ==
                {:dry_run, rest.source_host, rest.extra["name"]}
 
       assert Enum.map(file.report.kinds, & &1.kind) == WordPressFile.kinds() -- ["stylesheet"]
 
-      assert counts(file) ==
-               counts(rest)
+      {file_redirects, file_counts} = file |> counts() |> Map.pop!("post_redirect")
+      {rest_redirects, rest_counts} = rest |> counts() |> Map.pop!("post_redirect")
+
+      assert file_counts ==
+               rest_counts
                |> Map.update!("comment", &%{&1 | skipped: &1.skipped + pingbacks})
                |> Map.update!("setting", &%{&1 | created: &1.created - 2})
+
+      assert file_redirects.created + file_redirects.skipped ==
+               rest_redirects.created + rest_redirects.skipped + export_only
 
       assert imported_items(site) == []
     end

@@ -32,10 +32,11 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     * a published page — `/?page_id=<id>` (its own address is kept as the page's path);
     * a category, a tag and an author — its archive's address, the term's or user's `link` or, for
       an export, which carries none, the one its base and slug make (`/category/tutorials/news/`
-      with its parents), its feed, each page of its archive after the first by the term's
-      `"count"` of posts (an author's count is not read, so it has none), and `/?cat=<id>`,
-      `/?tag=<slug>` or `/?author=<id>`;
-    * a file — its attachment page (its `link`) and `/?attachment_id=<id>`;
+      with its parents), its feed, each page of its archive after the first by the row's
+      `"count"` of posts (the REST API answers none for an author, so its archive has no pages
+      there), and `/?cat=<id>`, `/?tag=<slug>` or `/?author=<id>`;
+    * a file — its attachment page (its `link`), the one it had under each earlier slug, as a
+      post's (`"old_slugs"`: `/2026/02/hello/hero-image/`), and `/?attachment_id=<id>`;
     * the published posts as a whole (`archives/4`) — the site's feeds, date archives, the pages
       of its list and its sitemaps.
 
@@ -93,13 +94,21 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
       Enum.flat_map(list_pages(row["count"]), &under(row, key, from, kind, ["page/#{&1}"], &1))
   end
 
-  @doc "The addresses of a file row: its attachment page and `/?attachment_id=<id>`."
+  @doc """
+  The addresses of a file row: its attachment page, the one it had under each earlier slug and
+  `/?attachment_id=<id>`.
+  """
   @spec media(map()) :: [map()]
   def media(%{"id" => id} = row) do
     row = Map.put(row, "status", "publish")
     key = "media:#{id}"
+    from = own_link(row["link"])
 
-    [rule(row, key, own_link(row["link"]), nil, "media")] ++
+    [rule(row, key, from, nil, "media")] ++
+      for(
+        {old_slug, old} <- old_paths(from, row),
+        do: rule(row, "#{key}~#{old_slug}", old, nil, "media")
+      ) ++
       queried(row, key <> "?attachment_id", "attachment_id=#{id}", "media")
   end
 
