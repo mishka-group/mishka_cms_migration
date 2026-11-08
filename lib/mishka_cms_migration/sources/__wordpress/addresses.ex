@@ -19,8 +19,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     * `"query"` — the query string the address is only with, on `/` (`"p=35"`), or `nil`;
     * `"to"` — what it points at, `%{"kind" => kind, "id" => id}`: a `"post"`, `"page"`,
       `"category"`, `"tag"`, `"user"` or `"media"` by its WordPress id, `"list"`, the Blog's
-      list of posts, or `"sitemap"`, the site's sitemap, with no id; and `"page"`, the page of a
-      list it names (`/category/news/page/2` is the category's page 2);
+      list of posts, or `"sitemap"`, the site's sitemap, with no id; `"page"`, the page of a
+      list it names (`/category/news/page/2` is the category's page 2); and `"language"`, the
+      language of what it points at, where the row says (an export's term, its `"lang"`);
     * `"modified_gmt"` — when what it points at last changed, where the row says.
 
   What each kind of row gives:
@@ -176,10 +177,10 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
 
   defp under(row, key, from, kind, suffixes, page) do
     for suffix <- suffixes,
-        do: %{
-          rule(row, key <> "/" <> suffix, trimmed(from) <> "/" <> suffix, nil, kind)
-          | "to" => pointed(%{"kind" => kind, "id" => to_string(row["id"])}, page)
-        }
+        do:
+          row
+          |> rule(key <> "/" <> suffix, trimmed(from) <> "/" <> suffix, nil, kind)
+          |> Map.update!("to", &pointed(&1, page))
   end
 
   defp pointed(to, page) when is_integer(page), do: Map.put(to, "page", page)
@@ -223,9 +224,14 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
       "title" => title(row),
       "from" => from,
       "query" => query,
-      "to" => %{"kind" => kind, "id" => to_string(row["id"])},
+      "to" => spoken(%{"kind" => kind, "id" => to_string(row["id"])}, row["lang"]),
       "modified_gmt" => row["modified_gmt"]
     }
+
+  defp spoken(to, language) when is_binary(language) and language != "",
+    do: Map.put(to, "language", language)
+
+  defp spoken(to, _no_language), do: to
 
   defp queried(%{"status" => "publish"} = row, id, query, kind),
     do: [rule(row, id, "/", query, kind)]

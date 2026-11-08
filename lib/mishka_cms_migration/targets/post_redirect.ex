@@ -64,8 +64,12 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     a draft, as it writes every page unless the run's `pages` is `"publish"`), and one whose record it does not is skipped as the import skips it. A record it plans
     to write has no address yet, so with `"keep"` and a permalink structure the source's posts
     share, the post's, category's or tag's own WordPress address is planned as `"same_address"`:
-    the import serves the record there. A term in another language than the site's first, whose
-    WordPress address carries no language, is served under its language and redirected after all.
+    the import serves the record there. A record in a language the site serves under a prefix
+    (`MishkaCmsCore.Runtime.Languages.url/3`, `/fa`), whose WordPress address does not start with
+    it, such as an export's Persian term at `/category/safar/`, is served under its language
+    (`/fa/category/safar`) and redirected after all: its language is the one the item's `"to"`
+    names, else the one the import writes it in
+    (`MishkaCmsMigration.Targets.Helpers.Editions.language/2`).
 
     An old address the site already redirects, by a rule of an admin's own or of another source's
     run, is refused by the core's one-rule-per-address identity, and the item fails with the core's
@@ -89,7 +93,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     alias MishkaBlog.{Address, Blogger, BlogPost, Collection, Tag}
     alias MishkaCmsCore.Runtime.{Languages, Page, Redirects}
     alias MishkaCmsMigration.Targets.CmsMedia
-    alias MishkaCmsMigration.Targets.Helpers.{BlogPages, Written}
+    alias MishkaCmsMigration.Targets.Helpers.{BlogPages, Editions, Written}
 
     @sitemap "/sitemap.xml"
 
@@ -134,7 +138,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp moved(:not_served, _item, _context), do: {:skipped, "not_served"}
 
     defp moved(:planned, item, %{mode: :dry_run} = context),
-      do: (own_address?(item) and kept?(context)) |> kept_planned()
+      do: (own_address?(item) and kept?(context) and prefixed?(item, context)) |> kept_planned()
 
     defp moved(nil, %{attrs: %{"to" => %{"kind" => "post"}}}, _context),
       do: {:skipped, "post_missing"}
@@ -167,6 +171,27 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       do: true
 
     defp kept?(_context), do: false
+
+    # Whether the WordPress address starts with the prefix the site serves the record's language
+    # under, which it holds for a language served with none.
+    defp prefixed?(%{attrs: %{"from" => from, "to" => to}} = item, context) do
+      language = Editions.language(%{item | attrs: %{"language" => to["language"]}}, context)
+
+      ("/:" <> Languages.capture())
+      |> Languages.url(%{Languages.capture() => language}, context.site_id)
+      |> served_prefix(language)
+      |> under_prefix?(Redirects.normalize_path(from))
+    end
+
+    defp served_prefix(nil, language), do: "/" <> language
+    defp served_prefix(prefix, _language), do: prefix
+
+    defp under_prefix?("/", _from), do: true
+
+    defp under_prefix?(prefix, {:ok, from}),
+      do: from == prefix or String.starts_with?(from, prefix <> "/")
+
+    defp under_prefix?(_prefix, _from), do: false
 
     defp unmoved(from, to),
       do: from |> Redirects.normalize_path() |> same(Redirects.normalize_path(to))

@@ -35,6 +35,7 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
   }
   @release "/2025/12/release-1-0-announcement"
   @persian "/2026/02/نصب-وردپرس-روی-سرور"
+  @polylang_export Path.expand("../../fixtures/wordpress/wxr/polylang.xml", __DIR__)
 
   setup do
     stub!(@posts_page)
@@ -65,6 +66,11 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
         into: %{},
         do: {entry.source_id, {entry.outcome, entry.reason}}
   end
+
+  # What a dry run and an import can both say of an item: a write's outcome, whose note only the
+  # import's write can complete, and why anything else is held.
+  defp settled(%{outcome: outcome}) when outcome in [:created, :updated], do: {outcome, nil}
+  defp settled(%{outcome: outcome, reason: reason}), do: {outcome, reason}
 
   defp rules(site) do
     for rule <- Ash.read!(Redirect, tenant: site.id, authorize?: false),
@@ -169,6 +175,32 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
             not String.starts_with?(id, "media:"),
             planned[{kind, id}] != outcome,
             do: {kind, id, planned[{kind, id}], outcome}
+
+      assert differ == []
+    end
+
+    test "a first dry run of an export plans the redirect of a Persian term's address as its import leaves it",
+         %{site: site, admin: admin} do
+      staged = Path.join(System.tmp_dir!(), "gervaz_#{System.unique_integer([:positive])}.xml")
+      File.cp!(@polylang_export, staged)
+      on_exit(fn -> File.rm(staged) end)
+
+      dry =
+        %{source: "wordpress_file", file: [%{path: staged, client_name: "export.xml"}]}
+        |> MishkaCmsMigration.create_run!(actor: admin, tenant: site.id)
+        |> dry_run!(admin)
+
+      planned = Map.new(dry.report.entries, &{{&1.kind, &1.source_id}, settled(&1)})
+      run = import!(dry, admin)
+
+      # An export gives سفر (#32) the address /category/سفر/, and the site serves it under /fa.
+      assert planned[{"post_redirect", "category:32"}] == {:created, nil}
+
+      differ =
+        for %{kind: "post_redirect", source_id: id} = entry <- run.report.entries,
+            not String.starts_with?(id, "media:"),
+            planned[{"post_redirect", id}] != settled(entry),
+            do: {id, planned[{"post_redirect", id}], settled(entry)}
 
       assert differ == []
     end

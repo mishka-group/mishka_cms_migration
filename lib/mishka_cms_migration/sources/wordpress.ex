@@ -877,7 +877,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
          source_id: id,
          title: row["title"],
          modified_at: row["modified_gmt"],
-         attrs: %{"from" => row["from"], "query" => row["query"], "to" => to}
+         attrs: %{"from" => row["from"], "query" => row["query"], "to" => spoken(to)}
        }}
 
   def normalize(%{"id" => id, "name" => name} = row, kind, context)
@@ -1005,6 +1005,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp wpml_edition({_locale, edition}), do: wpml_edition(edition)
   defp wpml_edition(%{"locale" => locale, "id" => id}), do: {locale_code(locale), id}
   defp wpml_edition(_edition), do: {nil, nil}
+
+  defp spoken(%{"language" => language} = to), do: %{to | "language" => code(language)}
+  defp spoken(to), do: to
 
   defp code(code) when is_binary(code),
     do: code |> String.trim() |> String.downcase() |> String.replace("_", "-")
