@@ -1708,6 +1708,33 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       refute has_element?(view, wait)
     end
 
+    test "a run broadcast that does not move the status, arriving after the import finished, leaves the branch's buttons enabled",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      later = polylang_run!(site, admin, run)
+      crew = crew_waits!(site, admin, later)
+      view = open!(conn, admin, later, "?items_filter_source_kind=page")
+      expand!(view, crew)
+
+      branch_click!(view, ~s|[data-role="item-branch-import-anyway"]|)
+      Phoenix.PubSub.subscribe(MishkaCmsCore.PubSub, "migration_run:#{site.id}:updated")
+      MigrationRun.refresh_decisions(later, admin)
+      run_id = later.id
+
+      assert_receive %Phoenix.Socket.Broadcast{
+                       payload: %Ash.Notifier.Notification{
+                         data: %MigrationRun{id: ^run_id, status: :importing}
+                       }
+                     } = stale
+
+      assert %{success: 1, failure: 0} = Oban.drain_queue(queue: :migration)
+      settled(view)
+      send(view.pid, stale)
+      settled(view)
+
+      refute has_element?(view, ~s|[data-role="item-branch-busy"]|)
+      assert has_element?(view, ~s|[data-role="item-branch-wait"]:not([disabled])|)
+    end
+
     test "an item whose parent the list does not hold is drawn under it in the Map view, which says it waits",
          %{conn: conn, site: site, admin: admin, run: run} do
       later = polylang_run!(site, admin, run)
