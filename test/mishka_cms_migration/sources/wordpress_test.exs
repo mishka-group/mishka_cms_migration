@@ -1383,7 +1383,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             do: {id, {entry.outcome, entry.reason}}
 
       # A published post's addresses are planned as its own plan goes: one it writes as a draft is
-      # not served, and one it does not write has no post to point at.
+      # not served, and one it does not write has no post to point at. The run keeps the WordPress
+      # addresses, so a post it writes is served at its own and only its `?p=` is redirected.
       for post <- recorded("posts"), id = to_string(post["id"]) do
         expected =
           case planned_posts[id] do
@@ -1392,8 +1393,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             _not_written -> {:skipped, "post_missing"}
           end
 
+        own = if expected == {:created, nil}, do: {:skipped, "same_address"}, else: expected
+
         case post["status"] do
-          "publish" -> assert {redirects[id], redirects[id <> "?p"]} == {expected, expected}
+          "publish" -> assert {redirects[id], redirects[id <> "?p"]} == {own, expected}
           _not_public -> assert redirects[id] == {:skipped, "no_old_address"}
         end
       end
@@ -1459,6 +1462,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:skipped, "not_served"},
                    {:skipped, "post_missing"},
                    {:skipped, "not_imported"},
+                   {:skipped, "same_address"},
                    {:skipped, "type_not_allowed"},
                    {:created, "path_made_ascii"}
                  ])
