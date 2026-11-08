@@ -596,12 +596,19 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       run: run
     } do
       view = open!(conn, admin, run)
-      skipped = Enum.find(stored(site), &(&1.outcome == :skipped and &1.reason))
 
-      filter!(view, %{"source_kind" => skipped.source_kind, "outcome" => "skipped"})
+      # A kind whose skipped items all share one reason, so whichever of them the page shows first
+      # says it.
+      {kind, [reason]} =
+        for(%{outcome: :skipped, reason: reason} = item <- stored(site), reason, do: item)
+        |> Enum.group_by(& &1.source_kind, & &1.reason)
+        |> Enum.map(fn {kind, reasons} -> {kind, Enum.uniq(reasons)} end)
+        |> Enum.sort()
+        |> Enum.find(&match?({_kind, [_one]}, &1))
 
-      assert view |> texts("item-reason") |> Enum.join(" ") =~
-               MigrationRun.reason_label(skipped.reason)
+      filter!(view, %{"source_kind" => kind, "outcome" => "skipped"})
+
+      assert view |> texts("item-reason") |> Enum.uniq() == [MigrationRun.reason_label(reason)]
     end
 
     test "shows every item of the run's source on its site, whichever run met an item last", %{
@@ -1104,7 +1111,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
 
       later = site |> later_run!(admin, run) |> dry_run!(admin)
-      view = open!(conn, admin, later, "?items_filter_source_kind=post_redirect")
+
+      view =
+        open!(
+          conn,
+          admin,
+          later,
+          "?items_filter_source_kind=post_redirect&items_filter_plan=undecided"
+        )
 
       assert plan_of(view, item) == "undecided"
       row_action!(view, "decide", item)
@@ -1126,7 +1140,14 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> Ash.destroy!(action: :permanent_destroy, tenant: site.id, authorize?: false)
 
       site |> later_run!(admin, run) |> dry_run!(admin)
-      view = open!(conn, admin, run, "?items_filter_source_kind=post_redirect")
+
+      view =
+        open!(
+          conn,
+          admin,
+          run,
+          "?items_filter_source_kind=post_redirect&items_filter_search=#{item.source_id}"
+        )
 
       assert has_element?(view, "#{item_action("import_item", item)}[data-confirm]")
       assert item_action!(view, "import_item", item) =~ "Import of the item started."

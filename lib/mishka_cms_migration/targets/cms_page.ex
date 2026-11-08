@@ -28,16 +28,15 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   path and needs nothing from the parent's record. A page that has no address of its own yet, such
   as a draft whose `"link"` is `/?page_id=30`, takes the one WordPress would give it, from the
   `"permalink_template"` it answers (`MishkaCmsMigration.Sources.WordPress` keeps it in `extra`)
-  with the page's slug in it. The core serves only ASCII paths, so a segment that is not made of
-  letters, digits and `- _ .` (a slug written in another script, which WordPress keeps
-  percent-encoded) is decoded and written the way the core names things, Latin letters only
-  (`/Café` is `/cafe`) and the report says so (`"path_made_ascii"`). A segment with no Latin letter
-  at all (`/fa/وردپرس`) is written as `MishkaCmsMigration.Targets.Helpers.BySlug.generated/2`
-  makes it (`/fa/page-1a2b3c4d`), the same for the same segment, so the pages under it stay under
-  it and a link to it finds it. The old address is not redirected.
+  with the page's slug in it. A segment WordPress keeps percent-encoded, a slug written in another
+  script, is decoded, as the core stores and matches a path
+  (`MishkaCmsCore.Runtime.Redirects.normalize_path/1`): `/fa/%D9%88...` is `/fa/وردپرس`, so the
+  page answers the address it had and its old address needs no redirect.
 
-  The source's front page is the page whose address is `/`, and its posts page the page at the
-  address of the posts: neither is told apart, since the address says it. A page whose address the
+  The source's front page is the page whose address is `/`. Its posts page, where WordPress draws
+  the list of posts and not the page, is skipped as `"posts_list_here"` while the run serves the
+  Blog's list there (the run's `posts_page` `"source"` and the source's `front_page` naming the page
+  and its address, `MishkaCmsMigration.Targets.Helpers.BlogPages`); otherwise it is a page as any other. A page whose address the
   site already answers waits for an admin's decision (`"slug_taken"`,
   `MishkaCmsMigration.MigrationItem`'s Decide…), also when the site's page is not live: the site
   has a page at the same path, such as its home at `/`, or one whose path captures the language
@@ -154,8 +153,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   require Ash.Query
 
-  alias MishkaCmsCore.Runtime.{Languages, Page, PageEditions, SiteLayout}
-  alias MishkaCmsCore.Runtime.Resources.Changes.InternalName
+  alias MishkaCmsCore.Runtime.{Languages, Page, PageEditions, Redirects, SiteLayout}
   alias MishkaCmsMigration.Source.Item
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
@@ -194,18 +192,34 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @impl MishkaCmsMigration.Target
   def existing(items, context) do
+    {listed, items} = Enum.split_with(items, &posts_page?(&1, context))
+
     addressed =
       for item <- items, path = path(item), do: {item, path, addresses(item, path, context)}
 
     pages =
       addressed |> Enum.flat_map(&stored_paths(&1, context)) |> Enum.uniq() |> taken(context)
 
-    for {item, path, addresses} <- addressed,
-        page = answering(pages, path, addresses, context.site_id),
-        found = held(page, Target.decision(context, item, "slug_taken")),
-        into: %{},
-        do: {item.source_id, found}
+    for(
+      {item, path, addresses} <- addressed,
+      page = answering(pages, path, addresses, context.site_id),
+      found = held(page, Target.decision(context, item, "slug_taken")),
+      into: %{},
+      do: {item.source_id, found}
+    )
+    |> Map.merge(Map.new(listed, &{&1.source_id, {:skipped, "posts_list_here"}}))
   end
+
+  # THE SOURCE'S POSTS PAGE, where the run serves the Blog's list of posts instead
+  # (`MishkaCmsMigration.Targets.Helpers.BlogPages`): WordPress draws the list there, not the page.
+  defp posts_page?(%Item{source_id: id}, %{
+         options: %{posts_page: "source"},
+         front_page: %{"page_for_posts" => id, "posts_page_link" => link}
+       })
+       when is_binary(link),
+       do: true
+
+  defp posts_page?(_item, _context), do: false
 
   @impl MishkaCmsMigration.Target
   def prepare(item, context, write),
@@ -224,7 +238,6 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
       [
         Editions.note(item, context),
         item |> Status.call() |> drafted(),
-        moved(item),
         BySlug.note(item, context),
         Widgets.note(item, context),
         Scripts.note(item, context),
@@ -238,7 +251,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   `html` with each link that `pages` names, an `href` as the source wrote it to the `"link"` and
   `"id"` of the page it is (`MishkaCmsMigration.Sources.WordPress`'s `pages`), pointing at the path
   the CMS serves that page at, with the link's own `?query` and `#fragment`: the path of its
-  address, in ASCII, followed by `-<id>` once an admin decided to import that page as new beside
+  address, decoded, followed by `-<id>` once an admin decided to import that page as new beside
   the site's page at that path (`"slug_taken"`), as `attrs/2` writes it. A link whose page has no
   address of its own, and every other link, is kept as it is. The admins' decisions are read from
   the pages' items (`MishkaCmsMigration.MigrationItem`) with one query, as `context`'s admin.
@@ -262,16 +275,16 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
 
   @doc """
   The path the page whose address at the source is `link` is written at, as `attrs/2` writes it:
-  the path of its address, in ASCII, followed by `-<source id>` once an admin decided to import it
+  the path of its address, decoded, followed by `-<source id>` once an admin decided to import it
   as new beside the site's page at that path (`"slug_taken"` in the `decisions` of `item`, the
   page's `MishkaCmsMigration.MigrationItem`, or `nil` for a page no run has met). `nil` for an
   address with no path of its own, such as a draft's `/?page_id=30`.
   """
   @spec written_path(String.t() | nil, map() | nil) :: String.t() | nil
   def written_path(link, %{source_id: id, source_slug: slug, decisions: decisions}),
-    do: link |> served() |> ascii() |> placed(id, slug, decisions["slug_taken"])
+    do: link |> served() |> decoded() |> placed(id, slug, decisions["slug_taken"])
 
-  def written_path(link, nil), do: link |> served() |> ascii()
+  def written_path(link, nil), do: link |> served() |> decoded()
 
   defp items(pages, context),
     do:
@@ -335,7 +348,7 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp held(_page, "import"), do: nil
   defp held(_page, nil), do: {:undecided, "slug_taken"}
 
-  defp placed("/", id, slug, "import"), do: ascii("/" <> (slug || "page") <> "-" <> id)
+  defp placed("/", id, slug, "import"), do: decoded("/" <> (slug || "page") <> "-" <> id)
   defp placed(path, id, _slug, "import") when is_binary(path), do: path <> "-" <> id
   defp placed(path, _id, _slug, _decision), do: path
 
@@ -345,14 +358,10 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp drafted(status) when status in @drafted, do: "draft_from_" <> status
   defp drafted(_status), do: nil
 
-  defp moved(item), do: moved(address(item), path(item))
-  defp moved(path, path), do: nil
-  defp moved(_address, _ascii), do: "path_made_ascii"
-
   defp noted([]), do: nil
   defp noted(notes), do: Enum.join(notes, "; ")
 
-  defp path(item), do: item |> address() |> ascii()
+  defp path(item), do: item |> address() |> decoded()
 
   defp address(%Item{attrs: attrs} = item),
     do: Enum.find_value([attrs["link"], permalink(item)], &served/1)
@@ -379,15 +388,16 @@ defmodule MishkaCmsMigration.Targets.CmsPage do
   defp root(""), do: "/"
   defp root(path), do: path
 
-  defp ascii(nil), do: nil
-  defp ascii(path), do: path |> String.split("/") |> Enum.map_join("/", &segment/1)
+  # A path as the core stores and matches it, its escapes decoded and in NFC: WordPress keeps a
+  # Persian slug percent-encoded, and the page keeps it as it reads, `/fa/وردپرس`.
+  defp decoded(nil), do: nil
 
-  defp segment(segment), do: segment(segment, String.match?(segment, ~r/\A[A-Za-z0-9_.-]*\z/))
-
-  defp segment(segment, true), do: segment
-  defp segment(segment, false), do: segment |> URI.decode() |> latin()
-
-  defp latin(segment), do: InternalName.slug(segment) || BySlug.generated("page", segment)
+  defp decoded(path) do
+    case Redirects.normalize_path(path) do
+      {:ok, decoded} -> decoded
+      :error -> path
+    end
+  end
 
   defp template(item, context),
     do:

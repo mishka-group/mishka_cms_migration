@@ -14,7 +14,9 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
 
   The job connects once with the run's connection and its opened secret
   (`MishkaCmsMigration.MigrationRun.open_secret/1`, through `MishkaCmsMigration.Source.connect/4`)
-  and reads the source's facts (`extra/1`), then
+  and, in a job of the whole run, reads the source's facts (`extra/1`), then
+  has the target of each kind it walks set up what the site needs first, in an import
+  (`c:MishkaCmsMigration.Target.before_import/1`, handed the facts just read, else the run's), then
   walks the kinds in the order the source's `kinds/0` gives them, and pages through each with
   `list/3` until the source answers no cursor. Each row is normalized into an item
   (`MishkaCmsMigration.Source.Item`), decided (`MishkaCmsMigration.Workers.Helpers.Decision`) and
@@ -246,7 +248,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
          {:ok, source} <- Source.fetch(run.source),
          {:ok, secret} <- MigrationRun.open_secret(run),
          {:ok, conn} <- Source.connect(source, run.connection, secret, telemetry),
-         extra = source.extra(conn),
+         extra = facts(source, conn, job),
          started = DateTime.utc_now(),
          {:ok, report} <-
            walk_kinds(%{
@@ -258,13 +260,16 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              source: source,
              conn: conn,
              options: options,
-             context: target_context(run, mode, context, options),
+             context: target_context(run, mode, context, options, extra),
              telemetry: telemetry
            }),
          :ok <- forget_plans(run, job, started, context) do
       {:ok, report, extra}
     end
   end
+
+  defp facts(source, conn, %{picked: nil}), do: source.extra(conn)
+  defp facts(_source, _conn, _picked), do: %{}
 
   defp forget_plans(run, %{mode: :dry_run, picked: nil}, started, context) do
     MigrationItem
@@ -285,6 +290,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
   defp forgotten(%Ash.BulkResult{errors: errors}), do: {:error, Ash.Error.to_error_class(errors)}
 
   defp walk_kinds(state) do
+    with :ok <- set_up(state), do: walked_kinds(state)
+  end
+
+  # What the targets of the kinds an import walks set up on the site first (`before_import/1`).
+  defp set_up(%{mode: :import} = state) do
+    Enum.reduce_while(kinds(state), :ok, fn kind, :ok ->
+      case MishkaCmsMigration.Target.fetch(kind) do
+        {:ok, target} -> state.context |> target.before_import() |> set_up_next()
+        {:error, :not_installed} -> {:cont, :ok}
+      end
+    end)
+  end
+
+  defp set_up(_dry_run), do: :ok
+
+  defp set_up_next(:ok), do: {:cont, :ok}
+  defp set_up_next(refused), do: {:halt, refused}
+
+  defp walked_kinds(state) do
     Enum.reduce_while(kinds(state), {:ok, Report.new()}, fn kind, {:ok, report} ->
       walk = %{
         kind: kind,
@@ -555,8 +579,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       mode: mode
     }
 
-  defp target_context(run, mode, scope, options),
-    do: %{
+  defp target_context(run, mode, scope, options, extra) do
+    facts = Map.merge(run.extra || %{}, extra)
+
+    %{
       mode: mode,
       actor: scope.actor,
       scope: scope,
@@ -568,9 +594,12 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
       parent_id: nil,
       record: nil,
       prepared: nil,
-      languages: run.extra["languages"],
+      languages: facts["languages"],
+      permalinks: facts["permalinks"],
+      front_page: facts["front_page"],
       decisions: %{}
     }
+  end
 
   defp source_context(state),
     do: %{

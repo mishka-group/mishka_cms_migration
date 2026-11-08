@@ -56,8 +56,10 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   kept on its item (`MishkaCmsMigration.MigrationItem`'s `file_hash`), and one lookup by it, made
   once the file is downloaded and checked, finds an item of the site that has the same bytes. A
   name or a size alone never does. The source lists its files oldest first, so the earlier upload
-  is the original. A dry run downloads nothing, so it cannot know: it plans every file to create
-  and says the check is made when the file is downloaded (`"same_file_checked_at_download"`).
+  is the original. A dry run downloads nothing, so it cannot know: it plans a file an earlier
+  import found to be another's, and no admin decided on, as waiting for that decision again, and
+  every other file to create, saying the check is made when the file is downloaded
+  (`"same_file_checked_at_download"`).
 
   The later attachment waits for the admin's decision in the import (`"same_file: <title of the
   original>"`, the report says `Same file as …`), with two choices:
@@ -131,8 +133,14 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
   @conflict "same_file"
 
   @impl MishkaCmsMigration.Target
-  def existing(items, context),
-    do: for(item <- items, found = refused(item, context), into: %{}, do: {item.source_id, found})
+  def existing(items, context) do
+    same = same_file_found(items, context)
+
+    for item <- items,
+        found = refused(item, context) || same[item.source_id],
+        into: %{},
+        do: {item.source_id, found}
+  end
 
   @impl MishkaCmsMigration.Target
   # sobelow_skip ["Traversal.FileModule"]
@@ -365,6 +373,25 @@ defmodule MishkaCmsMigration.Targets.CmsMedia do
          :ok <- fits(item.attrs["filesize"]),
          do: nil
   end
+
+  # A DRY RUN DOWNLOADS NOTHING, so a file an earlier import found to be another's, and that no
+  # admin has decided on, waits for that decision again, as the import will ask it. One query.
+  defp same_file_found(items, %{mode: :dry_run} = context) do
+    for found <-
+          MishkaCmsMigration.items_by_sources!(
+            context.source_host,
+            "media",
+            Enum.map(items, & &1.source_id),
+            actor: context.actor,
+            tenant: context.site_id
+          ),
+        %{outcome: :undecided, reason: @conflict <> ": " <> _ = reason} <- [found],
+        is_nil(get_in(context, [:decisions, found.source_id, @conflict])),
+        into: %{},
+        do: {found.source_id, {:undecided, reason}}
+  end
+
+  defp same_file_found(_items, _import), do: %{}
 
   defp sourced(url, host) when is_binary(url) and is_binary(host),
     do: url |> URI.parse() |> on_source(Source.url_host(%{"url" => url}) == host)

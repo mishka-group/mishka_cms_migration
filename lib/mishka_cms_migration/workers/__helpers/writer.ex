@@ -68,7 +68,10 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   failed, was never written, or the source never listed it — the item is skipped with a reason that
   names the parent and what unblocks it (`MishkaCmsMigration.Workers.Helpers.Needs.parent/2`), read
   from the parent's item this lookup already found, so it is not written out of its place, and the
-  run that writes the parent writes it too. An item an admin decided to import anyway
+  run that writes the parent writes it too. A dry run asks the same of an item it would write, once
+  its target's `waiting/2` finds nothing the item waits on itself (so every item's own conflict is
+  planned, for the admin to decide all of them at once), a parent its walk plans to create or update
+  counting as written: it plans the child as the import leaves it. An item an admin decided to import anyway
   (`MishkaCmsMigration.MigrationItem.without_parent?/1`) is written then with no parent, at the
   top level, and its note says so first (`"without_parent: <parent>"`).
 
@@ -181,16 +184,25 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   end
 
   defp planned(nil, state, item, {outcome, target, context}),
+    do: state |> parented(item, context) |> parent_planned(state, item, {outcome, target})
+
+  defp planned({waiting, reason}, state, item, _write) when waiting in [:skipped, :undecided],
+    do: entry(state, item, waiting, reason)
+
+  defp parent_planned({:ok, context, unparented}, state, item, {outcome, target}),
     do:
       entry(
         state,
         item,
         reported(outcome),
-        note(target, item, context, to_convert(item), outcome)
+        noted([unparented, note(target, item, context, to_convert(item), outcome)])
       )
 
-  defp planned({waiting, reason}, state, item, _write) when waiting in [:skipped, :undecided],
-    do: entry(state, item, waiting, reason)
+  defp parent_planned({:skipped, reason}, state, item, _plan),
+    do: entry(state, item, :skipped, reason)
+
+  defp parent_planned({:error, error}, state, item, _plan),
+    do: entry(state, item, :failed, Report.reason(error))
 
   defp settled({:ok, _record, note}, _state, item, outcome),
     do: Report.entry(item.kind, item.source_id, item.title, outcome, note)
@@ -294,6 +306,15 @@ defmodule MishkaCmsMigration.Workers.Helpers.Writer do
   defp parent_record({:ok, [%MigrationItem{target_id: id}]}, _parent, context, _without)
        when is_binary(id),
        do: {:ok, %{context | parent_id: id}, nil}
+
+  defp parent_record(
+         {:ok, [%MigrationItem{plan: plan, left_out: false}]},
+         _parent,
+         %{mode: :dry_run} = context,
+         _without
+       )
+       when plan in [:created, :updated],
+       do: {:ok, context, nil}
 
   defp parent_record({:ok, items}, parent, context, true),
     do: {:ok, context, "without_parent: " <> Needs.parent_name(List.first(items), parent)}

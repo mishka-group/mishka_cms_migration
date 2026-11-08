@@ -11,8 +11,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     * The head says where the run is (`MishkaCmsMigration.MigrationRun.status_label/1`), what the
       report it shows came from and when that finished: the import of a run that is done, its last
       dry run otherwise. Under it, how many items the source listed, a bar of what came of them and
-      a pill for each outcome counted more than none of
-      (`MishkaCmsMigration.MigrationRun.result_outcomes/1`), with the icon and colours of the row's
+      a pill for each outcome counted more than none of, what needs a decision counted as the
+      Items page's Decisions panel counts it (`MishkaCmsMigration.MigrationRun.outcomes_now/1`), with the icon and colours of the row's
       Result pills (`outcome_icon/1`, `outcome_class/1`). A failed run says why it stopped, in
       words for the reasons a source and the job give (`MishkaCmsMigration.Report.reason/1`) and
       as it is for any other.
@@ -34,7 +34,10 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     * A cancelled run says so, in the alert the Items page shows
       (`MishkaCmsMigration.MigrationRun.cancelled_words/1`).
     * What the source said of itself when the run connected (`extra`: a WordPress site's name, its
-      address, which opens in a new tab, its timezone and who signed in) and the admin's choices
+      address, which opens in a new tab, its timezone, who signed in, the shape its post addresses
+      share and how many posts are outside it, `extra`'s `"permalinks"`), how many redirects a done
+      import wrote or kept up to date (its report's `"post_redirect"` created and updated), and the
+      admin's choices
       (`options`, read with `MishkaCmsMigration.MigrationRun.Options.builder/1`), in words.
 
   A run waiting for its first dry run says so, what a dry run reads and where to start one. A run
@@ -259,7 +262,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         <.bar counts={@report.counts} class="h-[8px]" />
         <div data-role="run-details-outcomes" class="mt-3 flex flex-wrap gap-[6px]">
           <.outcome_pill
-            :for={{outcome, count} <- MigrationRun.result_outcomes(@report)}
+            :for={{outcome, count} <- MigrationRun.outcomes_now(%{@run | report: @report})}
             role="run-details-outcome"
             outcome={outcome}
             count={count}
@@ -633,7 +636,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         title={gettext("About the source")}
         subtitle={@source}
       />
-      <dl class="m-0 grid gap-y-2.5">
+      <dl class="m-0 grid grid-cols-[minmax(0,1fr)] gap-y-2.5">
         <div
           :for={fact <- @facts}
           data-role="run-details-fact"
@@ -653,7 +656,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
               <.icon name="hero-arrow-top-right-on-square" class="size-[12px] flex-none" />
               <span class="sr-only">{gettext("(opens in a new tab)")}</span>
             </a>
-            <span :if={!fact.href} class="block truncate" title={fact.value}>{fact.value}</span>
+            <span :if={!fact.href} class="block wrap-anywhere">{fact.value}</span>
           </dd>
         </div>
       </dl>
@@ -932,15 +935,41 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp stopped_because(nil, _run), do: gettext("The job stopped without saying why.")
   defp stopped_because(reason, _run), do: reason
 
-  defp facts(%MigrationRun{extra: extra, source_host: host}) do
+  defp facts(%MigrationRun{extra: extra, source_host: host} = run) do
     [
       fact("name", gettext("Site"), extra["name"]),
       address(extra["home"], host),
       fact("timezone", gettext("Timezone"), extra["timezone"]),
-      fact("signed_in_as", gettext("Signed in as"), extra["signed_in_as"])
+      fact("signed_in_as", gettext("Signed in as"), extra["signed_in_as"]),
+      fact("structure", gettext("Post addresses found"), structure(extra["permalinks"])),
+      fact("misfits", gettext("Posts outside that shape"), misfits(extra["permalinks"])),
+      fact("redirects", gettext("Redirects written"), redirects(run))
     ]
     |> Enum.reject(&is_nil/1)
   end
+
+  defp structure(%{"structure" => structure}) when is_binary(structure), do: structure
+  defp structure(%{"posts" => posts}) when posts > 0, do: gettext("No shape the posts share")
+  defp structure(_none), do: nil
+
+  defp misfits(%{"misfits" => [_ | _] = misfits}),
+    do:
+      ngettext(
+        "%{count} post, redirected to its new address",
+        "%{count} posts, each redirected to its new address",
+        length(misfits)
+      )
+
+  defp misfits(_none), do: nil
+
+  defp redirects(%MigrationRun{status: :done, report: %{kinds: kinds}}) do
+    case Enum.find(kinds, &(&1.kind == "post_redirect")) do
+      nil -> nil
+      counts -> Integer.to_string(counts.created + counts.updated)
+    end
+  end
+
+  defp redirects(_not_imported), do: nil
 
   defp fact(key, label, value) when is_binary(value) and value != "",
     do: %{key: key, label: label, value: value, href: nil}
@@ -981,6 +1010,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         words: post_address(options.post_address)
       },
       %{
+        key: "posts_page",
+        label: gettext("Posts list page"),
+        value: options.posts_page,
+        words: posts_page(options.posts_page)
+      },
+      %{
         key: "confirm_users",
         label: gettext("Imported users' email"),
         value: options.confirm_users,
@@ -1006,7 +1041,15 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
   defp post_address("blog_without_redirects"),
     do: gettext("Under /blog, with no redirect from the old addresses")
 
-  defp post_address(_blog), do: gettext("Under /blog, with a redirect from each old address")
+  defp post_address("blog"), do: gettext("Under /blog, with a redirect from each old address")
+
+  defp post_address(_keep),
+    do: gettext("At their WordPress addresses, with a redirect from each one that moved")
+
+  defp posts_page("front"), do: gettext("At the front page /")
+  defp posts_page("blog"), do: gettext("At the Blog's /blog")
+  defp posts_page("source"), do: gettext("At WordPress's posts page")
+  defp posts_page(_page), do: gettext("At the address of the page you picked")
 
   defp confirm_users(true), do: gettext("Confirmed")
   defp confirm_users(_false), do: gettext("Left unconfirmed, to confirm from Users")

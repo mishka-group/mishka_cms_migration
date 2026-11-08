@@ -224,8 +224,9 @@ defmodule MishkaCmsMigration.Source do
 
   @doc """
   Facts about the source a run keeps in its `extra` (`MishkaCmsMigration.MigrationRun`), such as a
-  WordPress site's version and plugins. The job asks right after `connect/2`, before it walks a
-  kind, and the run keeps the answer when it finishes. `use` answers `%{}`.
+  WordPress site's version and plugins. It is asked when a run is created, right after
+  `connect/2`, and again by a job of the whole run before it walks a kind, and the run keeps the
+  answer when that job finishes; a job of picked items does not ask. `use` answers `%{}`.
   """
   @callback extra(conn()) :: map()
 

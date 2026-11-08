@@ -221,7 +221,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.Index do
 
   defp expand(socket, id) do
     user = socket.assigns.current_user
-    id |> MigrationRun.fetch(user) |> expanded(user)
+    id |> MigrationRun.fetch(user, load: [:decisions]) |> expanded(user)
     assign(socket, :expanded_id, id)
   end
 

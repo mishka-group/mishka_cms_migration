@@ -22,6 +22,18 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     language the site does not publish in waits for an admin's decision, and so does one whose
     language a source that runs a language plugin does not say, in the dry run too.
 
+    ## Its address
+
+    The Blog serves a post at its post page's path (`MishkaBlog.Address`). An import first moves the
+    site's Blog pages as the run chose (`before_import/1`,
+    `MishkaCmsMigration.Targets.Helpers.BlogPages`): with `post_address` `"keep"` the post page's
+    path is the source's permalink structure, so `/2026/02/hello/` is served as it was. Each post
+    is written with its WordPress id as its `number`, which `/archives/:post_id` reads. A post whose
+    address is a page of the site, where the page wins, waits for an admin's decision in an import
+    (`"address_taken"`, the Blog's own `MishkaBlog.Resources.Validations.FreeAddress` asked before
+    the write, from memory): Import it with another slug writes `<slug>-<id>` (noted
+    `"another_slug"`), and Leave out leaves it out. A dry run, which moves no page, does not ask.
+
     ## Status and dates
 
     Its `"status"` and `"date_gmt"` (UTC) decide the post's:
@@ -72,7 +84,9 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     (`MishkaCmsMigration.Targets.Helpers.BySlug.slug/4`) in the post's own language, and
     keeps its `#fragment`: `http://old.example/2025/12/hello/#more` becomes `/blog/hello#more`.
     It is the address the run writes the post at, so a post that links to one listed after it
-    points at it too. Its `"pages"` name the links of its content that point at a page of the
+    points at it too. Where the post page's address needs more than the slug, such as
+    `/:year/:monthnum/:slug`, the link keeps the path the source gave it, on this site
+    (`/2025/12/hello/#more`), which the post is served at or its redirect answers. Its `"pages"` name the links of its content that point at a page of the
     source, and each points at the path that page is written at instead, keeping its `?query` and
     `#fragment` (`MishkaCmsMigration.Targets.CmsPage.relinked/3`): `http://old.example/contact/` is
     `/contact`, or `/contact-29` once an admin decided to import that page as new beside the
@@ -147,12 +161,14 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       create: :create,
       update: :update
 
-    alias MishkaBlog.Provision
+    alias MishkaBlog.Resources.Validations.FreeAddress
     alias MishkaCmsCore.Runtime.Languages
     alias MishkaCmsMigration.Source.Item
+    alias MishkaCmsMigration.Target
     alias MishkaCmsMigration.Targets.{CmsMedia, CmsPage}
 
     alias MishkaCmsMigration.Targets.Helpers.{
+      BlogPages,
       BySlug,
       ContentChecks,
       Editions,
@@ -164,6 +180,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     }
 
     @drafted ["pending", "private", "password"]
+    @address_taken "address_taken"
 
     @impl MishkaCmsMigration.Target
     def attrs(item, context) do
@@ -175,7 +192,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       |> Map.merge(Editions.attrs(item, context, MishkaBlog.BlogPost))
       |> Map.merge(%{
         title: item.title,
-        slug: BySlug.slug(__MODULE__, slug(item), language, context),
+        number: number(item.source_id),
+        slug:
+          __MODULE__
+          |> BySlug.slug(slug(item), language, context)
+          |> another(item, Target.decision(context, item, @address_taken)),
         content:
           item
           |> Item.html()
@@ -194,20 +215,71 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       })
     end
 
+    @impl MishkaCmsMigration.Target
+    def before_import(context), do: BlogPages.call(context)
+
+    @impl MishkaCmsMigration.Target
+    def existing(items, %{mode: :import} = context),
+      do:
+        for(
+          item <- items,
+          taken?(item, context),
+          found = address_taken(Target.decision(context, item, @address_taken)),
+          into: %{},
+          do: {item.source_id, found}
+        )
+
+    def existing(_items, _dry_run), do: %{}
+
+    defp taken?(item, context) do
+      language = Editions.language(item, context)
+
+      changes = %{
+        slug: BySlug.slug(__MODULE__, slug(item), language, context),
+        language: language,
+        published_at: item |> Status.call() |> published_at(date(item.attrs["date_gmt"])),
+        number: number(item.source_id)
+      }
+
+      MishkaBlog.BlogPost
+      |> Ash.Changeset.new()
+      |> Ash.Changeset.set_tenant(context.site_id)
+      |> Ash.Changeset.force_change_attributes(changes)
+      |> FreeAddress.validate([message: @address_taken], %{})
+      |> Kernel.!=(:ok)
+    end
+
+    defp published_at("publish", date), do: date
+    defp published_at(_unpublished, _date), do: nil
+
+    defp address_taken("import"), do: nil
+    defp address_taken(nil), do: {:undecided, @address_taken}
+
+    defp another(slug, item, "import") when is_binary(slug), do: slug <> "-" <> item.source_id
+    defp another(slug, _item, _decision), do: slug
+
+    defp number(source_id) do
+      case Integer.parse(to_string(source_id)) do
+        {number, ""} when number > 0 -> number
+        _not_a_number -> nil
+      end
+    end
+
     @doc """
-    Where the Blog serves a post with `slug` in `language` on the site `site_id`: the path of its
-    post page (`MishkaBlog.Provision.item_paths/0`) as the site's own address
-    (`MishkaCmsCore.Runtime.Languages.url/3`), `/blog/<slug>` in the language the site leaves
-    unprefixed and `/fa/blog/<slug>` in Persian. `nil` for no slug, and for a language the site does
-    not publish in.
+    Where the Blog serves a post with `slug` in `language` on the run's site: the path of the post
+    page the run gives it (`MishkaCmsMigration.Targets.Helpers.BlogPages.post_path/2`) as the site's
+    own address (`MishkaCmsCore.Runtime.Languages.url/3`), `/blog/<slug>` in the language the site
+    leaves unprefixed and `/fa/blog/<slug>` in Persian. `nil` for no slug, for a language the site
+    does not publish in, and for a post page whose address needs more than the slug, such as
+    `/:year/:monthnum/:slug`.
     """
-    @spec address(String.t() | nil, String.t(), String.t()) :: String.t() | nil
-    def address(slug, language, site_id),
+    @spec address(String.t() | nil, String.t(), Target.context()) :: String.t() | nil
+    def address(slug, language, context),
       do:
         Languages.url(
-          Provision.item_paths().post,
+          BlogPages.post_path(context, language),
           %{Languages.capture() => language, "slug" => slug},
-          site_id
+          context.site_id
         )
 
     @impl MishkaCmsMigration.Target
@@ -245,6 +317,7 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
         Editions.note(item, context),
         item |> Status.call() |> drafted(),
         BySlug.note(__MODULE__, item, context),
+        item |> addressed(context) |> another_slug(),
         authored(item, context),
         pictured(item, context),
         Widgets.note(item, context),
@@ -255,6 +328,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       |> Enum.reject(&is_nil/1)
       |> noted()
     end
+
+    defp addressed(item, context), do: Target.decision(context, item, @address_taken)
+
+    defp another_slug("import"), do: "another_slug"
+    defp another_slug(_decision), do: nil
 
     defp dated("publish", date),
       do: %{status: :published, published_at: date, scheduled_publish_at: nil}
@@ -345,15 +423,22 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp href(attribute, _links, _to), do: attribute
 
     defp slug_address(slug, {language, context}),
-      do: __MODULE__ |> BySlug.slug(slug, language, context) |> address(language, context.site_id)
+      do: __MODULE__ |> BySlug.slug(slug, language, context) |> address(language, context)
 
-    defp anchored(nil, old), do: old
+    defp anchored(nil, old), do: old |> URI.parse() |> own_address(old)
     defp anchored(new, old), do: old |> URI.parse() |> fragment(new)
 
     defp fragment(%URI{fragment: fragment}, new) when is_binary(fragment) and fragment != "",
       do: new <> "#" <> fragment
 
     defp fragment(_uri, new), do: new
+
+    # A LINK TO A POST WHOSE ADDRESS NEEDS MORE THAN ITS SLUG, such as its date, keeps the address the
+    # source gave it, on this site: the post is served there, or its redirect answers it.
+    defp own_address(%URI{path: "/" <> _ = path} = uri, _old),
+      do: URI.to_string(%URI{path: path, query: uri.query, fragment: uri.fragment})
+
+    defp own_address(_no_path, old), do: old
 
     defp written(context, kind, ids),
       do:

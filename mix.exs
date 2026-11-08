@@ -62,11 +62,11 @@ defmodule MishkaCmsMigration.MixProject do
       mishka_dep(:mishka_installer, "~> 0.1.16"),
       mishka_dep(:guarded_struct, "~> 0.1.6", override: true),
       {:igniter, "~> 0.8", only: [:dev, :test]},
-      mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.7"),
+      mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.8"),
       mishka_dep(:mishka_gervaz, "~> 0.0.7"),
       mishka_dep(:mishka_slug, "~> 0.0.1"),
       # A site may run without the Blog; its categories and tags are imported only where it is.
-      mishka_dep(:mishka_blog, "~> 0.0.3-alpha.3", optional: true),
+      mishka_dep(:mishka_blog, "~> 0.0.3-alpha.4", optional: true),
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.18", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},

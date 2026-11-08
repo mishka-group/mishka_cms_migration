@@ -167,6 +167,36 @@ defmodule MishkaCmsMigration.Sources.LanguagesTest do
     end
   end
 
+  describe "the addresses" do
+    test "of a Polylang site's posts and terms are read with the language's prefix left out, from the REST API and from the export alike" do
+      stub!(%{
+        "/wp-json/" => "polylang-index",
+        "/wp-json/pll/v1/languages" => "polylang-languages",
+        "/wp-json/wp/v2/posts" => "polylang-posts",
+        "/wp-json/wp/v2/categories" => "polylang-categories",
+        "/wp-json/wp/v2/tags" => "polylang-tags"
+      })
+
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      expected = %{
+        "structure" => "/%year%/%monthnum%/%postname%/",
+        "pattern" => "/:year/:monthnum/:slug",
+        "language_prefixes" => ["fa"],
+        "category_base" => "category",
+        "tag_base" => "tag",
+        "author_base" => "author",
+        "posts" => 4,
+        "misfits" => []
+      }
+
+      assert WordPress.extra(conn)["permalinks"] == expected
+
+      assert {:ok, file} = WordPressFile.connect(%{"file" => Languages.export()}, nil)
+      assert WordPressFile.extra(file)["permalinks"] == expected
+    end
+  end
+
   describe "a site without WPML" do
     test "is read with no language asked for and no request for the languages" do
       assert conn = connected!()

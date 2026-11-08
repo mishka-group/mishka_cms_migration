@@ -29,7 +29,20 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       It answers a wrong password, an unknown user and a request whose `Authorization` header the
       host dropped the same way (`rest_not_logged_in`), so these cannot be told apart.
 
-  `extra/1` keeps the site's name, its home address and timezone, and who signed in. When the REST
+  `extra/1` keeps the site's name, its home address and timezone, who signed in, and the addresses
+  it gives its posts and terms as `"permalinks"` (`MishkaCmsMigration.Sources.WordPress.Permalinks`),
+  worked out from every published post's `link` (`/wp/v2/posts` with `status=publish` and only
+  `id`, `status`, `slug`, `date`, `link` and `categories`, 100 a request), every category's `link`
+  and parents (`/wp/v2/categories` with only `id`, `slug`, `parent` and `link`) and the first 100
+  tags' `link` (`/wp/v2/tags`). When the user may read the site's settings (`/wp/v2/settings`,
+  an administrator), it keeps what the site shows on its front as `"front_page"`:
+  `"show_on_front"` (`"page"` or `"posts"`), and for `"page"` the ids of the front page
+  (`"page_on_front"`) and the posts page (`"page_for_posts"`), each `nil` when none is set,
+  and the posts page's address (`"posts_page_link"`, `/wp/v2/pages/<id>` with only its `link`),
+  such as `%{"show_on_front" => "page", "page_on_front" => "22", "page_for_posts" => "23",
+  "posts_page_link" => "https://example.com/blog/"}`.
+  A user who may not has no `"front_page"`, and the front page is the page at the home's
+  address (`MishkaCmsMigration.Targets.CmsPage`). When the REST
   index lists the REST namespace of a language plugin, Polylang's `pll/v1` or WPML's `wpml/v1`, it
   keeps which one as `"languages"` (`"polylang"` or `"wpml"`): such a site names the language in its
   addresses, as `/fa/about/`, which the links an import writes do not follow
@@ -55,8 +68,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   `status=any`: published, scheduled, draft, pending and private, but not the trash. Comments are
   asked for with `status=all` and `type=all`: approved and held for moderation, of every type
   (WordPress answers only plain comments unless asked), but not spam and not the trash.
-  `"post_redirect"` reads the posts again, only their `id`, `title`, `status`, `link` and
-  `modified_gmt` (`_fields`). The cursor is the next page number while `X-WP-TotalPages` says there
+  `"post_redirect"` reads the addresses of the posts, the published pages, the categories, the
+  tags, the users and the files again, each kind with only the fields an address needs
+  (`_fields`), and then every published post's `date` and `link` for the feeds and date archives
+  (`MishkaCmsMigration.Sources.WordPress.Addresses`); its cursor names the kind it is in and that
+  kind's page. The cursor is the next page number while `X-WP-TotalPages` says there
   is one, and `nil` after the last. `"menu"` is one page: every menu (`/wp/v2/menus`, WordPress
   5.9+) with its items (`/wp/v2/menu-items`) and every block menu (`/wp/v2/navigation`, asked for
   with `status=any`), each route read to its last page (`menus/4`). A list
@@ -163,10 +179,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       `"elementor"`, `title` `"Elementor global colours and fonts"`, and `attrs` the stylesheet of
       theme tokens they become, its `"name"` (`elementor-globals`), `"description"` and `"content"`
       (`MishkaCmsMigration.Sources.WordPress.ElementorKit.stylesheet/2`).
-    * post_redirect — the post's old address: its `source_id` is the post's id, `title` its title,
-      and `attrs`'s `"from"` the path of its `link`, such as `/2025/12/hello/`, for a published post
-      with an address of its own; `nil` for any other, such as a draft, whose `link` is
-      `/?p=39`, an address no redirect can answer.
+    * post_redirect — one address a visitor or search engine knows
+      (`MishkaCmsMigration.Sources.WordPress.Addresses`): its `source_id` is the address's id
+      (a post's own address is the post's id, `"35"`; `"35?p"` its `/?p=35`, `"35~hello-world"`
+      the address it had under an earlier slug, `"category:8"` a category's archive), `title` what
+      it points at, and `attrs`'s `"from"` the address (the path of a published post's `link`,
+      such as `/2025/12/hello/`; `nil` for a draft, whose `link` is `/?p=39`, an address no
+      redirect can answer), `"query"` the query it is only with (`"p=35"` on `/`, or `nil`) and
+      `"to"` what it points at, `%{"kind" => "post", "id" => "35"}`. The REST API does not answer
+      `_wp_old_slug`, so a post read from it has no earlier addresses; an export does.
     * menu — one menu: its `source_id` is the menu's id (`navigation-` and the post's id for a
       block menu, whose `attrs` say `"block"` and, when a classic menu has the same links,
       `"same_as"`, that menu's name), `title` its name, and `attrs` keeps its
@@ -252,11 +273,13 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   alias MishkaCmsMigration.Source
 
   alias MishkaCmsMigration.Sources.WordPress.{
+    Addresses,
     Content,
     Elementor,
     ElementorKit,
     Export,
-    Navigation
+    Navigation,
+    Permalinks
   }
 
   @kinds [
@@ -303,15 +326,28 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     "media" => {"/wp/v2/media", [orderby: "id", order: "asc"]},
     "page" => {"/wp/v2/pages", [status: "any"]},
     "post" => {"/wp/v2/posts", [status: "any"]},
-    "comment" => {"/wp/v2/comments", [status: "all", type: "all"]},
-    "post_redirect" =>
-      {"/wp/v2/posts", [status: "any", _fields: "id,title,status,link,modified_gmt"]}
+    "comment" => {"/wp/v2/comments", [status: "all", type: "all"]}
   }
 
+  # THE ADDRESSES OF `"post_redirect"`, read kind after kind with only what an address needs, then
+  # the feeds and date archives of the published posts.
+  @addressed_kinds [
+    {"post",
+     {"/wp/v2/posts", [status: "any", _fields: "id,title,status,slug,link,modified_gmt,content"]}},
+    {"page", {"/wp/v2/pages", [status: "publish", _fields: "id,title,status,modified_gmt"]}},
+    {"category", {"/wp/v2/categories", [_fields: "id,name,slug,link,count"]}},
+    {"tag", {"/wp/v2/tags", [_fields: "id,name,slug,link,count"]}},
+    {"user", {"/wp/v2/users", [_fields: "id,name,slug,link"]}},
+    {"media", {"/wp/v2/media", [_fields: "id,title,link,modified_gmt"]}},
+    {"archive", {"/wp/v2/posts", [status: "publish", _fields: "id,status,slug,date,link"]}}
+  ]
+
   @per_page 100
-  @translated ~w(category tag page post post_redirect)
+  @translated ~w(category tag page post)
 
   @linked_fields [status: "any", _fields: "id,slug,link"]
+  @permalink_posts [status: "publish", _fields: "id,status,slug,date,link,categories"]
+  @permalink_categories [_fields: "id,slug,parent,link"]
   @media_fields [_fields: "id,source_url,media_details"]
   @addressed ["src", "href", "poster"]
   @sized ~r/(?:-(?:\d+x\d+|scaled))+$/
@@ -453,15 +489,84 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp homes(_unreadable), do: []
 
   @impl MishkaCmsMigration.Source
-  def extra(%{index: index, user: user}) do
+  def extra(%{req: req, index: index, user: user} = conn) do
     %{
       "name" => index["name"],
       "home" => index["home"],
       "timezone" => index["timezone_string"],
-      "signed_in_as" => user["username"]
+      "signed_in_as" => user["username"],
+      "permalinks" => permalinks(conn)
     }
     |> Map.merge(languages(index["namespaces"]))
+    |> Map.merge(req |> Req.get(url: "/wp/v2/settings") |> front_page(req))
   end
+
+  defp permalinks(%{req: req, index: index} = conn) do
+    categories = req |> every("/wp/v2/categories", @permalink_categories, 1, []) |> read_rows()
+
+    Permalinks.call(%{
+      posts:
+        req
+        |> every("/wp/v2/posts", @permalink_posts, 1, [])
+        |> read_rows()
+        |> Enum.filter(&(&1["status"] == "publish")),
+      categories: Map.new(categories, &{&1["id"], {&1["slug"], &1["parent"]}}),
+      terms: %{
+        "category" => Enum.map(categories, &%{"key" => &1["id"], "link" => &1["link"]}),
+        "tag" =>
+          req
+          |> Req.get(url: "/wp/v2/tags", params: [per_page: @per_page, _fields: "slug,link"])
+          |> listed(1)
+          |> read_rows()
+      },
+      home: index["home"],
+      languages: Enum.map(conn.polylang, &elem(&1, 0)) ++ conn.languages
+    })
+  end
+
+  defp read_rows({:ok, rows}), do: rows
+  defp read_rows({:ok, rows, _next}), do: rows
+  defp read_rows(_refused), do: []
+
+  defp front_page(
+         {:ok, %Req.Response{status: 200, body: %{"show_on_front" => "page"} = settings}},
+         req
+       ) do
+    posts_page = page_id(settings["page_for_posts"])
+
+    %{
+      "front_page" => %{
+        "show_on_front" => "page",
+        "page_on_front" => page_id(settings["page_on_front"]),
+        "page_for_posts" => posts_page,
+        "posts_page_link" => page_link(req, posts_page)
+      }
+    }
+  end
+
+  defp front_page({:ok, %Req.Response{status: 200, body: %{"show_on_front" => "posts"}}}, _req),
+    do: %{
+      "front_page" => %{
+        "show_on_front" => "posts",
+        "page_on_front" => nil,
+        "page_for_posts" => nil,
+        "posts_page_link" => nil
+      }
+    }
+
+  defp front_page(_unreadable, _req), do: %{}
+
+  defp page_link(_req, nil), do: nil
+
+  defp page_link(req, id) do
+    case Req.get(req, url: "/wp/v2/pages/#{id}", params: [context: "edit", _fields: "link"]) do
+      {:ok, %Req.Response{status: 200, body: %{"link" => link}}} when is_binary(link) -> link
+      _unreadable -> nil
+    end
+  end
+
+  defp page_id(id) when is_integer(id) and id > 0, do: Integer.to_string(id)
+  defp page_id(_none), do: nil
 
   defp languages(namespaces) when is_list(namespaces),
     do: namespaces |> Enum.find_value(&Map.get(@language_plugins, &1)) |> languages()
@@ -470,27 +575,16 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp languages(_none), do: %{}
 
   @impl MishkaCmsMigration.Source
-  def list(%{req: req, languages: [_ | _] = codes}, kind, cursor) when kind in @translated do
-    {route, params} = Map.fetch!(@routes, kind)
-    {code, page} = cursor || {hd(codes), 1}
+  def list(conn, "post_redirect", cursor) do
+    {at, cursor} = cursor || {0, nil}
 
-    req
-    |> Req.get(
-      url: route,
-      params: [context: "edit", per_page: @per_page, page: page, lang: code] ++ params
-    )
-    |> listed(page)
-    |> in_language(code, codes)
+    conn
+    |> address_page(Enum.at(@addressed_kinds, at), cursor)
+    |> next_addressed(at)
   end
 
-  def list(%{req: req}, kind, cursor) when is_map_key(@routes, kind) do
-    {route, params} = Map.fetch!(@routes, kind)
-    page = cursor || 1
-
-    req
-    |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page] ++ params)
-    |> listed(page)
-  end
+  def list(conn, kind, cursor) when is_map_key(@routes, kind),
+    do: paged(conn, kind, Map.fetch!(@routes, kind), cursor)
 
   def list(%{index: index}, "setting", _cursor),
     do:
@@ -516,6 +610,64 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   def list(_conn, kind, _cursor), do: {:error, {:unknown_kind, kind}}
 
+  defp paged(%{req: req, languages: [_ | _] = codes}, kind, {route, params}, cursor)
+       when kind in @translated do
+    {code, page} = cursor || {hd(codes), 1}
+
+    req
+    |> Req.get(
+      url: route,
+      params: [context: "edit", per_page: @per_page, page: page, lang: code] ++ params
+    )
+    |> listed(page)
+    |> in_language(code, codes)
+  end
+
+  defp paged(%{req: req}, _kind, {route, params}, cursor) do
+    page = cursor || 1
+
+    req
+    |> Req.get(url: route, params: [context: "edit", per_page: @per_page, page: page] ++ params)
+    |> listed(page)
+  end
+
+  # One page of an addressed kind's rows becomes their addresses; the archives are made from every
+  # published post at once, with the posts page the site's settings name.
+  defp address_page(%{req: req, index: index}, {"archive", {route, params}}, _cursor),
+    do:
+      req
+      |> every(route, params, 1, [])
+      |> archives(index["home"], req |> Req.get(url: "/wp/v2/settings") |> front_page(req))
+
+  defp address_page(conn, {kind, route}, cursor) do
+    case paged(conn, kind, route, cursor) do
+      {:ok, rows, next} -> {:ok, Enum.flat_map(rows, &addresses(kind, &1)), next}
+      refused -> refused
+    end
+  end
+
+  defp next_addressed({:ok, rows, nil}, at) when at + 1 < length(@addressed_kinds),
+    do: {:ok, rows, {at + 1, nil}}
+
+  defp next_addressed({:ok, rows, nil}, _last), do: {:ok, rows, nil}
+  defp next_addressed({:ok, rows, cursor}, at), do: {:ok, rows, {at, cursor}}
+  defp next_addressed(refused, _at), do: refused
+
+  defp addresses("post", row), do: Addresses.post(row)
+  defp addresses("page", row), do: Addresses.page(row)
+  defp addresses("media", row), do: Addresses.media(row)
+  defp addresses(kind, row), do: Addresses.term(row, kind, row["link"])
+
+  defp archives({:ok, posts}, home, front_page) do
+    %{"structure" => structure} =
+      Permalinks.call(%{posts: posts, categories: %{}, terms: %{}, home: home, languages: []})
+
+    posts_page = get_in(front_page, ["front_page", "posts_page_link"])
+    {:ok, Addresses.archives(posts, structure, home, posts_page), nil}
+  end
+
+  defp archives(refused, _home, _front_page), do: refused
+
   @doc """
   The rows of `kind` with the WordPress ids `source_ids`, what a job of picked items reads: asked
   for from the kind's REST route as `list/3` asks for a page, by their ids (`include`), 100 ids a
@@ -524,8 +676,57 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   as `list/3` says.
   """
   @impl MishkaCmsMigration.Source
-  def rows(%{req: req} = conn, kind, source_ids) when is_map_key(@routes, kind) do
-    {route, params} = Map.fetch!(@routes, kind)
+  def rows(conn, "post_redirect", source_ids) do
+    asked = MapSet.new(source_ids)
+
+    source_ids
+    |> Enum.group_by(&addressed_kind/1, &addressed_id/1)
+    |> Enum.reduce_while({:ok, []}, fn {kind, ids}, {:ok, read} ->
+      conn
+      |> addressed_rows(kind, Enum.uniq(ids))
+      |> read_on(read)
+    end)
+    |> case do
+      {:ok, rows} -> {:ok, Enum.filter(rows, &MapSet.member?(asked, &1["id"]))}
+      refused -> refused
+    end
+  end
+
+  def rows(conn, kind, source_ids) when is_map_key(@routes, kind),
+    do: included(conn, kind, Map.fetch!(@routes, kind), source_ids)
+
+  def rows(conn, kind, source_ids) do
+    with {:ok, rows, _next} <- list(conn, kind, nil),
+         do: {:ok, Enum.filter(rows, &(to_string(&1["id"]) in source_ids))}
+  end
+
+  # An address's id names the kind it was read from and the WordPress id of that row: `"35?p"` is
+  # post 35's, `"category:8"` category 8's, `"archive:/2026/02"` the archives'.
+  defp addressed_kind("archive:" <> _path), do: "archive"
+
+  defp addressed_kind(id) do
+    case String.split(id, ":", parts: 2) do
+      [kind, _rest] -> kind
+      [_post] -> "post"
+    end
+  end
+
+  defp addressed_id(id),
+    do: id |> String.split(":", parts: 2) |> List.last() |> String.split(~r{[?~/]}) |> hd()
+
+  defp addressed_rows(conn, kind, ids),
+    do: addressed_rows(conn, kind, ids, List.keyfind(@addressed_kinds, kind, 0))
+
+  defp addressed_rows(_conn, _kind, _ids, nil), do: {:ok, [], nil}
+
+  defp addressed_rows(conn, "archive", _ids, archive), do: address_page(conn, archive, nil)
+
+  defp addressed_rows(conn, kind, ids, {kind, route}) do
+    with {:ok, rows} <- included(conn, kind, route, ids),
+         do: {:ok, Enum.flat_map(rows, &addresses(kind, &1)), nil}
+  end
+
+  defp included(%{req: req} = conn, kind, {route, params}, source_ids) do
     languages = asked_in(conn, kind)
 
     for ids <- Enum.chunk_every(source_ids, @per_page), language <- languages do
@@ -542,11 +743,6 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> listed(1)
       |> read_on(read)
     end)
-  end
-
-  def rows(conn, kind, source_ids) do
-    with {:ok, rows, _next} <- list(conn, kind, nil),
-         do: {:ok, Enum.filter(rows, &(to_string(&1["id"]) in source_ids))}
   end
 
   defp asked_in(%{languages: [_ | _] = codes}, kind) when kind in @translated,
@@ -674,14 +870,14 @@ defmodule MishkaCmsMigration.Sources.WordPress do
      }}
   end
 
-  def normalize(%{"id" => id, "title" => %{"raw" => title}} = row, "post_redirect", _context),
+  def normalize(%{"id" => id, "to" => %{} = to} = row, "post_redirect", _context),
     do:
       {:ok,
        %{
          source_id: id,
-         title: title,
-         modified_at: Map.get(row, "modified_gmt"),
-         attrs: %{"from" => old_path(row)}
+         title: row["title"],
+         modified_at: row["modified_gmt"],
+         attrs: %{"from" => row["from"], "query" => row["query"], "to" => spoken(to)}
        }}
 
   def normalize(%{"id" => id, "name" => name} = row, kind, context)
@@ -809,6 +1005,9 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp wpml_edition({_locale, edition}), do: wpml_edition(edition)
   defp wpml_edition(%{"locale" => locale, "id" => id}), do: {locale_code(locale), id}
   defp wpml_edition(_edition), do: {nil, nil}
+
+  defp spoken(%{"language" => language} = to), do: %{to | "language" => code(language)}
+  defp spoken(to), do: to
 
   defp code(code) when is_binary(code),
     do: code |> String.trim() |> String.downcase() |> String.replace("_", "-")
@@ -1322,14 +1521,6 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     do: Map.new(rows, &{&1["id"], &1})
 
   defp by_id(_unanswered), do: %{}
-
-  defp old_path(%{"status" => "publish", "link" => link}) when is_binary(link),
-    do: link |> URI.parse() |> own_path()
-
-  defp old_path(_not_public), do: nil
-
-  defp own_path(%URI{path: "/" <> rest = path}) when rest != "", do: path
-  defp own_path(_no_path), do: nil
 
   defp post_type(%{"_links" => %{"up" => [%{"post_type" => type} | _]}}), do: type
   defp post_type(_row), do: nil

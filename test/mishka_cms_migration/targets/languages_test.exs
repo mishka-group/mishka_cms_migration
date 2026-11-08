@@ -598,6 +598,17 @@ defmodule MishkaCmsMigration.Targets.LanguagesTest do
                "26" => {:skipped, "parent_undecided: Team (#25)"}
              } = outcomes(run, "page")
 
+      # The run's count of what needs a decision is the Decisions panel's, and not its report's: the
+      # import skipped Team for its parent, and Team still waits for its own language.
+      {:ok, groups} = MigrationItem.waiting_groups(run, admin)
+      waiting = groups |> Enum.map(& &1.count) |> Enum.sum()
+
+      shown =
+        run |> Ash.load!(:decisions, actor: admin, tenant: site.id) |> MigrationRun.outcomes_now()
+
+      assert shown[:undecided] == waiting
+      assert waiting > run.report.counts.undecided
+
       run = import_items!(run, admin, ["26"])
       assert %{reason: "parent_undecided: Team (#25)"} = item(site, "page", "26")
 

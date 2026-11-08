@@ -32,8 +32,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
     "media" => "media",
     "page" => "pages",
     "post" => "posts",
-    "comment" => "comments",
-    "post_redirect" => "posts"
+    "comment" => "comments"
   }
 
   defp connected! do
@@ -44,14 +43,23 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
   defp items!(kind, answers \\ %{}) do
     stub!(answers)
     conn = connected!()
-    assert {:ok, rows, nil} = WordPress.list(conn, kind, nil)
 
-    Map.new(rows, fn row ->
+    conn
+    |> every_row(kind, nil)
+    |> Map.new(fn row ->
       assert {:ok, attrs} = WordPress.normalize(row, kind, Map.put(@context, :conn, conn))
       assert {:ok, item} = attrs |> Map.put(:kind, kind) |> Item.build()
       {item.source_id, item}
     end)
   end
+
+  defp every_row(conn, kind, cursor) do
+    assert {:ok, rows, next} = WordPress.list(conn, kind, cursor)
+    rows ++ more_rows(conn, kind, next)
+  end
+
+  defp more_rows(_conn, _kind, nil), do: []
+  defp more_rows(conn, kind, next), do: every_row(conn, kind, next)
 
   defp html(item), do: item |> Item.html() |> LazyHTML.from_fragment()
 
@@ -92,11 +100,66 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       assert {:ok, conn} = WordPress.connect(@connection, "app password")
 
-      assert WordPress.extra(conn) == %{
+      assert %{
                "name" => "Mishka Test Blog",
                "home" => "http://localhost:8089",
                "timezone" => "Asia/Tehran",
-               "signed_in_as" => "admin"
+               "signed_in_as" => "admin",
+               "front_page" => %{
+                 "show_on_front" => "page",
+                 "page_on_front" => "22",
+                 "page_for_posts" => "23",
+                 "posts_page_link" => nil
+               }
+             } = WordPress.extra(conn)
+
+      posts_page = json(%{"link" => "http://localhost:8089/blog/"})
+      stub!(%{"/wp-json/wp/v2/pages/23" => posts_page})
+
+      assert WordPress.extra(conn)["front_page"]["posts_page_link"] ==
+               "http://localhost:8089/blog/"
+    end
+
+    test "keeps the structure of the posts' addresses and the bases of the terms', read from their links" do
+      stub!()
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+
+      published = for %{"status" => "publish", "id" => id} <- recorded("posts"), do: id
+
+      assert WordPress.extra(conn)["permalinks"] == %{
+               "structure" => "/%year%/%monthnum%/%postname%/",
+               "pattern" => "/:year/:monthnum/:slug",
+               "language_prefixes" => [],
+               "category_base" => "category",
+               "tag_base" => "tag",
+               "author_base" => "author",
+               "posts" => length(published),
+               "misfits" => []
+             }
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/posts",
+                         query_params: %{"_fields" => fields} = asked
+                       }}
+
+      assert asked["status"] == "publish"
+      assert fields == "id,status,slug,date,link,categories"
+    end
+
+    test "keeps no front page for a user who may not read the site's settings, and none of its pages for a site that shows its posts" do
+      stub!(%{"/wp-json/wp/v2/settings" => "unauthorized-settings"})
+      {:ok, conn} = WordPress.connect(@connection, "app password")
+      refute Map.has_key?(WordPress.extra(conn), "front_page")
+
+      latest = "settings" |> recorded() |> Map.put("show_on_front", "posts") |> Jason.encode!()
+      stub!(%{"/wp-json/wp/v2/settings" => {"application/json", latest}})
+
+      assert WordPress.extra(conn)["front_page"] == %{
+               "show_on_front" => "posts",
+               "page_on_front" => nil,
+               "page_for_posts" => nil,
+               "posts_page_link" => nil
              }
     end
 
@@ -217,8 +280,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             {"media", "/wp-json/wp/v2/media", nil},
             {"page", "/wp-json/wp/v2/pages", "any"},
             {"post", "/wp-json/wp/v2/posts", "any"},
-            {"comment", "/wp-json/wp/v2/comments", "all"},
-            {"post_redirect", "/wp-json/wp/v2/posts", "any"}
+            {"comment", "/wp-json/wp/v2/comments", "all"}
           ] do
         assert {:ok, [_ | _], nil} = WordPress.list(conn, kind, nil)
         assert_received {:wordpress_request, %{request_path: ^route, query_params: params}}
@@ -250,19 +312,50 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert {:ok, [%{"id" => "title"}]} = WordPress.rows(conn, "setting", ["title"])
     end
 
-    test "reads a post's old address with only the fields it needs" do
+    test "reads the addresses kind after kind with only the fields an address needs, then the archives" do
       stub!()
-      assert {:ok, [_ | _], nil} = WordPress.list(connected!(), "post_redirect", nil)
+      conn = connected!()
+
+      assert {:ok, [_ | _], {1, nil}} = WordPress.list(conn, "post_redirect", nil)
       assert_received {:wordpress_request, %{query_params: %{"_fields" => fields}}}
 
       assert fields |> String.split(",") |> Enum.sort() ==
-               ~w(id link modified_gmt status title)
+               ~w(content id link modified_gmt slug status title)
+
+      for {at, route} <- [
+            {1, "/wp-json/wp/v2/pages"},
+            {2, "/wp-json/wp/v2/categories"},
+            {3, "/wp-json/wp/v2/tags"},
+            {4, "/wp-json/wp/v2/users"},
+            {5, "/wp-json/wp/v2/media"}
+          ] do
+        assert {:ok, _rows, {next, nil}} = WordPress.list(conn, "post_redirect", {at, nil})
+        assert next == at + 1
+        assert_received {:wordpress_request, %{request_path: ^route}}
+      end
+
+      assert {:ok, archives, nil} = WordPress.list(conn, "post_redirect", {6, nil})
+      assert Enum.all?(archives, &(&1["to"]["kind"] in ["list", "sitemap"]))
+    end
+
+    test "reads picked addresses from the kinds their ids name" do
+      stub!()
+      conn = connected!()
+
+      assert {:ok, rows} =
+               WordPress.rows(conn, "post_redirect", ["44", "44?p", "category:2", "archive:/feed"])
+
+      assert rows |> Enum.map(& &1["id"]) |> Enum.sort() ==
+               ["44", "44?p", "archive:/feed", "category:2"]
     end
 
     test "lists every row WordPress answered for each kind" do
       for {kind, recording} <- @recordings do
         assert items!(kind) |> Map.keys() |> Enum.sort() == Enum.sort(recorded_ids(recording))
       end
+
+      addresses = items!("post_redirect")
+      assert Enum.all?(recorded_ids("posts"), &is_map_key(addresses, &1))
     end
 
     test "leaves the trash out of the posts" do
@@ -481,17 +574,32 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       redirects = items!("post_redirect")
       posts = Map.new(recorded("posts"), &{to_string(&1["id"]), &1})
 
-      assert redirects["44"].attrs == %{"from" => "/2025/12/release-1-0-announcement/"}
+      assert redirects["44"].attrs == %{
+               "from" => "/2025/12/release-1-0-announcement/",
+               "query" => nil,
+               "to" => %{"kind" => "post", "id" => "44"}
+             }
+
+      assert redirects["44?p"].attrs == %{
+               "from" => "/",
+               "query" => "p=44",
+               "to" => %{"kind" => "post", "id" => "44"}
+             }
+
+      refute Enum.any?(Map.keys(redirects), &String.contains?(&1, "~"))
+
       assert redirects["44"].title == "Release 1.0 announcement"
       assert redirects["44"].modified_at
 
       for {id, item} <- redirects,
+          is_map_key(posts, id),
           posts[id]["status"] == "publish",
           do: assert(item.attrs["from"] == URI.parse(posts[id]["link"]).path)
 
       for {id, item} <- redirects,
+          is_map_key(posts, id),
           posts[id]["status"] != "publish",
-          do: assert(is_nil(item.attrs["from"]))
+          do: assert(is_nil(item.attrs["from"]) and not is_map_key(redirects, id <> "?p"))
 
       assert {redirects["39"].attrs["from"], redirects["41"].attrs["from"]} == {nil, nil}
     end
@@ -1264,14 +1372,36 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       published = Enum.count(recorded("posts"), &(&1["status"] == "publish"))
 
-      assert counts(run, "post_redirect") ==
-               %{
-                 created: published,
-                 updated: 0,
-                 skipped: length(recorded("posts")) - published,
-                 failed: 0,
-                 undecided: 0
-               }
+      redirects =
+        for %{kind: "post_redirect", source_id: id} = entry <- run.report.entries,
+            into: %{},
+            do: {id, {entry.outcome, entry.reason}}
+
+      planned_posts =
+        for %{kind: "post", source_id: id} = entry <- run.report.entries,
+            into: %{},
+            do: {id, {entry.outcome, entry.reason}}
+
+      # A published post's addresses are planned as its own plan goes: one it writes as a draft is
+      # not served, and one it does not write has no post to point at. The run keeps the WordPress
+      # addresses, so a post it writes is served at its own and only its `?p=` is redirected.
+      for post <- recorded("posts"), id = to_string(post["id"]) do
+        expected =
+          case planned_posts[id] do
+            {:created, "draft_from_" <> _} -> {:skipped, "not_served"}
+            {:created, _note} -> {:created, nil}
+            _not_written -> {:skipped, "post_missing"}
+          end
+
+        own = if expected == {:created, nil}, do: {:skipped, "same_address"}, else: expected
+
+        case post["status"] do
+          "publish" -> assert {redirects[id], redirects[id <> "?p"]} == {own, expected}
+          _not_public -> assert redirects[id] == {:skipped, "no_old_address"}
+        end
+      end
+
+      assert Enum.count(redirects, &match?({_id, {:created, _}}, &1)) > 2 * published
 
       assert counts(run, "media") ==
                %{
@@ -1329,6 +1459,10 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:undecided, "menu_goes_to"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
+                   {:skipped, "not_served"},
+                   {:skipped, "post_missing"},
+                   {:skipped, "not_imported"},
+                   {:skipped, "same_address"},
                    {:skipped, "type_not_allowed"},
                    {:created, "path_made_ascii"}
                  ])

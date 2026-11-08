@@ -285,9 +285,16 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
         |> Enum.find(&(&1.source_kind == "media" and &1.source_id == source_id))
         |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
 
+    # The rules from a file's own address; the run's other addresses, such as an attachment page,
+    # are the redirect target's.
     defp redirects(site),
       do:
-        Redirect |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.from_path, &1})
+        for(
+          rule <- Ash.read!(Redirect, tenant: site.id, authorize?: false),
+          String.starts_with?(rule.from_path, "/wp-content/"),
+          into: %{},
+          do: {rule.from_path, rule}
+        )
 
     defp item(site, source_id),
       do:
@@ -330,6 +337,10 @@ defmodule MishkaCmsMigration.Targets.CmsMediaTest do
       assert %{"4" => hero, "30" => again} = hashes(site)
       assert hero == sha256(seeded("hero.jpg"))
       assert again == sha256(other_bytes())
+
+      # A later dry run downloads nothing, and plans the file to wait for that decision again.
+      planned = site |> wordpress_run!(admin) |> dry_run!(admin)
+      assert outcomes(planned)["7"] == {:undecided, "same_file: Hero image"}
     end
 
     test "Use the original stores no second file, redirects the old address to the original and points content at it",
