@@ -320,7 +320,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert_received {:wordpress_request, %{query_params: %{"_fields" => fields}}}
 
       assert fields |> String.split(",") |> Enum.sort() ==
-               ~w(id link modified_gmt slug status title)
+               ~w(content id link modified_gmt slug status title)
 
       for {at, route} <- [
             {1, "/wp-json/wp/v2/pages"},
@@ -335,7 +335,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       end
 
       assert {:ok, archives, nil} = WordPress.list(conn, "post_redirect", {6, nil})
-      assert Enum.all?(archives, &(&1["to"] == %{"kind" => "list", "id" => nil}))
+      assert Enum.all?(archives, &(&1["to"]["kind"] in ["list", "sitemap"]))
     end
 
     test "reads picked addresses from the kinds their ids name" do
@@ -1377,13 +1377,24 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
             into: %{},
             do: {id, {entry.outcome, entry.reason}}
 
-      for post <- recorded("posts"), id = to_string(post["id"]) do
-        case post["status"] do
-          "publish" ->
-            assert {redirects[id], redirects[id <> "?p"]} == {{:created, nil}, {:created, nil}}
+      planned_posts =
+        for %{kind: "post", source_id: id} = entry <- run.report.entries,
+            into: %{},
+            do: {id, {entry.outcome, entry.reason}}
 
-          _not_public ->
-            assert redirects[id] == {:skipped, "no_old_address"}
+      # A published post's addresses are planned as its own plan goes: one it writes as a draft is
+      # not served, and one it does not write has no post to point at.
+      for post <- recorded("posts"), id = to_string(post["id"]) do
+        expected =
+          case planned_posts[id] do
+            {:created, "draft_from_" <> _} -> {:skipped, "not_served"}
+            {:created, _note} -> {:created, nil}
+            _not_written -> {:skipped, "post_missing"}
+          end
+
+        case post["status"] do
+          "publish" -> assert {redirects[id], redirects[id <> "?p"]} == {expected, expected}
+          _not_public -> assert redirects[id] == {:skipped, "no_old_address"}
         end
       end
 
@@ -1445,6 +1456,9 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                    {:undecided, "menu_goes_to"},
                    {:skipped, "not_chosen"},
                    {:skipped, "no_old_address"},
+                   {:skipped, "not_served"},
+                   {:skipped, "post_missing"},
+                   {:skipped, "not_imported"},
                    {:skipped, "type_not_allowed"},
                    {:created, "path_made_ascii"}
                  ])

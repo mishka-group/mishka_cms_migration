@@ -18,7 +18,8 @@ defmodule MishkaCmsMigration.DataCase do
   `MishkaCmsCore.Test.VersionHelpers` — and this case adds this extension's fixtures
   (`MishkaCmsMigration.Test.Factory`), AshOban's and Oban's test helpers (`AshOban.Test`), a plugin
   for the length of a block (`with_plugin/3`) or of a test (`register_plugin!/2`), a node without
-  the Blog (`without_blog!/0`, `with_blog!/0`), the items an import recorded (`imported_items/1`),
+  the Blog (`without_blog!/0`, `with_blog!/0`), a site whose Blog pages are routed (`blog_routed!/1`),
+  the items an import recorded (`imported_items/1`),
   and the SQL a block ran (`queries_while/1`).
 
   ## How the suite boots
@@ -121,6 +122,40 @@ defmodule MishkaCmsMigration.DataCase do
       })
 
     :ok = MishkaInstaller.Event.EventHandler.do_compile(event, :start, false)
+  end
+
+  @doc """
+  Provisions the Blog's pages on `site` and puts the site and its pages in the routing tables, as a
+  running site's compile jobs put them, so an address is built at the page that serves it
+  (`MishkaBlog.Address`). They are taken out again when the test exits.
+  """
+  def blog_routed!(site) do
+    MishkaBlog.Provision.ensure!(site)
+
+    :ok =
+      MishkaCmsCore.Runtime.States.SiteState.save(%{
+        id: site.id,
+        name: site.name,
+        host: site.host,
+        priority: site.priority,
+        active: site.active,
+        master: site.master
+      })
+
+    for page <-
+          Ash.read!(MishkaCmsCore.Runtime.Page, tenant: site.id, authorize?: false, load: [:site]),
+        do:
+          :ok =
+            page
+            |> MishkaCmsCore.Runtime.Handlers.BootHandler.web_metadata_row("Page")
+            |> MishkaCmsCore.Runtime.States.WebRunTimeMetaDataState.save()
+
+    ExUnit.Callbacks.on_exit(fn ->
+      MishkaCmsCore.Runtime.States.WebRunTimeMetaDataState.delete_by_site(site.name)
+      MishkaCmsCore.Runtime.States.SiteState.delete(site.id)
+    end)
+
+    site
   end
 
   @doc """

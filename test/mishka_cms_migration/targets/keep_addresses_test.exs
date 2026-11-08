@@ -18,9 +18,7 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
   require Ash.Query
 
   alias MishkaBlog.BlogPost
-  alias MishkaCmsCore.Runtime.Handlers.BootHandler
   alias MishkaCmsCore.Runtime.{Page, Redirect, Redirects}
-  alias MishkaCmsCore.Runtime.States.{SiteState, WebRunTimeMetaDataState}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.MigrationItem
 
@@ -43,30 +41,8 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
     site = create_site!()
     forget_settings(~w(site.languages), [site.id])
     {:ok, _} = Settings.put("site.languages", ["en", "fa"], site_id: site.id)
-    MishkaBlog.Provision.ensure!(site)
-    routed!(site)
+    blog_routed!(site)
     %{site: site, admin: migration_admin!(site, @admin)}
-  end
-
-  # The site and its pages in the routing tables, as a running site's compile jobs put them.
-  defp routed!(site) do
-    :ok =
-      SiteState.save(%{
-        id: site.id,
-        name: site.name,
-        host: site.host,
-        priority: site.priority,
-        active: site.active,
-        master: site.master
-      })
-
-    for page <- Ash.read!(Page, tenant: site.id, authorize?: false, load: [:site]),
-        do: :ok = WebRunTimeMetaDataState.save(BootHandler.web_metadata_row(page, "Page"))
-
-    on_exit(fn ->
-      WebRunTimeMetaDataState.delete_by_site(site.name)
-      SiteState.delete(site.id)
-    end)
   end
 
   defp wordpress_run!(site, admin, options),
@@ -112,7 +88,7 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
 
       assert {pages["blog:post"].path, pages["blog:category"].path, pages["blog:tag"].path,
               pages["blog:author"].path} ==
-               {"/:lang/:year/:monthnum/:slug", "/:lang/category/:slug", "/:lang/tag/:slug",
+               {"/:lang/:year/:monthnum/:slug", "/:lang/category/*slug", "/:lang/tag/:slug",
                 "/:lang/author/:slug"}
 
       posts =
@@ -130,11 +106,52 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
       assert {:ok, @persian} = rules[{"/", "p=36"}] |> Redirects.normalize_path()
       refute is_map_key(rules, {@release, nil})
 
-      # A nested category's chain moves to the category's own address.
-      assert rules[{"/category/news/releases", nil}] == "/category/releases"
-      refute is_map_key(rules, {"/category/news", nil})
-      assert rules[{"/feed", nil}] == "/news"
-      assert rules[{"/2026/02", nil}] == "/news"
+      # A nested category is served at its chain, as WordPress served it.
+      assert redirects["category:3"] == {:skipped, "same_address"}
+      refute is_map_key(rules, {"/category/news/releases", nil})
+      assert rules[{"/category/news/releases/feed", nil}] == "/category/news/releases"
+
+      # A post behind a password is a draft here: nothing is redirected to it.
+      assert redirects["42"] == {:skipped, "not_served"}
+      assert redirects["42?p"] == {:skipped, "not_served"}
+      refute Enum.any?(Map.values(rules), &(&1 =~ "password-protected-preview"))
+
+      for path <- ~w(/feed /feed/atom /rss2 /2026/02 /2026/02/feed),
+          do: assert(rules[{path, nil}] == "/news", path)
+
+      assert rules[{"/wp-sitemap.xml", nil}] == "/sitemap.xml"
+      assert rules[{"/news/feed", nil}] == "/news"
+      assert rules[{"/page/2", nil}] == "/news?page=2"
+    end
+
+    test "an author with no blogger on the site is sent to the list of posts", %{
+      site: site,
+      admin: admin
+    } do
+      run = imported!(site, admin)
+      rules = rules(site)
+
+      authors =
+        for {"user:" <> _ = id, outcome} <- outcomes(run, "post_redirect"), do: {id, outcome}
+
+      assert authors != []
+
+      for {"user:" <> id, _outcome} <- authors, !String.contains?(id, ["?", "/"]) do
+        user =
+          Enum.find(MishkaCmsMigration.Test.WordPress.recorded("users"), &("#{&1["id"]}" == id))
+
+        from = "/author/" <> user["slug"]
+
+        assert rules[{from, nil}] in [nil, "/news"]
+
+        assert rules[{from, nil}] == "/news" ==
+                 is_nil(
+                   Ash.read_first!(MishkaBlog.Blogger |> Ash.Query.filter(slug == ^user["slug"]),
+                     tenant: site.id,
+                     authorize?: false
+                   )
+                 )
+      end
     end
 
     test "a second import moves no page again and writes no redirect again", %{
@@ -151,10 +168,30 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
                again.report.kinds |> Enum.find(&(&1.kind == "post_redirect"))
     end
 
+    test "a second dry run plans a redirect only for what its own walk plans to write", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin)
+      again = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+
+      planned_media =
+        for {id, {:created, _reason}} <- outcomes(again, "media"), into: MapSet.new(), do: id
+
+      created = for {id, {:created, _reason}} <- outcomes(again, "post_redirect"), do: id
+
+      # The files the stub serves no bytes for failed in the import, and the dry run plans them again.
+      assert Enum.all?(created, fn "media:" <> rest ->
+               rest |> String.split(~r{[?/]}) |> hd() |> then(&MapSet.member?(planned_media, &1))
+             end)
+
+      assert outcomes(again, "post_redirect")["44"] == {:skipped, "same_address"}
+    end
+
     test "a post whose address is a page of the site waits, and Import with another slug writes it",
          %{site: site, admin: admin} do
       create_page!(site_id: site.id, path: @release, active: true)
-      routed!(site)
+      blog_routed!(site)
 
       run = imported!(site, admin)
       assert outcomes(run, "post")["44"] == {:undecided, "address_taken"}

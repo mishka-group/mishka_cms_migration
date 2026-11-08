@@ -1721,13 +1721,26 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     @movers @admin ++ ["admin:dashboard:runtime:redirect"]
     @release "/2025/12/release-1-0-announcement"
 
-    setup %{site: site}, do: %{admin: migration_admin!(site, @movers)}
+    setup %{site: site}, do: %{admin: migration_admin!(site, @movers), site: blog_routed!(site)}
 
     defp redirects(site),
       do:
         Redirect |> Ash.read!(tenant: site.id, authorize?: false) |> Map.new(&{&1.from_path, &1})
 
-    defp published, do: Enum.filter(recorded("posts"), &(&1["status"] == "publish"))
+    # The posts a visitor can open: published, and not behind a password, which makes a draft here.
+    defp published,
+      do:
+        Enum.filter(
+          recorded("posts"),
+          &(&1["status"] == "publish" and &1["password"] in [nil, ""])
+        )
+
+    defp behind_password,
+      do:
+        Enum.filter(
+          recorded("posts"),
+          &(&1["status"] == "publish" and &1["password"] not in [nil, ""])
+        )
 
     # A post's own address, of all the addresses the run redirects.
     defp post_outcomes(run),
@@ -1751,13 +1764,16 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       admin: admin
     } do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
-      unpublished = length(recorded("posts")) - length(published())
+      unpublished = length(recorded("posts")) - length(published()) - length(behind_password())
       planned = post_outcomes(run)
 
       assert counted(planned, :created) == length(published())
 
-      assert for({_id, {:skipped, reason}} <- planned, do: reason) ==
-               List.duplicate("no_old_address", unpublished)
+      assert for({_id, {:skipped, reason}} <- planned, do: reason) |> Enum.sort() ==
+               Enum.sort(
+                 List.duplicate("no_old_address", unpublished) ++
+                   List.duplicate("not_served", length(behind_password()))
+               )
 
       assert redirects(site) == %{}
     end
@@ -1794,13 +1810,13 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       site: site,
       admin: admin
     } do
-      imported!(site, admin)
-      again = imported!(site, admin)
+      imported!(site, admin, %{post_address: "blog"})
+      again = imported!(site, admin, %{post_address: "blog"})
 
       assert %{created: 0, updated: 0, failed: 0} = counts(again, "post_redirect")
 
       assert again |> post_outcomes() |> Map.values() |> Enum.uniq() |> Enum.sort() ==
-               [{:skipped, "no_old_address"}, {:skipped, "unchanged"}]
+               [{:skipped, "no_old_address"}, {:skipped, "not_served"}, {:skipped, "unchanged"}]
 
       redirects(site)[@release]
       |> Ash.Changeset.for_update(:update, %{to: "/news/release-1-0"},
@@ -1810,7 +1826,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       |> Ash.update!()
 
       change_in_wordpress!("post_redirect")
-      third = imported!(site, admin)
+      third = imported!(site, admin, %{post_address: "blog"})
 
       assert %{"44" => {:skipped, "edited_in_cms"}} = outcomes(third, "post_redirect")
       assert counted(post_outcomes(third), :updated) == length(published()) - 1
@@ -1820,7 +1836,7 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
     test "an old address the site already redirects is reported, and the site's own rule is kept",
          %{site: site, admin: admin} do
       redirect!(site, admin, %{from_path: @release <> "/", to: "/news/release-1-0"})
-      run = imported!(site, admin)
+      run = imported!(site, admin, %{post_address: "blog"})
 
       assert {:failed, reason} = outcomes(run, "post_redirect")["44"]
       assert reason =~ "already redirects that address"

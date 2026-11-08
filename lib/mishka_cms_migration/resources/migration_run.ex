@@ -2687,6 +2687,14 @@ defmodule MishkaCmsMigration.MigrationRun do
     do: dgettext("mishka_gervaz", "The Blog's list of posts is served at its address")
 
   defp said("same_address"), do: dgettext("mishka_gervaz", "Already at its old address")
+
+  defp said("not_served"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "What it points at is not public on the site, so it has no redirect"
+      )
+
   defp said("left_out_by_admin"), do: dgettext("mishka_gervaz", "Left out by you")
   defp said("parent_left_out"), do: dgettext("mishka_gervaz", "Its parent is left out")
 

@@ -16,7 +16,8 @@ if Code.ensure_loaded?(MishkaBlog.Address) do
       * with the run's `post_address` `"keep"` and a structure the source's posts share
         (`permalinks`' `"pattern"`), the post page's path is that pattern behind the language
         (`/:lang/:year/:monthnum/:slug`), and the category, tag and author pages' are the source's
-        bases (`/:lang/category/:slug`, `/:lang/tag/:slug`, `/:lang/author/:slug`); otherwise they
+        bases (`/:lang/category/*slug`, `/:lang/tag/:slug`, `/:lang/author/:slug`), a category's
+        with its chain of parents as WordPress writes it (`/category/travel/berlin`); otherwise they
         stay where they are;
       * the list of posts, the Blog's `/:lang/blog` page, moves by the run's `posts_page`:
         `"source"` to the source's posts page (`front_page`'s `"posts_page_link"`), or to `/`
@@ -106,14 +107,14 @@ if Code.ensure_loaded?(MishkaBlog.Address) do
          }),
          do: %{
            "blog:post" => "/:lang" <> found["pattern"],
-           "blog:category" => based(found["category_base"]),
-           "blog:tag" => based(found["tag_base"]),
-           "blog:author" => based(found["author_base"] || "author")
+           "blog:category" => based(found["category_base"], "*slug"),
+           "blog:tag" => based(found["tag_base"], ":slug"),
+           "blog:author" => based(found["author_base"] || "author", ":slug")
          }
 
     defp wanted(_blog_addresses), do: %{}
 
-    defp based(base), do: "/:lang/" <> base <> "/:slug"
+    defp based(base, capture), do: "/:lang/" <> base <> "/" <> capture
 
     defp record_of(%{extra: %{"record" => record}}), do: record
     defp record_of(%{path: @list}), do: @home

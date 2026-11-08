@@ -17,14 +17,20 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     it, with a 301, to where the site serves that, as the same run or an earlier one wrote it:
 
       * a post, a category, a tag and an author (`"user"`) — at the address its Blog page gives it
-        (`MishkaBlog.Address.of/3`), or the Blog's own one on a site with no such page
-        (`MishkaBlog.Provision.item_paths/0`), the post with its date, number and first category: `/blog/hello`,
+        (`MishkaBlog.Address.of/3`), the post with its date, number and first category and the
+        category with its chain of parents where its page names them: `/blog/hello`,
         `/2025/12/hello` on a site that keeps WordPress's addresses, `/fa/blog/salam` in Persian;
+        an author with no blogger on the site, such as one the admin chose to connect by an email
+        no user has, at the Blog's list of posts;
       * a page — at its path;
       * a file — at its Media address (`MishkaCmsMigration.Targets.CmsMedia.addresses/2`);
-      * `"list"`, the feeds and date archives — at the Blog's list of posts
-        (`MishkaCmsMigration.Targets.Helpers.BlogPages.list_address/1`); the Blog has no feed and no
-        date archive.
+      * `"list"`, the feeds, the date archives and the pages of the front's list — at the Blog's list
+        of posts (`MishkaCmsMigration.Targets.Helpers.BlogPages.list_address/1`); the Blog has no
+        feed and no date archive;
+      * `"sitemap"`, WordPress's sitemaps — at the site's own `/sitemap.xml`.
+
+    An item whose `"to"` names a `"page"` (`/category/news/page/2`) is sent to that page of the
+    list, `?page=2`.
 
     The records are read once a page, one query for the items and one for the records of each kind
     the page points at.
@@ -39,17 +45,23 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       * `"keep"` (the default) and `"blog"` — a rule is written for each item, except:
         * one the source gives no address (`"from"` is `nil`, such as a draft's) — skipped as
           `"no_old_address"`;
-        * in an import, one whose post has no Blog post — it failed, was never written or an admin
-          left it out — skipped as `"post_missing"`, and one whose category, tag, author, page or
-          file has no record, as `"not_imported"`;
+        * one whose post has no Blog post — it failed, was never written or an admin left it out
+          — skipped as `"post_missing"`, and one whose category, tag, page or file has no record,
+          as `"not_imported"`;
+        * one whose record no visitor can open at an address — a post that is not published, such
+          as one behind a password at the source, an inactive page or category, or a record the
+          site has no page for — skipped as `"not_served"`: a redirect is never written to an
+          address that does not answer;
         * in an import, one the site serves at the same address already, such as a post whose
           WordPress address its kept address is — skipped as `"same_address"`. So a post the
           site serves elsewhere than WordPress did, a date written in another timezone or a
           category under a parent (`/tutorials/news/hello` where the Blog's `:category` is the
           post's own category, `/news/hello`), is redirected without a rule of its own.
 
-    A dry run writes no post, so it does not look for one: an item it plans may still be skipped
-    for its post when the import runs.
+    A dry run reads the records an earlier run wrote, as the import does, and the plans it recorded
+    for the items it walked before this kind, so it says what the import will do: an item whose
+    record it plans to write is planned as created (skipped as `"not_served"` when it writes it as
+    a draft), and one whose record it does not is skipped as the import skips it.
 
     An old address the site already redirects, by a rule of an admin's own or of another source's
     run, is refused by the core's one-rule-per-address identity, and the item fails with the core's
@@ -70,10 +82,12 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       create: :create,
       update: :update
 
-    alias MishkaBlog.{Address, Blogger, BlogPost, Collection, Provision, Tag}
+    alias MishkaBlog.{Address, Blogger, BlogPost, Collection, Tag}
     alias MishkaCmsCore.Runtime.{Languages, Page, Redirects}
     alias MishkaCmsMigration.Targets.CmsMedia
     alias MishkaCmsMigration.Targets.Helpers.{BlogPages, Written}
+
+    @sitemap "/sitemap.xml"
 
     @written %{
       "post" => {BlogPost, "post"},
@@ -82,6 +96,8 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       "user" => {Blogger, "user"},
       "page" => {Page, "page"}
     }
+
+    @written_kinds Map.keys(@written) ++ ["media"]
 
     @impl MishkaCmsMigration.Target
     def existing(items, %{options: %{post_address: "blog_without_redirects"}}),
@@ -101,25 +117,25 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       %{
         from_path: item.attrs["from"],
         from_query: item.attrs["query"],
-        to: [item] |> addresses(context) |> Map.get(to(item)),
+        to: [item] |> addresses(context) |> Map.get(to(item)) |> paged(item),
         status: 301
       }
     end
 
     defp found(%{attrs: %{"from" => "/" <> _}} = item, addresses, context),
-      do: planned(item, addresses, context)
+      do: addresses |> Map.get(to(item)) |> paged(item) |> moved(item, context.mode)
 
     defp found(_no_old_address, _addresses, _context), do: {:skipped, "no_old_address"}
 
-    defp planned(_item, _addresses, %{mode: :dry_run}), do: nil
+    defp moved(:not_served, _item, _mode), do: {:skipped, "not_served"}
+    defp moved(:planned, _item, :dry_run), do: nil
 
-    defp planned(item, addresses, _context),
-      do: addresses |> Map.get(to(item)) |> moved(item)
+    defp moved(nil, %{attrs: %{"to" => %{"kind" => "post"}}}, _mode),
+      do: {:skipped, "post_missing"}
 
-    defp moved(nil, %{attrs: %{"to" => %{"kind" => "post"}}}), do: {:skipped, "post_missing"}
-    defp moved(nil, _item), do: {:skipped, "not_imported"}
-    defp moved(to, %{attrs: %{"query" => nil, "from" => from}}), do: unmoved(from, to)
-    defp moved(_to, _queried), do: nil
+    defp moved(nil, _item, _mode), do: {:skipped, "not_imported"}
+    defp moved(to, %{attrs: %{"query" => nil, "from" => from}}, _mode), do: unmoved(from, to)
+    defp moved(_to, _queried, _mode), do: nil
 
     defp unmoved(from, to),
       do: from |> Redirects.normalize_path() |> same(Redirects.normalize_path(to))
@@ -130,36 +146,80 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     defp to(%{attrs: %{"to" => %{"kind" => kind, "id" => id}}}), do: {kind, id}
     defp to(_item), do: nil
 
-    # WHERE THE SITE SERVES WHAT EACH ITEM POINTS AT, by `{kind, id}`: one read of the records of each
-    # kind the items point at, none in a dry run.
-    defp addresses(_items, %{mode: :dry_run}), do: %{}
+    # The page of a list an address names (`/category/news/page/2`), as the list's pager asks for it.
+    defp paged(address, %{attrs: %{"to" => %{"page" => page}}})
+         when is_binary(address) and is_integer(page),
+         do: address <> "?page=" <> Integer.to_string(page)
 
+    defp paged(address, _item), do: address
+
+    # WHERE THE SITE SERVES WHAT EACH ITEM POINTS AT, by `{kind, id}`: one read of the records of each
+    # kind the items point at, in a dry run too, where a record an earlier run wrote is found.
+    # `:not_served` for a record no visitor can open there, and in a dry run `:planned` for one its
+    # walk of that kind plans to write (`:not_served` again for one it writes as a draft), read in one
+    # more query of the kind's items.
     defp addresses(items, context) do
       items
       |> Enum.flat_map(&List.wrap(to(&1)))
       |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-      |> Enum.flat_map(fn {kind, ids} -> served(kind, Enum.uniq(ids), context) end)
+      |> Enum.flat_map(fn {kind, ids} ->
+        ids = Enum.uniq(ids)
+        served = served(kind, ids, context)
+        served ++ planned(kind, ids -- for({{_kind, id}, _to} <- served, do: id), context)
+      end)
       |> Map.new()
     end
+
+    defp planned(kind, missing, %{mode: :dry_run} = context) when kind in @written_kinds,
+      do:
+        for(
+          {id, reason} <- Written.planned(kind, missing, context),
+          do: {{kind, id}, reason |> to_string() |> String.contains?("draft_from_") |> drafted()}
+        )
+
+    defp planned(_kind, _missing, _context), do: []
+
+    # A record the walk plans to write as a draft (`"draft_from_password"`) will not be served.
+    defp drafted(true), do: :not_served
+    defp drafted(false), do: :planned
 
     defp served("list", _ids, context),
       do: [{{"list", nil}, BlogPages.list_address(context.site_id)}]
 
+    defp served("sitemap", _ids, _context), do: [{{"sitemap", nil}, @sitemap}]
+
     defp served("media", ids, context),
       do: for({id, path} <- CmsMedia.addresses(ids, context), do: {{"media", id}, path})
 
-    defp served(kind, ids, context) when is_map_key(@written, kind) do
-      {resource, written} = Map.fetch!(@written, kind)
+    # AN AUTHOR WITH NO BLOGGER ON THE SITE, as when the admin connected the authors to users by
+    # email and none matched, is sent to the list of posts.
+    defp served("user", ids, context) do
+      found = written("user", ids, context)
+      list = BlogPages.list_address(context.site_id)
 
-      for {id, record} <- Written.call(read(resource), written, ids, context),
-          address = address(record, context.site_id),
-          do: {{kind, id}, address}
+      for id <- ids, do: {{"user", id}, Map.get(found, id, list)}
     end
+
+    defp served(kind, ids, context) when is_map_key(@written, kind),
+      do: for({id, address} <- written(kind, ids, context), do: {{kind, id}, address})
 
     defp served(_kind, _ids, _context), do: []
 
+    defp written(kind, ids, context) do
+      {resource, written} = Map.fetch!(@written, kind)
+
+      for {id, record} <- Written.call(read(resource), written, ids, context),
+          into: %{},
+          do: {id, address(record, context.site_id)}
+    end
+
     defp read(BlogPost), do: Ash.Query.load(BlogPost, :first_category_slug)
+    defp read(Collection), do: Ash.Query.load(Collection, :slug_path)
     defp read(resource), do: resource
+
+    defp address(%BlogPost{status: status}, _site_id) when status != :published, do: :not_served
+    defp address(%Collection{status: status}, _site_id) when status != :active, do: :not_served
+    defp address(%Page{active: false}, _site_id), do: :not_served
 
     defp address(%Page{path: path, language: language}, site_id),
       do:
@@ -167,23 +227,11 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
           path,
           %{Languages.capture() => language || Languages.primary(site_id)},
           site_id
-        )
+        ) || :not_served
 
     defp address(%Blogger{} = blogger, site_id),
-      do: at_page(blogger, site_id, Languages.primary(site_id))
+      do: Address.of(blogger, site_id, Languages.primary(site_id)) || :not_served
 
-    defp address(record, site_id), do: at_page(record, site_id, nil)
-
-    # A site with no page for the kind yet, one the Blog's pages were never set up on, is given the
-    # Blog's own address for it.
-    defp at_page(record, site_id, language),
-      do:
-        Address.of(record, site_id, language) ||
-          Address.fill(default_path(record), record, site_id, language)
-
-    defp default_path(%BlogPost{}), do: Provision.item_paths().post
-    defp default_path(%Collection{}), do: Provision.item_paths().category
-    defp default_path(%Tag{}), do: Provision.item_paths().tag
-    defp default_path(%Blogger{}), do: Provision.item_paths().author
+    defp address(record, site_id), do: Address.of(record, site_id) || :not_served
   end
 end
