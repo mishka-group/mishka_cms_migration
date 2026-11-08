@@ -1632,16 +1632,31 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   @doc """
   The run `id` as `user` may read it: a master's on any site, a site admin's on their own site
-  alone. `{:ok, nil}` for a run that is not there or that `user` may not read.
+  alone, with what `opts[:load]` names loaded. `{:ok, nil}` for a run that is not there or that
+  `user` may not read.
   """
-  @spec fetch(String.t(), map()) :: {:ok, struct() | nil} | {:error, term()}
-  def fetch(id, %{site_id: nil} = user),
-    do: Ash.get(__MODULE__, id, action: :master_get, actor: user, not_found_error?: false)
+  @spec fetch(String.t(), map(), keyword()) :: {:ok, struct() | nil} | {:error, term()}
+  def fetch(id, user, opts \\ [])
 
-  def fetch(id, %{site_id: site_id} = user),
-    do: MishkaCmsMigration.get_run(id, actor: user, tenant: site_id, not_found_error?: false)
+  def fetch(id, %{site_id: nil} = user, opts),
+    do:
+      Ash.get(__MODULE__, id,
+        action: :master_get,
+        actor: user,
+        not_found_error?: false,
+        load: opts[:load] || []
+      )
 
-  def fetch(_id, _no_user), do: {:ok, nil}
+  def fetch(id, %{site_id: site_id} = user, opts),
+    do:
+      MishkaCmsMigration.get_run(id,
+        actor: user,
+        tenant: site_id,
+        not_found_error?: false,
+        load: opts[:load] || []
+      )
+
+  def fetch(_id, _no_user, _opts), do: {:ok, nil}
 
   @doc """
   Whether `run` still holds what its source connects with, so a job can connect again: the file it
@@ -1805,6 +1820,20 @@ defmodule MishkaCmsMigration.MigrationRun do
   end
 
   def result_outcomes(_no_report), do: []
+
+  @doc """
+  `result_outcomes/1` of `run`'s report, its count of what needs a decision being what waits for
+  one now among the items of its source host (its `decisions` calculation, when loaded), as the
+  Items page's Decisions panel counts it: so the run's Result chips and its details say the
+  panel's number, 0 once the admin decided everything, not the number its report counted.
+  """
+  @spec outcomes_now(map()) :: [{atom(), non_neg_integer()}]
+  def outcomes_now(%{report: report} = run),
+    do:
+      for(
+        {outcome, count} <- result_outcomes(report),
+        do: {outcome, waiting_now(outcome, count, decisions(run))}
+      )
 
   @doc """
   One outcome's count in words, as a Result pill's tooltip begins: `"3 created"`, or
@@ -2003,8 +2032,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     decisions = decisions(run)
 
     outcomes =
-      for {outcome, count} <- result_outcomes(report),
-          count = waiting_now(outcome, count, decisions),
+      for {outcome, count} <- outcomes_now(run),
           do: outcome_pill(outcome, count, shared_reason(report, outcome, count))
 
     chips =

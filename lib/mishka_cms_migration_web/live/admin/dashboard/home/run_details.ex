@@ -11,8 +11,8 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
     * The head says where the run is (`MishkaCmsMigration.MigrationRun.status_label/1`), what the
       report it shows came from and when that finished: the import of a run that is done, its last
       dry run otherwise. Under it, how many items the source listed, a bar of what came of them and
-      a pill for each outcome counted more than none of
-      (`MishkaCmsMigration.MigrationRun.result_outcomes/1`), with the icon and colours of the row's
+      a pill for each outcome counted more than none of, what needs a decision counted as the
+      Items page's Decisions panel counts it (`MishkaCmsMigration.MigrationRun.outcomes_now/1`), with the icon and colours of the row's
       Result pills (`outcome_icon/1`, `outcome_class/1`). A failed run says why it stopped, in
       words for the reasons a source and the job give (`MishkaCmsMigration.Report.reason/1`) and
       as it is for any other.
@@ -262,7 +262,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         <.bar counts={@report.counts} class="h-[8px]" />
         <div data-role="run-details-outcomes" class="mt-3 flex flex-wrap gap-[6px]">
           <.outcome_pill
-            :for={{outcome, count} <- MigrationRun.result_outcomes(@report)}
+            :for={{outcome, count} <- MigrationRun.outcomes_now(%{@run | report: @report})}
             role="run-details-outcome"
             outcome={outcome}
             count={count}
@@ -636,7 +636,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         title={gettext("About the source")}
         subtitle={@source}
       />
-      <dl class="m-0 grid gap-y-2.5">
+      <dl class="m-0 grid grid-cols-[minmax(0,1fr)] gap-y-2.5">
         <div
           :for={fact <- @facts}
           data-role="run-details-fact"
@@ -656,7 +656,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
               <.icon name="hero-arrow-top-right-on-square" class="size-[12px] flex-none" />
               <span class="sr-only">{gettext("(opens in a new tab)")}</span>
             </a>
-            <span :if={!fact.href} class="block truncate" title={fact.value}>{fact.value}</span>
+            <span :if={!fact.href} class="block wrap-anywhere">{fact.value}</span>
           </dd>
         </div>
       </dl>
