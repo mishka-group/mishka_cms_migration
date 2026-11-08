@@ -74,8 +74,9 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       which is not kept in a post's `meta`) and `/?p=<id>`; each published page's `/?page_id=<id>`;
       each file's attachment page and `/?attachment_id=<id>`; each category's, tag's and author's
       archive, made from the bases the posts' addresses tell (`"permalinks"`, an export carrying
-      no term address) and the category's parents, the tag's slug or the author's login (an export
-      does not carry WordPress's `user_nicename`, which is the login unless it was changed), with
+      no term address) and the category's parents, the tag's slug or the author's `slug` (an
+      export does not carry WordPress's `user_nicename`, which WordPress makes of the login, lower
+      case and with no character an address cannot hold, as the `slug` is made), with
       `/?cat=<id>`, `/?tag=<slug>` and `/?author=<id>`; and the feeds and date archives of the
       published posts;
     * menu — each `nav_menu` term (`wp:term`, which an export may list twice) with its
@@ -526,7 +527,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp rows("wp:author", element, "user", _conn), do: [user(element)]
 
   defp rows("wp:author", element, "post_redirect", conn),
-    do: element |> user() |> addressed("user", conn, & &1["username"])
+    do: element |> user() |> addressed("user", conn, & &1["slug"])
 
   defp rows("wp:category", element, "post_redirect", conn),
     do:
@@ -572,6 +573,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
       element
       |> posted(%{})
       |> Map.take(~w(id title status slug link modified_gmt))
+      |> Map.put("content", %{"raw" => text(element, "content:encoded") || ""})
       |> Map.put("old_slugs", old_slugs(element))
       |> Addresses.post()
 

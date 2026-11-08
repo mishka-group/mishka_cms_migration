@@ -424,8 +424,11 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
       assert ids(kinds["post"]) == posts
 
-      assert for(id <- ids(kinds["post_redirect"]), not String.contains?(id, ["?", ":"]), do: id) ==
-               posts
+      assert for(
+               id <- ids(kinds["post_redirect"]),
+               not String.contains?(id, ["?", ":", "/"]),
+               do: id
+             ) == posts
 
       refute Enum.any?(
                ids(kinds["post_redirect"]),

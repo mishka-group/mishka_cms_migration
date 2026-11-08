@@ -333,10 +333,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   # the feeds and date archives of the published posts.
   @addressed_kinds [
     {"post",
-     {"/wp/v2/posts", [status: "any", _fields: "id,title,status,slug,link,modified_gmt"]}},
+     {"/wp/v2/posts", [status: "any", _fields: "id,title,status,slug,link,modified_gmt,content"]}},
     {"page", {"/wp/v2/pages", [status: "publish", _fields: "id,title,status,modified_gmt"]}},
-    {"category", {"/wp/v2/categories", [_fields: "id,name,slug,link"]}},
-    {"tag", {"/wp/v2/tags", [_fields: "id,name,slug,link"]}},
+    {"category", {"/wp/v2/categories", [_fields: "id,name,slug,link,count"]}},
+    {"tag", {"/wp/v2/tags", [_fields: "id,name,slug,link,count"]}},
     {"user", {"/wp/v2/users", [_fields: "id,name,slug,link"]}},
     {"media", {"/wp/v2/media", [_fields: "id,title,link,modified_gmt"]}},
     {"archive", {"/wp/v2/posts", [status: "publish", _fields: "id,status,slug,date,link"]}}
@@ -632,9 +632,12 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   end
 
   # One page of an addressed kind's rows becomes their addresses; the archives are made from every
-  # published post at once.
+  # published post at once, with the posts page the site's settings name.
   defp address_page(%{req: req, index: index}, {"archive", {route, params}}, _cursor),
-    do: req |> every(route, params, 1, []) |> archives(index["home"])
+    do:
+      req
+      |> every(route, params, 1, [])
+      |> archives(index["home"], req |> Req.get(url: "/wp/v2/settings") |> front_page(req))
 
   defp address_page(conn, {kind, route}, cursor) do
     case paged(conn, kind, route, cursor) do
@@ -655,14 +658,15 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp addresses("media", row), do: Addresses.media(row)
   defp addresses(kind, row), do: Addresses.term(row, kind, row["link"])
 
-  defp archives({:ok, posts}, home) do
+  defp archives({:ok, posts}, home, front_page) do
     %{"structure" => structure} =
       Permalinks.call(%{posts: posts, categories: %{}, terms: %{}, home: home, languages: []})
 
-    {:ok, Addresses.archives(posts, structure, home), nil}
+    posts_page = get_in(front_page, ["front_page", "posts_page_link"])
+    {:ok, Addresses.archives(posts, structure, home, posts_page), nil}
   end
 
-  defp archives(refused, _home), do: refused
+  defp archives(refused, _home, _front_page), do: refused
 
   @doc """
   The rows of `kind` with the WordPress ids `source_ids`, what a job of picked items reads: asked
@@ -708,7 +712,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   end
 
   defp addressed_id(id),
-    do: id |> String.split(":", parts: 2) |> List.last() |> String.split(~r/[?~]/) |> hd()
+    do: id |> String.split(":", parts: 2) |> List.last() |> String.split(~r{[?~/]}) |> hd()
 
   defp addressed_rows(conn, kind, ids),
     do: addressed_rows(conn, kind, ids, List.keyfind(@addressed_kinds, kind, 0))

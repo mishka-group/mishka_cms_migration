@@ -18,25 +18,43 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
       of its own, such as a draft's `/?p=39`);
     * `"query"` — the query string the address is only with, on `/` (`"p=35"`), or `nil`;
     * `"to"` — what it points at, `%{"kind" => kind, "id" => id}`: a `"post"`, `"page"`,
-      `"category"`, `"tag"`, `"user"` or `"media"` by its WordPress id, or `"list"`, the Blog's
-      list of posts, with no id;
+      `"category"`, `"tag"`, `"user"` or `"media"` by its WordPress id, `"list"`, the Blog's
+      list of posts, or `"sitemap"`, the site's sitemap, with no id; and `"page"`, the page of a
+      list it names (`/category/news/page/2` is the category's page 2);
     * `"modified_gmt"` — when what it points at last changed, where the row says.
 
   What each kind of row gives:
 
     * a post — its `link` (`/2026/02/hello/`), the address it had under each earlier slug
-      (WordPress's `_wp_old_slug`, as `"old_slugs"`: `/2026/02/hello-world/`) and, once published,
-      `/?p=<id>`;
+      (WordPress's `_wp_old_slug`, as `"old_slugs"`: `/2026/02/hello-world/`), its feed
+      (`/2026/02/hello/feed/`), each page after the first its text splits into with
+      `<!--nextpage-->` (`/2026/02/hello/2/`) and, once published, `/?p=<id>`;
     * a published page — `/?page_id=<id>` (its own address is kept as the page's path);
     * a category, a tag and an author — its archive's address, the term's or user's `link` or, for
       an export, which carries none, the one its base and slug make (`/category/tutorials/news/`
-      with its parents), and `/?cat=<id>`, `/?tag=<slug>` or `/?author=<id>`;
+      with its parents), its feed, each page of its archive after the first by the term's
+      `"count"` of posts (an author's count is not read, so it has none), and `/?cat=<id>`,
+      `/?tag=<slug>` or `/?author=<id>`;
     * a file — its attachment page (its `link`) and `/?attachment_id=<id>`;
-    * the published posts as a whole (`archives/3`) — the site's feeds, `/feed` and
-      `/comments/feed`, and the archive of each year and month a post was published in, under the
-      structure's front as WordPress puts them (`/2026/02`, `/archives/date/2026/02` for
-      `/archives/%post_id%`): the Blog has neither, so they point at its list.
+    * the published posts as a whole (`archives/4`) — the site's feeds, date archives, the pages
+      of its list and its sitemaps.
+
+  A list's pages are counted at WordPress's default of ten posts a page, and a comment's page
+  (`/comment-page-2/`) and a search (`/search/elixir/`) have none: WordPress pages no comments
+  unless told to, and a search is any words.
   """
+
+  # WordPress's own default of posts a page of a list holds (`posts_per_page`), which neither an
+  # export nor the addresses' reads carry.
+  @per_page 10
+
+  @feeds ~w(/feed /feed/rss /feed/rss2 /feed/atom /feed/rdf /rss /rss2 /atom /rdf /comments/feed)
+
+  @sitemaps ~w(/wp-sitemap.xml /sitemap_index.xml /post-sitemap.xml /page-sitemap.xml
+               /category-sitemap.xml /post_tag-sitemap.xml /author-sitemap.xml
+               /wp-sitemap-posts-post-1.xml /wp-sitemap-posts-page-1.xml
+               /wp-sitemap-taxonomies-category-1.xml /wp-sitemap-taxonomies-post_tag-1.xml
+               /wp-sitemap-users-1.xml)
 
   @doc "The addresses of a post row (see the module doc)."
   @spec post(map()) :: [map()]
@@ -47,7 +65,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
       for(
         {old_slug, old} <- old_paths(from, row),
         do: rule(row, "#{id}~#{old_slug}", old, nil, "post")
-      ) ++ queried(row, "#{id}?p", "p=#{id}", "post")
+      ) ++
+      queried(row, "#{id}?p", "p=#{id}", "post") ++
+      under(row, to_string(id), from, "post", ["feed" | paged_post(row)], nil)
   end
 
   @doc "The addresses of a page row: `/?page_id=<id>` once it is published."
@@ -63,10 +83,14 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     key = "#{kind}:#{id}"
     row = Map.put_new(row, "status", "publish")
 
+    from = own_link(from)
+
     [
-      rule(row, key, own_link(from), nil, kind)
+      rule(row, key, from, nil, kind)
       | queried(row, key <> "?" <> param(kind), query(row, kind), kind)
-    ]
+    ] ++
+      under(row, key, from, kind, ["feed"], nil) ++
+      Enum.flat_map(list_pages(row["count"]), &under(row, key, from, kind, ["page/#{&1}"], &1))
   end
 
   @doc "The addresses of a file row: its attachment page and `/?attachment_id=<id>`."
@@ -80,33 +104,95 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
   end
 
   @doc """
-  The feeds and the date archives of the published `posts` (one whose `"status"` is another is
-  left out), each `"date"` (the site's own time) and `"link"`,
-  under `structure` (`"/%year%/%monthnum%/%postname%/"`, or `nil`) on a site at `home`.
+  The site's own addresses that show its published `posts` as a whole (one whose `"status"` is
+  another is left out), each with its `"date"` (the site's own time), under `structure`
+  (`"/%year%/%monthnum%/%postname%/"`, or `nil`) on a site at `home`, whose list of posts is at
+  `posts_page` (a link, or `nil` for the front):
+
+    * the feeds (`/feed`, `/feed/atom`, `/rss2`, `/comments/feed`, the posts page's `/blog/feed`),
+      the archive of each year, month and day a post was published in and its feed, and each page
+      of the list (`/page/2`, `/blog/page/2`) — all at the Blog's list of posts, the pages at the
+      same page of it;
+    * WordPress's sitemaps (`/wp-sitemap.xml`, `/sitemap_index.xml`, `/post-sitemap.xml`, …) — at
+      the site's own sitemap.
   """
-  @spec archives([map()], String.t() | nil, String.t() | nil) :: [map()]
-  def archives(posts, structure, home) do
+  @spec archives([map()], String.t() | nil, String.t() | nil, String.t() | nil) :: [map()]
+  def archives(posts, structure, home, posts_page \\ nil) do
     root = home |> own_link() |> Kernel.||("") |> String.trim_trailing("/")
     front = root <> date_front(structure)
+    published = for post <- posts, Map.get(post, "status", "publish") == "publish", do: post
+    lists = Enum.uniq([root | List.wrap(posts_page |> own_link() |> trimmed())])
 
     dated =
-      for %{"date" => date} = post when is_binary(date) <- posts,
-          Map.get(post, "status", "publish") == "publish",
-          <<year::binary-size(4), "-", month::binary-size(2), _rest::binary>> <- [date],
-          path <- [front <> year, front <> year <> "/" <> month],
+      for %{"date" => date} when is_binary(date) <- published,
+          <<year::binary-size(4), "-", month::binary-size(2), "-", day::binary-size(2),
+            _rest::binary>> <- [date],
+          path <- [
+            front <> year,
+            front <> year <> "/" <> month,
+            Enum.join([front <> year, month, day], "/")
+          ],
+          path <- [path, path <> "/feed"],
           uniq: true,
           do: path
 
-    for path <- [root <> "/feed", root <> "/comments/feed" | Enum.sort(dated)],
+    listed =
+      for(
+        path <- Enum.map(@feeds, &(root <> &1)) ++ Enum.sort(dated),
+        do: archive(path, "list", nil)
+      ) ++
+        for(list <- tl(lists), do: archive(list <> "/feed", "list", nil)) ++
+        for(
+          list <- lists,
+          page <- list_pages(length(published)),
+          do: archive(list <> "/page/#{page}", "list", page)
+        )
+
+    listed ++ for(path <- @sitemaps, do: archive(root <> path, "sitemap", nil))
+  end
+
+  defp archive(path, kind, page),
+    do: %{
+      "id" => "archive:" <> path,
+      "title" => path,
+      "from" => path,
+      "query" => nil,
+      "to" => pointed(%{"kind" => kind, "id" => nil}, page),
+      "modified_gmt" => nil
+    }
+
+  # THE ADDRESSES UNDER A RECORD'S OWN, `/feed` and the pages of a list or of a post, each pointing at
+  # the record, a list's at its `page`.
+  defp under(_row, _key, nil, _kind, _suffixes, _page), do: []
+
+  defp under(row, key, from, kind, suffixes, page) do
+    for suffix <- suffixes,
         do: %{
-          "id" => "archive:" <> path,
-          "title" => path,
-          "from" => path,
-          "query" => nil,
-          "to" => %{"kind" => "list", "id" => nil},
-          "modified_gmt" => nil
+          rule(row, key <> "/" <> suffix, trimmed(from) <> "/" <> suffix, nil, kind)
+          | "to" => pointed(%{"kind" => kind, "id" => to_string(row["id"])}, page)
         }
   end
+
+  defp pointed(to, page) when is_integer(page), do: Map.put(to, "page", page)
+  defp pointed(to, _no_page), do: to
+
+  # The pages after the first of a list of `count` posts, `@per_page` a page as WordPress lists them.
+  defp list_pages(count) when is_integer(count) and count > @per_page,
+    do: Enum.to_list(2..div(count + @per_page - 1, @per_page))
+
+  defp list_pages(_one_page), do: []
+
+  # The pages after the first of a post its text splits with `<!--nextpage-->` (`/hello/2`).
+  defp paged_post(%{"content" => %{"raw" => raw}}) when is_binary(raw),
+    do: raw |> String.split("<!--nextpage-->") |> length() |> post_pages()
+
+  defp paged_post(_row), do: []
+
+  defp post_pages(1), do: []
+  defp post_pages(pages), do: Enum.map(2..pages, &Integer.to_string/1)
+
+  defp trimmed(nil), do: nil
+  defp trimmed(path), do: String.trim_trailing(path, "/")
 
   # WordPress moves its date archives under `date/` when `%post_id%` is one of the structure's first
   # three tags, so the two cannot be read as each other.
