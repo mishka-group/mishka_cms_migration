@@ -2882,6 +2882,8 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
 
+  defp said("same_file"), do: dgettext("mishka_gervaz", "Same file as another file of the source")
+
   defp said("same_file: " <> title),
     do: dgettext("mishka_gervaz", "Same file as %{title}", title: title)
 
@@ -2905,8 +2907,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("same_file_kept"),
     do: dgettext("mishka_gervaz", "Same file as another, kept as its own, as you decided")
 
+  defp said("draft_pages"), do: dgettext("mishka_gervaz", "Links to pages that are not live")
+
   defp said("draft_pages: " <> labels),
     do: dgettext("mishka_gervaz", "Links to pages that are not live: %{labels}", labels: labels)
+
+  defp said("language_urls"),
+    do: dgettext("mishka_gervaz", "Its links depend on how addresses name the language")
 
   defp said("language_urls: " <> cause),
     do:
@@ -2916,6 +2923,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("waits_for_language_urls"),
     do: dgettext("mishka_gervaz", "Waits for the site's language addresses, as you decided")
+
+  defp said("language_missing"),
+    do: dgettext("mishka_gervaz", "Its language is not one of the site's languages")
 
   defp said("language_missing: " <> language),
     do:
@@ -2965,6 +2975,9 @@ defmodule MishkaCmsMigration.MigrationRun do
 
   defp said("file_missing"), do: dgettext("mishka_gervaz", "Its file was not imported")
 
+  defp said("scripts"),
+    do: dgettext("mishka_gervaz", "Contains scripts or inline event handlers")
+
   defp said("scripts: " <> found),
     do:
       dgettext("mishka_gervaz", "Contains scripts or inline event handlers: %{found}",
@@ -2986,6 +2999,9 @@ defmodule MishkaCmsMigration.MigrationRun do
         "Its scripts and inline event handlers kept, as you decided: %{found}",
         found: found
       )
+
+  defp said("unsupported_widgets"),
+    do: dgettext("mishka_gervaz", "Widgets the CMS has no equivalent for")
 
   defp said("unsupported_widgets: " <> names),
     do: dgettext("mishka_gervaz", "Widgets the CMS has no equivalent for: %{names}", names: names)

@@ -9,7 +9,7 @@ defmodule MishkaCmsMigration.ReportTest do
   """
   use ExUnit.Case, async: true
 
-  alias MishkaCmsMigration.{MigrationRun, Report}
+  alias MishkaCmsMigration.{MigrationItem, MigrationRun, Report}
 
   defp add_many(report, kind, ids, outcome),
     do: Enum.reduce(ids, report, &Report.add(&2, Report.entry(kind, "#{&1}", nil, outcome, nil)))
@@ -87,6 +87,11 @@ defmodule MishkaCmsMigration.ReportTest do
 
     for code <- ~w(player_not_allowed waits_for_admin player_left_out),
         do: refute(MigrationRun.reason_label(code) == code)
+  end
+
+  test "every conflict an admin may answer is named in words, as a Decisions card says it" do
+    for code <- MigrationItem.conflict_codes(),
+        do: assert(MigrationRun.reason_label(code) != code, "#{code} has no words")
   end
 
   test "a comment left out, or written as a guest's, says why in words" do
