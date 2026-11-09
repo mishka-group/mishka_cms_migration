@@ -1639,6 +1639,13 @@ defmodule MishkaCmsMigration.MigrationItem do
   def choices(conflict), do: Map.get(@choices, conflict, [])
 
   @doc """
+  Every conflict an admin may answer (`choices/1`), as the Decisions panel groups items by it and
+  names each by `MishkaCmsMigration.MigrationRun.reason_label/2`.
+  """
+  @spec conflict_codes() :: [String.t()]
+  def conflict_codes, do: Map.keys(@choices)
+
+  @doc """
   The choice an item's earlier decisions carry to `conflict`, one a later run found on it that no
   admin has answered yet (`MishkaCmsMigration.Target.decision/3`): the choice the admin made on
   the item's other conflicts, when they all agree, and `conflict` offers it (`choices/1`). Only a

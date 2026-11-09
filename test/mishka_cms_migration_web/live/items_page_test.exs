@@ -1816,6 +1816,50 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       refute has_element?(view, group)
     end
 
+    test "names each card's conflict in words, not by its code",
+         %{conn: conn, site: site, admin: admin, run: run} do
+      created = Enum.filter(stored(site), &(&1.plan == :created))
+
+      waiting =
+        for {reason, item} <-
+              Enum.zip(
+                [
+                  "draft_pages: Team",
+                  "same_file: Hero image",
+                  "language_urls: polylang",
+                  "scripts: script"
+                ],
+                created
+              ) do
+          MigrationItem
+          |> Ash.Changeset.for_create(:record_outcome, %{
+            source_host: item.source_host,
+            source_kind: item.source_kind,
+            source_id: item.source_id,
+            run_id: run.id,
+            outcome: :undecided,
+            reason: reason
+          })
+          |> Ash.create!(tenant: site.id, authorize?: false)
+
+          reason |> String.split(": ") |> hd()
+        end
+
+      assert length(waiting) == 4
+      view = open!(conn, admin, run)
+      panel_settled(view)
+
+      for conflict <- waiting do
+        [title] =
+          view
+          |> parts(~s|[data-role="decision-group"][data-conflict="#{conflict}"] h3|)
+          |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+        assert title == MigrationRun.reason_label(conflict)
+        refute title == conflict
+      end
+    end
+
     test "says so in one line once nothing waits any more, instead of vanishing",
          %{conn: conn, site: site, admin: admin, run: run} do
       later = polylang_run!(site, admin, run)
