@@ -61,23 +61,39 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     A dry run reads the records an earlier run wrote, as the import does, and the plans it recorded
     for the items it walked before this kind, so it says what the import will do: an item whose
     record it plans to write is planned as created (skipped as `"not_served"` when it writes it as
-    a draft, as it writes every page unless the run's `pages` is `"publish"`), and one whose record it does not is skipped as the import skips it. A record it plans
-    to write has no address yet, so with `"keep"` and a permalink structure the source's posts
+    a draft, as it writes every page unless the run's `pages` is `"publish"`), and one whose
+    record it does not is skipped as the import skips it. A record it plans to write has no address
+    yet, so with `"keep"` and a permalink structure the source's posts
     share, the post's, category's or tag's own WordPress address is planned as `"same_address"`:
     the import serves the record there. A record in a language the site serves under a prefix
     (`MishkaCmsCore.Runtime.Languages.url/3`, `/fa`), whose WordPress address does not start with
     it, such as an export's Persian term at `/category/safar/`, is served under its language
     (`/fa/category/safar`) and redirected after all: its language is the one the item's `"to"`
     names, else the one the import writes it in
-    (`MishkaCmsMigration.Targets.Helpers.Editions.language/2`).
+    (`MishkaCmsMigration.Targets.Helpers.Editions.language/2`). A rule an earlier run wrote is
+    planned from where the site serves its record when the dry run reads it, before the import
+    moves the Blog's pages: one the import archives because the move puts the record at its old
+    address is planned `"unchanged"`.
 
     An old address the site already redirects, by a rule of an admin's own or of another source's
     run, is refused by the core's one-rule-per-address identity, and the item fails with the core's
     reason; the site's rule is kept as it is.
 
-    A re-run is held to the rules every target is: a rule WordPress did not change is
-    `"unchanged"`, and one an admin edited or deleted in the CMS is kept as the admin left it
-    (`MishkaCmsMigration.Workers.Helpers.Decision`). Switching the choice off later leaves the
+    A re-run is held to the rules every target is: one an admin deleted in the CMS is not brought
+    back (`MishkaCmsMigration.Workers.Helpers.Decision`). A rule an earlier
+    run wrote that no admin changed follows where the site serves its record now, though WordPress
+    did not change the item (`outdated/2`): one that sends elsewhere than that address, its path,
+    query and host, is written again to it, such as `/?p=44` from `/blog/hello` to
+    `/2025/12/hello` once a run keeps the WordPress addresses; and one whose old address is the
+    record's own address now is archived, as an admin's Archive does, and the item skipped as
+    `"same_address"` and forgotten, so a later run writes no rule for it again. A rule that still
+    sends to the record's address is `"unchanged"`. One an admin edited in the CMS is never written
+    or archived on the import's own: while it still sends to the record's address it is kept, and
+    once it does not, the item waits for the admin's decision, `"redirect_edited"`, which holds for
+    every later run: Let the import fix it (`"import"`), which archives the rule when its old
+    address is the record's own now and else sends it to the record's address, or Keep it as
+    edited (`"keep"`). A dry run that reads the record's address before the import moves the Blog's
+    pages asks the same question. Switching the choice off later leaves the
     rules an earlier run wrote.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
@@ -91,11 +107,13 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       update: :update
 
     alias MishkaBlog.{Address, Blogger, BlogPost, Collection, Tag}
-    alias MishkaCmsCore.Runtime.{Languages, Page, Redirects}
+    alias MishkaCmsCore.Runtime.{Languages, Page, Redirect, Redirects}
+    alias MishkaCmsMigration.{MigrationItem, Target}
     alias MishkaCmsMigration.Targets.CmsMedia
     alias MishkaCmsMigration.Targets.Helpers.{BlogPages, Editions, Written}
 
     @sitemap "/sitemap.xml"
+    @edited "redirect_edited"
 
     @written %{
       "post" => {BlogPost, "post"},
@@ -125,9 +143,110 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
       %{
         from_path: item.attrs["from"],
         from_query: item.attrs["query"],
-        to: [item] |> addresses(context) |> Map.get(to(item)) |> paged(item),
+        to: target_address(item, context),
         status: 301
       }
+    end
+
+    @impl MishkaCmsMigration.Target
+    def outdated(written, context) do
+      addresses = written |> Enum.map(&elem(&1, 0)) |> addresses(context)
+
+      for {item, rule, written_by} <- written,
+          address = addresses |> Map.get(to(item)) |> paged(item),
+          is_binary(address) and not same_address?(rule.to, address),
+          into: %{},
+          do: {item.source_id, outdated_rule(written_by, item, rule, address, context)}
+    end
+
+    @impl MishkaCmsMigration.Target
+    def waiting(item, %{record: %Redirect{} = rule} = context), do: retired(rule, item, context)
+    def waiting(_item, _context), do: nil
+
+    @impl MishkaCmsMigration.Target
+    def prepare(item, %{record: %Redirect{} = rule} = context, write) do
+      case retired(rule, item, context) do
+        nil -> write.(context)
+        skipped -> retire(rule, item, context, skipped)
+      end
+    end
+
+    def prepare(_item, context, write), do: write.(context)
+
+    defp outdated_rule(:written, _item, rule, _address, _context), do: {:updated, rule}
+
+    defp outdated_rule(:edited, item, rule, _address, context),
+      do: context |> Target.decision(item, @edited) |> edited(rule)
+
+    defp edited("import", rule), do: {:updated, rule}
+    defp edited("keep", _rule), do: {:skipped, "edited_in_cms"}
+    defp edited(nil, _rule), do: {:undecided, @edited}
+
+    defp target_address(item, context),
+      do: [item] |> addresses(context) |> Map.get(to(item)) |> paged(item)
+
+    # A rule on the address the site serves the item's record at now only shadows it.
+    defp retired(rule, item, context) do
+      case shadows?(rule, target_address(item, context)) do
+        true -> {:skipped, "same_address"}
+        false -> nil
+      end
+    end
+
+    defp shadows?(%Redirect{from_path: "/" <> _ = from, from_query: nil}, address)
+         when is_binary(address),
+         do: unmoved(from, address) != nil
+
+    defp shadows?(_rule, _address), do: false
+
+    # The rule is archived, as an admin's Archive does, and the item forgets it, so a later run
+    # finds the address served and writes no rule again.
+    defp retire(rule, item, context, skipped) do
+      Ash.transact([Redirect, MigrationItem], fn ->
+        with :ok <-
+               Ash.destroy(rule,
+                 actor: context.actor,
+                 tenant: context.site_id,
+                 context: %{warn_on_transaction_hooks?: false}
+               ),
+             {:ok, _item} <- forget(item, context),
+             do: skipped
+      end)
+      |> case do
+        {:ok, skipped} -> skipped
+        {:error, error} -> {:error, error}
+      end
+    end
+
+    defp forget(item, context),
+      do:
+        MishkaCmsMigration.record_item(
+          %{
+            source_host: context.source_host,
+            source_kind: item.kind,
+            source_id: item.source_id,
+            run_id: context.run_id,
+            title: item.title,
+            content_hash: nil,
+            target_resource: nil,
+            target_id: nil,
+            target_updated_at: nil,
+            outcome: :skipped,
+            reason: "same_address"
+          },
+          scope: context.scope
+        )
+
+    # The same address on the site: the same path, query and host, so `//evil.com/a` is never `/a`
+    # and `/news?page=2` never `/news?page=3`.
+    defp same_address?(stored, address) when is_binary(stored),
+      do: written_address(stored) == written_address(address)
+
+    defp same_address?(_stored, _address), do: false
+
+    defp written_address(address) do
+      uri = URI.parse(address)
+      {uri.host, Redirects.normalize_path(address), Redirects.normalize_query(uri.query)}
     end
 
     defp found(%{attrs: %{"from" => "/" <> _}} = item, addresses, context),

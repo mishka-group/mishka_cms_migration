@@ -24,6 +24,12 @@
   stay inside a narrow card [#58](https://github.com/mishka-group/mishka_cms_migration/pull/58)
 - The Items page keeps the run's status from its status moves, so a branch's buttons stay enabled
   after an import finishes [#59](https://github.com/mishka-group/mishka_cms_migration/pull/59)
+- A redirect an earlier run wrote follows where the site serves its record now: a rule that sends
+  elsewhere is written again to that address, and one whose old address is the record's own again
+  (a `/blog` run, then one that keeps the WordPress addresses) is archived, so it no longer sends a
+  live post to a 404 (`Target.outdated/2`). A rule an admin changed that no longer sends to its post,
+  or hides the post's address, waits for their decision (`"redirect_edited"`): let the import fix
+  it, or keep it as edited
 
 ### Refactors:
 - The source's facts are read only in a job of the whole run [#58](https://github.com/mishka-group/mishka_cms_migration/pull/58)

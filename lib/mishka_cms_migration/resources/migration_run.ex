@@ -2880,6 +2880,13 @@ defmodule MishkaCmsMigration.MigrationRun do
   defp said("address_taken"),
     do: dgettext("mishka_gervaz", "A page of the site is at this post's address")
 
+  defp said("redirect_edited"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "A redirect you edited no longer sends to its post, or hides the post's address"
+      )
+
   defp said("blog_missing"), do: dgettext("mishka_gervaz", "Mishka Blog is not installed")
 
   defp said("same_file"), do: dgettext("mishka_gervaz", "Same file as another file of the source")

@@ -21,6 +21,7 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
   alias MishkaCmsCore.Runtime.{Page, Redirect, Redirects}
   alias MishkaCmsCore.Settings
   alias MishkaCmsMigration.MigrationItem
+  alias MishkaCmsMigration.Targets.PostRedirect
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin [
@@ -71,6 +72,23 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
   # import's write can complete, and why anything else is held.
   defp settled(%{outcome: outcome}) when outcome in [:created, :updated], do: {outcome, nil}
   defp settled(%{outcome: outcome, reason: reason}), do: {outcome, reason}
+
+  defp edit_rule!(site, admin, from, to),
+    do:
+      Redirect
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.from_path == from))
+      |> Ash.Changeset.for_update(:update, %{to: to}, actor: admin, tenant: site.id)
+      |> Ash.update!()
+
+  defp decide!(site, admin, source_id, choice),
+    do:
+      MigrationItem
+      |> Ash.read!(tenant: site.id, authorize?: false)
+      |> Enum.find(&(&1.source_kind == "post_redirect" and &1.source_id == source_id))
+      |> MishkaCmsMigration.decide_item!(choice, actor: admin, tenant: site.id)
+
+  defp kind_counts(run, kind), do: Enum.find(run.report.kinds, &(&1.kind == kind))
 
   defp rules(site) do
     for rule <- Ash.read!(Redirect, tenant: site.id, authorize?: false),
@@ -237,6 +255,138 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
              end)
 
       assert outcomes(again, "post_redirect")["44"] == {:skipped, "same_address"}
+    end
+
+    # A first run under /blog redirects each WordPress address there; a run that keeps the
+    # addresses serves the post at that address again, so the rule would send it to a 404.
+    test "a run that keeps the addresses takes back the redirects an earlier /blog run wrote", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin, %{post_address: "blog", blog_pages: "create"})
+      assert rules(site)[{@release, nil}] == "/blog/release-1-0-announcement"
+      assert rules(site)[{"/", "p=44"}] == "/blog/release-1-0-announcement"
+
+      run = imported!(site, admin, %{post_address: "keep", blog_pages: "use"})
+
+      redirects = outcomes(run, "post_redirect")
+      assert redirects["44"] == {:skipped, "same_address"}
+      refute is_map_key(rules(site), {@release, nil})
+
+      # The rule on the post's old query follows the post to where it is served now.
+      assert rules(site)[{"/", "p=44"}] == @release
+
+      # The rule is archived, as an admin's Archive leaves it, and a later run asks nothing of it.
+      assert %{results: [%{from_path: @release}]} =
+               Redirect
+               |> Ash.Query.for_read(:archived, %{}, tenant: site.id, authorize?: false)
+               |> Ash.Query.filter(from_path == ^@release)
+               |> Ash.read!()
+
+      again = imported!(site, admin, %{post_address: "keep", blog_pages: "use"})
+      assert outcomes(again, "post_redirect")["44"] == {:skipped, "same_address"}
+      assert %{updated: 0, failed: 0, undecided: 0} = kind_counts(again, "post_redirect")
+    end
+
+    test "a rule is out of date unless it sends to the post's own path, query and host", %{
+      site: site,
+      admin: admin
+    } do
+      run = imported!(site, admin)
+
+      {:ok, item} =
+        MishkaCmsMigration.Source.Item.build(%{
+          kind: "post_redirect",
+          source_id: "p=44",
+          attrs: %{"from" => "/", "query" => "p=44", "to" => %{"kind" => "post", "id" => "44"}}
+        })
+
+      context = %{mode: :import, actor: admin, site_id: site.id, source_host: run.source_host}
+
+      outdated = fn to ->
+        rule = %Redirect{from_path: "/", from_query: "p=44", to: to}
+        PostRedirect.outdated([{item, rule, :written}], context) == %{"p=44" => {:updated, rule}}
+      end
+
+      refute outdated.(@release)
+      refute outdated.(@release <> "/")
+      assert outdated.("//evil.com" <> @release)
+      assert outdated.("https://evil.com" <> @release)
+      assert outdated.(@release <> "?p=44")
+      assert outdated.("/blog/release-1-0-announcement")
+    end
+
+    # The admin's edit is never undone on the import's own: the item waits for their decision, in
+    # the dry run and in the import, and their answer holds for every later run.
+    test "a redirect an admin edited that hides the post's address waits; Archive takes it back",
+         %{
+           site: site,
+           admin: admin
+         } do
+      imported!(site, admin, %{post_address: "blog", blog_pages: "create"})
+      edit_rule!(site, admin, @release, "/about-us")
+
+      planned = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+      assert outcomes(planned, "post_redirect")["44"] == {:undecided, "redirect_edited"}
+
+      run = imported!(site, admin, %{post_address: "keep", blog_pages: "use"})
+
+      assert outcomes(run, "post_redirect")["44"] == {:undecided, "redirect_edited"}
+      assert rules(site)[{@release, nil}] == "/about-us"
+      assert rules(site)[{"/", "p=44"}] == @release
+
+      planned = site |> wordpress_run!(admin, %{}) |> dry_run!(admin)
+      assert outcomes(planned, "post_redirect")["44"] == {:undecided, "redirect_edited"}
+
+      decide!(site, admin, "44", "import")
+
+      run = imported!(site, admin)
+      assert outcomes(run, "post_redirect")["44"] == {:skipped, "same_address"}
+      refute is_map_key(rules(site), {@release, nil})
+
+      again = imported!(site, admin)
+      assert outcomes(again, "post_redirect")["44"] == {:skipped, "same_address"}
+      assert %{undecided: 0, updated: 0, failed: 0} = kind_counts(again, "post_redirect")
+    end
+
+    test "a redirect an admin edited that hides the post's address is kept when they say Keep", %{
+      site: site,
+      admin: admin
+    } do
+      imported!(site, admin, %{post_address: "blog", blog_pages: "create"})
+      edit_rule!(site, admin, @release, "/about-us")
+      imported!(site, admin, %{post_address: "keep", blog_pages: "use"})
+
+      decide!(site, admin, "44", "keep")
+
+      for _run <- 1..2 do
+        run = imported!(site, admin)
+        assert outcomes(run, "post_redirect")["44"] == {:skipped, "edited_in_cms"}
+        assert rules(site)[{@release, nil}] == "/about-us"
+        assert kind_counts(run, "post_redirect").undecided == 0
+      end
+    end
+
+    test "a redirect an admin sent elsewhere waits, and Send it there writes it to the post", %{
+      site: site,
+      admin: admin
+    } do
+      options = %{post_address: "blog", blog_pages: "create"}
+      imported!(site, admin, options)
+      edit_rule!(site, admin, @release, "/about-us")
+
+      run = imported!(site, admin, options)
+      assert outcomes(run, "post_redirect")["44"] == {:undecided, "redirect_edited"}
+      assert rules(site)[{@release, nil}] == "/about-us"
+
+      decide!(site, admin, "44", "import")
+
+      run = imported!(site, admin, options)
+      assert {:updated, _note} = outcomes(run, "post_redirect")["44"]
+      assert rules(site)[{@release, nil}] == "/blog/release-1-0-announcement"
+
+      again = imported!(site, admin, options)
+      assert outcomes(again, "post_redirect")["44"] == {:skipped, "unchanged"}
     end
 
     test "a post whose address is a page of the site waits, and Import with another slug writes it",

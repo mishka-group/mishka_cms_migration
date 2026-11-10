@@ -188,6 +188,7 @@ defmodule MishkaCmsMigration.MigrationItem do
     "component_name_taken" => ["keep", "leave_out"],
     "slug_taken" => ["keep", "import"],
     "address_taken" => ["import", "leave_out"],
+    "redirect_edited" => ["import", "keep"],
     "same_file" => ["keep", "import"],
     "blog_missing" => ["keep", "leave_out"],
     "player_not_allowed" => ["keep", "import"],
@@ -2246,6 +2247,16 @@ defmodule MishkaCmsMigration.MigrationItem do
     do: dgettext("mishka_gervaz", "Import with another slug, so its address is free")
 
   defp choice_word("address_taken", "leave_out"), do: dgettext("mishka_gervaz", "Leave out")
+
+  defp choice_word("redirect_edited", "import"),
+    do:
+      dgettext(
+        "mishka_gervaz",
+        "Let the import fix it: archive it if it hides its post's address, else send it to the post"
+      )
+
+  defp choice_word("redirect_edited", "keep"),
+    do: dgettext("mishka_gervaz", "Keep the redirect as I edited it")
 
   defp choice_word("same_file", "keep"), do: dgettext("mishka_gervaz", "Keep both")
   defp choice_word("same_file", "import"), do: dgettext("mishka_gervaz", "Use the original")

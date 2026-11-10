@@ -30,7 +30,11 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       waits for the admin's decision, `{:undecided, "deleted_in_cms"}`, whatever the source changed;
     * its `MishkaCmsMigration.Targets.Helpers.LanguageUrls.hash/2` is the one recorded —
       `{:skipped, "unchanged"}`: an item that writes links is changed, to be written again, when
-      the site's language address mode changed since it was written;
+      the site's language address mode changed since it was written; and one whose record no admin
+      changed since, that the target finds out of date (`MishkaCmsMigration.Target`'s
+      `outdated/2`, such as a redirect to where the site no longer serves the post), is
+      `{:updated, target, record, decisions}`, and one an admin changed that is out of date waits
+      for the admin's decision, as the target answers it;
     * it was connected to a record the CMS already held (no `target_updated_at` was recorded): the
       record is the CMS's own and is never written — `{:skipped, "connected"}`;
     * the CMS record's `updated_at` is not the one recorded when it was written: an admin changed
@@ -104,7 +108,8 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
   A page is read twice, whatever its size: once for the items earlier runs recorded, once for the
   CMS records they were written to, and a third time when one of those records is not read, for
   the archived ones, which tells the deleted ones too; and its items no run has written, or an
-  admin decided to import again, are handed to the target's `existing/2` together, once.
+  admin decided to import again, are handed to the target's `existing/2` together, once, and its
+  unchanged and admin-changed ones to the target's `outdated/2` together, once.
   """
 
   require Ash.Query
@@ -169,6 +174,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
     items
     |> Map.new(&{&1.source_id, planned(state, target, &1, Map.get(known, &1.source_id), records)})
     |> existing(target, items, state)
+    |> outdated(target, items, {known, records}, state)
   end
 
   defp existing(plans, target, items, state) do
@@ -191,6 +197,45 @@ defmodule MishkaCmsMigration.Workers.Helpers.Decision do
       Map.update!(plans, id, &connected(target, found, &1))
     end)
   end
+
+  # The items the source did not change, and those an admin changed in the CMS, each with its
+  # record and whether an admin changed it, handed to the target's `outdated/2` in one call: what
+  # it answers replaces their plan.
+  defp outdated(plans, target, items, {known, %{} = records}, state) do
+    written =
+      for %{source_id: id} = item <- items,
+          plans[id] in [{:skipped, "unchanged"}, {:skipped, "edited_in_cms"}],
+          %{target_updated_at: %DateTime{}} = recorded <- [known[id]],
+          %{updated_at: _} = record <- [Map.get(records, recorded.target_id)],
+          into: %{},
+          do: {id, {item, record, written_by(edited?(record, recorded))}}
+
+    decisions = for {id, _written} <- written, into: %{}, do: {id, known[id].decisions}
+
+    written
+    |> Map.values()
+    |> outdated_found(target, %{state.context | decisions: decisions})
+    |> Map.take(Map.keys(written))
+    |> Enum.reduce(plans, fn {id, found}, plans ->
+      Map.put(plans, id, rewritten(target, found, decisions[id]))
+    end)
+  end
+
+  defp outdated(plans, _target, _items, _forbidden, _state), do: plans
+
+  defp written_by(true), do: :edited
+  defp written_by(false), do: :written
+
+  defp outdated_found([], _target, _context), do: %{}
+  defp outdated_found(written, target, context), do: target.outdated(written, context)
+
+  defp rewritten(target, {:updated, record}, decided), do: {:updated, target, record, decided}
+
+  defp rewritten(_target, {:skipped, reason}, _decided) when is_binary(reason),
+    do: {:skipped, reason}
+
+  defp rewritten(_target, {:undecided, conflict}, _decided) when is_binary(conflict),
+    do: {:undecided, conflict}
 
   defp found([], _target, _context), do: %{}
   defp found(items, target, context), do: target.existing(items, context)

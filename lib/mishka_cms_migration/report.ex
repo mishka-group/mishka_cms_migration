@@ -85,6 +85,10 @@ defmodule MishkaCmsMigration.Report do
     * `"address_taken"` — the post's address is a page of the site, which wins
       (`MishkaCmsMigration.Targets.BlogPost`): Import it with another slug (`<slug>-<id>`, noted
       `"another_slug"`), or Leave it out;
+    * `"redirect_edited"` — a redirect an earlier run wrote and an admin edited since no longer
+      sends to where the site serves its post, or sends that address away, so the post cannot be
+      reached: Let the import fix it (archive it, or send it to the post), or Keep it as edited
+      (`MishkaCmsMigration.Targets.PostRedirect`);
     * `"blog_missing"` — the item is of a kind the Blog writes, and the Blog is not installed
       (`MishkaCmsMigration.Application.blog_kinds/0`);
     * `"player_not_allowed"` — the item's content frames a YouTube or Vimeo player the site does
