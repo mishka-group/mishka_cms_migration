@@ -30,12 +30,13 @@ defmodule MishkaCmsMigration.Target do
   `:create` and `:update` default to the resource's `:create` and `:update`. `use` makes the module
   a plugin on `"migration:targets"` — registering is the declaration; the event is never fired, and
   the plugin's `call/1` hands its state back — and adds `id/0` (the kind), `resource/0`,
-  `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing, a `prepare/3`
-  that writes at once, a `waiting/2` that plans every write and a `needs/1` that needs nothing; a
-  target writes only `attrs/2`, `note/2` when it writes an item otherwise than the source has it,
-  `existing/2` when the CMS may already hold some of its items, `prepare/3` and `waiting/2` when a
-  write needs something from the source first or may wait for an admin, and `needs/1` when its
-  record points at items of other kinds.
+  `actions/0`, a `note/2` that says nothing, an `existing/2` that finds nothing, an `outdated/2`
+  that finds nothing, a `prepare/3` that writes at once, a `waiting/2` that plans every write and a
+  `needs/1` that needs nothing; a target writes only `attrs/2`, `note/2` when it writes an item
+  otherwise than the source has it, `existing/2` when the CMS may already hold some of its items,
+  `outdated/2` when its record is written from what the site may move, `prepare/3` and
+  `waiting/2` when a write needs something from the source first or may wait for an admin, and
+  `needs/1` when its record points at items of other kinds.
 
   A target registers once it is supervised. An extension that ships one lists the module among the
   children of its own application's supervisor, as `MishkaCmsMigration.Application.plugins/0` lists
@@ -247,6 +248,20 @@ defmodule MishkaCmsMigration.Target do
   one the run recorded when it wrote it. A record changed in the CMS since is never written again,
   and one that is gone is not brought back.
 
+  ## A record the site moved
+
+  A record written from more than its item, such as a redirect, whose address it sends a visitor to
+  is where the site serves a post today, may go out of date while the source does not change.
+  `outdated/2` is handed a page's items an earlier run wrote that the source did not change and
+  whose record no admin changed since, each with its record, before anything is written and in a
+  dry run too, and answers the source ids of those to write again: each is planned as an update
+  (`{:updated, target, record, decisions}`), and goes through `waiting/2`, `prepare/3` and
+  `attrs/2` as any update does. A record an admin changed is never asked about. `use` answers `[]`.
+
+      def outdated(written, context) do
+        for {item, record} <- written, record.to != address(item, context), do: item.source_id
+      end
+
   Items that share one record, such as the menus written into the site layout, each record the
   `updated_at` of their own write. A target that writes such a record again records the new
   `updated_at` for the other items of that record too (`MishkaCmsMigration.record_item/2`, with the
@@ -343,6 +358,13 @@ defmodule MishkaCmsMigration.Target do
   @callback existing([Item.t()], context()) :: %{String.t() => found()}
 
   @doc """
+  The source ids of `written`, a page's items an earlier run wrote, each with its record, that the
+  source and no admin changed, whose record is to be written again (see "A record the site moved").
+  `use` answers `[]`.
+  """
+  @callback outdated([{Item.t(), struct()}], context()) :: [String.t()]
+
+  @doc """
   Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
   `{:skipped, reason}`, `{:undecided, conflict}`, `{:connected, record, reason}` or
   `{:error, reason}` without writing (see "What a write needs first"). `use` answers
@@ -427,6 +449,9 @@ defmodule MishkaCmsMigration.Target do
       def existing(_items, _context), do: %{}
 
       @impl MishkaCmsMigration.Target
+      def outdated(_written, _context), do: []
+
+      @impl MishkaCmsMigration.Target
       def prepare(_item, context, write), do: write.(context)
 
       @impl MishkaCmsMigration.Target
@@ -445,6 +470,7 @@ defmodule MishkaCmsMigration.Target do
                      writes_to: 2,
                      note: 2,
                      existing: 2,
+                     outdated: 2,
                      prepare: 3,
                      before_import: 1,
                      recorded: 2,
