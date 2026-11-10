@@ -372,7 +372,7 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
       admin: admin
     } do
       options = %{post_address: "blog", blog_pages: "create"}
-      run = imported!(site, admin, options)
+      imported!(site, admin, options)
       edit_rule!(site, admin, @release, "/about-us")
 
       run = imported!(site, admin, options)
