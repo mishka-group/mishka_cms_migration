@@ -79,15 +79,21 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     run, is refused by the core's one-rule-per-address identity, and the item fails with the core's
     reason; the site's rule is kept as it is.
 
-    A re-run is held to the rules every target is: one an admin edited or deleted in the CMS is
-    kept as the admin left it (`MishkaCmsMigration.Workers.Helpers.Decision`). A rule an earlier
+    A re-run is held to the rules every target is: one an admin deleted in the CMS is not brought
+    back (`MishkaCmsMigration.Workers.Helpers.Decision`). A rule an earlier
     run wrote that no admin changed follows where the site serves its record now, though WordPress
     did not change the item (`outdated/2`): one that sends elsewhere than that address, its path,
     query and host, is written again to it, such as `/?p=44` from `/blog/hello` to
     `/2025/12/hello` once a run keeps the WordPress addresses; and one whose old address is the
     record's own address now is archived, as an admin's Archive does, and the item skipped as
     `"same_address"` and forgotten, so a later run writes no rule for it again. A rule that still
-    sends to the record's address is `"unchanged"`. Switching the choice off later leaves the
+    sends to the record's address is `"unchanged"`. One an admin edited in the CMS is never written
+    or archived on the import's own: while it still sends to the record's address it is kept, and
+    once it does not, the item waits for the admin's decision, `"redirect_edited"`, which holds for
+    every later run: Let the import fix it (`"import"`), which archives the rule when its old
+    address is the record's own now and else sends it to the record's address, or Keep it as
+    edited (`"keep"`). A dry run that reads the record's address before the import moves the Blog's
+    pages asks the same question. Switching the choice off later leaves the
     rules an earlier run wrote.
 
     Defined only where Mishka Blog is loaded, and supervised by `MishkaCmsMigration.Application`
@@ -102,11 +108,12 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     alias MishkaBlog.{Address, Blogger, BlogPost, Collection, Tag}
     alias MishkaCmsCore.Runtime.{Languages, Page, Redirect, Redirects}
-    alias MishkaCmsMigration.MigrationItem
+    alias MishkaCmsMigration.{MigrationItem, Target}
     alias MishkaCmsMigration.Targets.CmsMedia
     alias MishkaCmsMigration.Targets.Helpers.{BlogPages, Editions, Written}
 
     @sitemap "/sitemap.xml"
+    @edited "redirect_edited"
 
     @written %{
       "post" => {BlogPost, "post"},
@@ -145,19 +152,20 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
     def outdated(written, context) do
       addresses = written |> Enum.map(&elem(&1, 0)) |> addresses(context)
 
-      for {item, rule} <- written,
+      for {item, rule, written_by} <- written,
           address = addresses |> Map.get(to(item)) |> paged(item),
           is_binary(address) and not same_address?(rule.to, address),
-          do: item.source_id
+          into: %{},
+          do: {item.source_id, outdated_rule(written_by, item, rule, address, context)}
     end
 
     @impl MishkaCmsMigration.Target
-    def waiting(item, %{record: %Redirect{}} = context), do: retired(item, context)
+    def waiting(item, %{record: %Redirect{} = rule} = context), do: retired(rule, item, context)
     def waiting(_item, _context), do: nil
 
     @impl MishkaCmsMigration.Target
     def prepare(item, %{record: %Redirect{} = rule} = context, write) do
-      case retired(item, context) do
+      case retired(rule, item, context) do
         nil -> write.(context)
         skipped -> retire(rule, item, context, skipped)
       end
@@ -165,16 +173,31 @@ if Code.ensure_loaded?(MishkaBlog.BlogPost) do
 
     def prepare(_item, context, write), do: write.(context)
 
+    defp outdated_rule(:written, _item, rule, _address, _context), do: {:updated, rule}
+
+    defp outdated_rule(:edited, item, rule, _address, context),
+      do: context |> Target.decision(item, @edited) |> edited(rule)
+
+    defp edited("import", rule), do: {:updated, rule}
+    defp edited("keep", _rule), do: {:skipped, "edited_in_cms"}
+    defp edited(nil, _rule), do: {:undecided, @edited}
+
     defp target_address(item, context),
       do: [item] |> addresses(context) |> Map.get(to(item)) |> paged(item)
 
-    # An item whose own address the site serves the record at now: its rule only shadows it.
-    defp retired(item, context), do: item |> target_address(context) |> shadowing(item)
+    # A rule on the address the site serves the item's record at now only shadows it.
+    defp retired(rule, item, context) do
+      case shadows?(rule, target_address(item, context)) do
+        true -> {:skipped, "same_address"}
+        false -> nil
+      end
+    end
 
-    defp shadowing(address, %{attrs: %{"query" => nil, "from" => from}}) when is_binary(address),
-      do: unmoved(from, address)
+    defp shadows?(%Redirect{from_path: "/" <> _ = from, from_query: nil}, address)
+         when is_binary(address),
+         do: unmoved(from, address) != nil
 
-    defp shadowing(_address, _item), do: nil
+    defp shadows?(_rule, _address), do: false
 
     # The rule is archived, as an admin's Archive does, and the item forgets it, so a later run
     # finds the address served and writes no rule again.

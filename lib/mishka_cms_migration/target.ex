@@ -246,26 +246,39 @@ defmodule MishkaCmsMigration.Target do
   A re-run reads the records earlier runs wrote, as the admin running it
   (`MishkaCmsMigration.Workers.Helpers.Decision`), and compares each one's `updated_at` with the
   one the run recorded when it wrote it. A record changed in the CMS since is never written again,
-  and one that is gone is not brought back.
-
-  ## A record the site moved
-
-  A record written from more than its item, such as a redirect, whose address it sends a visitor to
-  is where the site serves a post today, may go out of date while the source does not change.
-  `outdated/2` is handed a page's items an earlier run wrote that the source did not change and
-  whose record no admin changed since, each with its record, before anything is written and in a
-  dry run too, and answers the source ids of those to write again: each is planned as an update
-  (`{:updated, target, record, decisions}`), and goes through `waiting/2`, `prepare/3` and
-  `attrs/2` as any update does. A record an admin changed is never asked about. `use` answers `[]`.
-
-      def outdated(written, context) do
-        for {item, record} <- written, record.to != address(item, context), do: item.source_id
-      end
+  unless an admin decides so (see "A record the site moved"), and one that is gone is not brought
+  back.
 
   Items that share one record, such as the menus written into the site layout, each record the
   `updated_at` of their own write. A target that writes such a record again records the new
   `updated_at` for the other items of that record too (`MishkaCmsMigration.record_item/2`, with the
   context's `scope`), so a write of one is not mistaken for an edit in the CMS.
+
+  ## A record the site moved
+
+  A record written from more than its item, such as a redirect, whose address it sends a visitor to
+  is where the site serves a post today, may go out of date while the source does not change.
+  `outdated/2` is handed a page's items an earlier run wrote whose record is still there and that
+  the source did not change, or an admin changed in the CMS, each as `{item, record, written}`:
+  `:written` when the record is as the run wrote it, `:edited` when an admin changed it since. It
+  runs before anything is written and in a dry run too, with the admins' decisions on those items
+  in the context, and answers by source id, for the items it finds out of date only:
+
+    * `{:updated, record}` — the item is planned as an update of its record
+      (`{:updated, target, record, decisions}`), and goes through `waiting/2`, `prepare/3` and
+      `attrs/2` as any update does: for a `:written` record, or an `:edited` one an admin decided
+      to write the import's way;
+    * `{:undecided, conflict}` — an `:edited` record is out of date: the import never writes over
+      an admin's change on its own, so the item waits for the admin's decision on `conflict`;
+    * `{:skipped, reason}` — left as it is, such as an `:edited` record the admin decided to keep.
+
+  An item the answer leaves out keeps its plan. `use` answers `%{}`.
+
+      def outdated(written, context) do
+        for {item, record, :written} <- written, record.to != address(item, context), into: %{},
+            do: {item.source_id, {:updated, record}}
+      end
+
   """
 
   alias Ash.Resource.Info
@@ -358,11 +371,14 @@ defmodule MishkaCmsMigration.Target do
   @callback existing([Item.t()], context()) :: %{String.t() => found()}
 
   @doc """
-  The source ids of `written`, a page's items an earlier run wrote, each with its record, that the
-  source and no admin changed, whose record is to be written again (see "A record the site moved").
-  `use` answers `[]`.
+  What becomes of the items of `written`, a page's items an earlier run wrote, each with its record
+  and whether an admin changed it, whose record is out of date, by source id (see "A record the
+  site moved"). `use` answers `%{}`.
   """
-  @callback outdated([{Item.t(), struct()}], context()) :: [String.t()]
+  @callback outdated([{Item.t(), struct(), :written | :edited}], context()) :: %{
+              String.t() =>
+                {:updated, struct()} | {:skipped, String.t()} | {:undecided, String.t()}
+            }
 
   @doc """
   Runs `write`, the import's write of `item`, with what it needs from the source first, or answers
@@ -449,7 +465,7 @@ defmodule MishkaCmsMigration.Target do
       def existing(_items, _context), do: %{}
 
       @impl MishkaCmsMigration.Target
-      def outdated(_written, _context), do: []
+      def outdated(_written, _context), do: %{}
 
       @impl MishkaCmsMigration.Target
       def prepare(_item, context, write), do: write.(context)

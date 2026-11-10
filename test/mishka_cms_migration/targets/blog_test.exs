@@ -1806,10 +1806,11 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
                |> Enum.find(&(&1.from_query == "p=44"))
     end
 
-    test "a second run writes no second redirect, and keeps one an admin edited", %{
-      site: site,
-      admin: admin
-    } do
+    test "a second run writes no second redirect, and asks before changing one an admin edited",
+         %{
+           site: site,
+           admin: admin
+         } do
       imported!(site, admin, %{post_address: "blog"})
       again = imported!(site, admin, %{post_address: "blog"})
 
@@ -1828,7 +1829,8 @@ defmodule MishkaCmsMigration.Targets.BlogTest do
       change_in_wordpress!("post_redirect")
       third = imported!(site, admin, %{post_address: "blog"})
 
-      assert %{"44" => {:skipped, "edited_in_cms"}} = outcomes(third, "post_redirect")
+      # It no longer sends to the post, so it waits for the admin's decision, and stays as edited.
+      assert %{"44" => {:undecided, "redirect_edited"}} = outcomes(third, "post_redirect")
       assert counted(post_outcomes(third), :updated) == length(published()) - 1
       assert redirects(site)[@release].to == "/news/release-1-0"
     end
