@@ -1,3 +1,7 @@
+# Changelog for MishkaCmsMigration 0.0.4
+
+- Needs mishka_cms_core 0.0.5-alpha.12, where a page's event, info and state handlers keep their code signature with `CODE_SIGNING_KEY` set. Every dependency is at its latest release, including ash 3.37.4 and spark 2.7.10
+
 # Changelog for MishkaCmsMigration 0.0.3
 
 ### Features:
