@@ -286,6 +286,11 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     |> dry_run!(admin)
   end
 
+  # An empty setting is not the site's own, so a second source's tagline has nothing to decide.
+  defp empty_tagline!(site) do
+    {:ok, _tagline} = MishkaCmsCore.Settings.put("site.tagline", "", site_id: site.id)
+  end
+
   defp second_item(site, kind, source_id),
     do:
       Enum.find(
@@ -462,6 +467,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       icon = Enum.find(stored(site), &(&1.source_kind == "setting" and &1.source_id == "icon"))
 
       assert Enum.sort(rows(view)) |> Enum.map(&elem(&1, 1)) == [
+               "app_icon",
                "icon",
                "logo",
                "tagline",
@@ -1041,6 +1047,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   describe "Decide…" do
     test "a setting the site has its own of needs a decision, and Decide… keeps the admin's choice",
          %{conn: conn, site: site, admin: admin} do
+      empty_tagline!(site)
       second = second_source!(site, admin)
       title = second_item(site, "setting", "title")
       view = open!(conn, admin, second, "?items_filter_source_kind=setting")
@@ -1356,6 +1363,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
 
     test "the picked rows are decided together, and one with nothing to decide is left as it is",
          %{conn: conn, site: site, admin: admin} do
+      empty_tagline!(site)
       second = second_source!(site, admin)
       [title, tagline] = for id <- ["title", "tagline"], do: second_item(site, "setting", id)
       view = open!(conn, admin, second, "?items_filter_source_kind=setting")
