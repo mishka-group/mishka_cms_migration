@@ -1,5 +1,9 @@
 # Changelog for MishkaCmsMigration 0.0.4
 
+### Features:
+- A run's new "WordPress breaks comments into pages" choice, with "Comments a page" (50, WordPress's default): on, each post's `/comment-page-N/` address is redirected to the post with a 301, one for each page its approved top-level comments fill ([mishka_blog#56](https://github.com/mishka-group/mishka_blog/issues/56))
+- The WordPress tagline is imported into the site's `site.tagline`, and the site icon fills `site.app_icon` as well as `site.favicon` ([mishka_cms_core#115](https://github.com/mishka-group/mishka_cms_core/issues/115))
+
 - Needs mishka_cms_core 0.0.5-alpha.13 (a page's event, info and state handlers keep their code signature with `CODE_SIGNING_KEY` set), mishka_gervaz 0.0.8 and guarded_struct 0.1.7. Every dependency is at its latest release, including ash 3.37.4 and spark 2.7.10
 
 # Changelog for MishkaCmsMigration 0.0.3
