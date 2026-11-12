@@ -338,6 +338,44 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
       assert Enum.all?(archives, &(&1["to"]["kind"] in ["list", "sitemap"]))
     end
 
+    test "lists a post's comment pages only when the run says WordPress breaks comments into pages" do
+      stub!()
+      conn = connected!()
+
+      assert {:ok, rows, _next} = WordPress.list(conn, "post_redirect", nil)
+      refute Enum.any?(rows, &String.contains?(&1["id"], "comment-page"))
+      refute_received {:wordpress_request, %{request_path: "/wp-json/wp/v2/comments"}}
+
+      paged = Source.with_options(conn, %{comment_pages: true, comments_per_page: 2})
+      assert {:ok, rows, _next} = WordPress.list(paged, "post_redirect", nil)
+
+      assert_received {:wordpress_request,
+                       %{
+                         request_path: "/wp-json/wp/v2/comments",
+                         query_params: %{"parent" => "0", "post" => posts}
+                       }}
+
+      refute "38" in String.split(posts, ",")
+
+      comment_pages =
+        for %{"id" => id} = row <- rows,
+            String.contains?(id, "comment-page"),
+            into: %{},
+            do: {id, row}
+
+      # Post 50 has three approved comments that answer no other, a held one and four replies.
+      assert comment_pages |> Map.keys() |> Enum.sort() ==
+               ~w(32/comment-page-1 33/comment-page-1 50/comment-page-1 50/comment-page-2)
+
+      assert comment_pages["50/comment-page-2"]["from"] ==
+               "/2026/04/comment-heavy-post/comment-page-2"
+
+      assert comment_pages["50/comment-page-2"]["to"] == %{"kind" => "post", "id" => "50"}
+
+      assert {:ok, [%{"id" => "50/comment-page-2"}]} =
+               WordPress.rows(paged, "post_redirect", ["50/comment-page-2"])
+    end
+
     test "reads picked addresses from the kinds their ids name" do
       stub!()
       conn = connected!()

@@ -454,6 +454,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
           ],
           do: assert(has_element?(view, "#migration-run-form-modal label", label))
 
+      per_page = ~s|#migration-run-form-modal input[name="form[options][comments_per_page]"]|
+      assert has_element?(view, per_page <> ~s|[value="50"]|)
+
       comments = ~s|#migration-run-form-modal input[name="form[bring][comments]"]|
       assert has_element?(view, comments)
       refute has_element?(view, comments <> "[checked]")
@@ -525,6 +528,8 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "blog_pages" => "use",
                "confirm_users" => true,
                "comments" => false,
+               "comment_pages" => false,
+               "comments_per_page" => 50,
                "bring_users" => true,
                "bring_terms" => true,
                "bring_media" => true,
@@ -777,7 +782,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       })
 
       assert review(view) =~ "Not bringing: Posts, Comments."
-      assert review(view) =~ "Left out of the site's own settings: Site icon (favicon)."
+
+      assert review(view) =~
+               "Left out of the site's own settings: Site icon (favicon)."
+
       assert review(view) =~ "Authors: Match by email, create the rest."
       assert review(view) =~ "Confirm imported users' email: off."
       refute review(view) =~ "Pages: Drafts"
@@ -1735,6 +1743,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
                "source",
                "use",
                "true",
+               "false",
                "false"
              ]
 

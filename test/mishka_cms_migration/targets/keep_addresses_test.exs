@@ -148,6 +148,38 @@ defmodule MishkaCmsMigration.Targets.KeepAddressesTest do
       assert rules[{"/page/2", nil}] == "/news?page=2"
     end
 
+    test "a post's comment pages are sent to the post when the run says WordPress breaks comments into pages",
+         %{site: site, admin: admin} do
+      post = "/2026/04/comment-heavy-post"
+      pages = for page <- 1..3, do: {post <> "/comment-page-#{page}", nil}
+
+      assert site
+             |> imported!(admin)
+             |> outcomes("post_redirect")
+             |> Map.keys()
+             |> Enum.all?(&(not String.contains?(&1, "comment-page")))
+
+      assert rules(site) |> Map.take(pages) == %{}
+
+      run =
+        site
+        |> wordpress_run!(admin, %{comment_pages: true, comments_per_page: "2"})
+        |> dry_run!(admin)
+
+      assert run.options["comments_per_page"] == 2
+      planned = outcomes(run, "post_redirect")
+      assert {:created, _} = planned["50/comment-page-2"]
+      refute is_map_key(planned, "50/comment-page-3")
+
+      run = import!(run, admin)
+      rules = rules(site)
+
+      assert outcomes(run, "post_redirect")["50/comment-page-2"] |> elem(0) == :created
+      assert rules[Enum.at(pages, 0)] == post
+      assert rules[Enum.at(pages, 1)] == post
+      refute is_map_key(rules, Enum.at(pages, 2))
+    end
+
     test "an author with no blogger on the site is sent to the list of posts", %{
       site: site,
       admin: admin

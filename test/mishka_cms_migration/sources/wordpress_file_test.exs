@@ -503,6 +503,34 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       refute Enum.any?(ids, &String.starts_with?(&1, ["archive:/blog", "archive:/news"]))
     end
 
+    test "carry a post's comment pages, counted from its approved comments that answer no other, only when the run says WordPress breaks comments into pages" do
+      assert {:ok, conn} = WordPressFile.connect(%{"file" => @all}, nil)
+
+      paged = fn options ->
+        for %{"id" => id} = row <-
+              file_rows(Source.with_options(conn, options), "post_redirect", nil),
+            String.contains?(id, "comment-page"),
+            into: %{},
+            do: {id, row}
+      end
+
+      assert paged.(%{comment_pages: false, comments_per_page: 2}) == %{}
+
+      # Post 50 has four approved comments that answer no other and post 43 only a held one.
+      pages = paged.(%{comment_pages: true, comments_per_page: 2})
+
+      assert pages |> Map.keys() |> Enum.sort() ==
+               ~w(32/comment-page-1 33/comment-page-1 50/comment-page-1 50/comment-page-2)
+
+      assert pages["50/comment-page-2"]["from"] == "/2026/04/comment-heavy-post/comment-page-2"
+      assert pages["50/comment-page-2"]["to"] == %{"kind" => "post", "id" => "50"}
+
+      assert %{comment_pages: true, comments_per_page: 50}
+             |> paged.()
+             |> Map.keys()
+             |> Enum.sort() == ~w(32/comment-page-1 33/comment-page-1 50/comment-page-1)
+    end
+
     test "carry what Rank Math and Yoast SEO kept for a post or page, their variables as the CMS's own" do
       posts = file_items!(@all, "post")
       hero = Enum.find(recorded("media"), &(&1["slug"] == "hero"))

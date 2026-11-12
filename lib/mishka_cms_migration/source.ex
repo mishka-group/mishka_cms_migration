@@ -70,7 +70,10 @@ defmodule MishkaCmsMigration.Source do
   listed row goes through `normalize/3`, which is handed the connection `connect/2` answered to read
   more of the source when a row needs it (`t:context/0`), and then
   `MishkaCmsMigration.Source.Item.build/1`. An error from `connect/2` or `list/3` fails the run; an
-  error from `normalize/3` fails only that item, and the report says why.
+  error from `normalize/3` fails only that item, and the report says why. A connection that is a
+  map is handed to `list/3` and `rows/3` with the run's choices under `:options`
+  (`MishkaCmsMigration.MigrationRun.Options`, `with_options/2`), so a source may list by a choice,
+  such as WordPress listing the addresses of a post's comment pages.
 
   A job of picked items, Dry run this item or Import this item on the Items page, walks only the
   kinds of those items and reads only their rows: `rows/3` with their source ids, where the source
@@ -400,6 +403,14 @@ defmodule MishkaCmsMigration.Source do
   end
 
   defp connected(answer, _source, _metadata), do: answer
+
+  @doc """
+  The connection `connect/4` answered, as a job hands it to `list/3` and `rows/3`: a map with the
+  run's `options` under `:options`, and any other connection as it is.
+  """
+  @spec with_options(conn(), struct() | map()) :: conn()
+  def with_options(conn, options) when is_map(conn), do: Map.put(conn, :options, options)
+  def with_options(conn, _options), do: conn
 
   @doc "The installed source whose id is `id`."
   @spec fetch(String.t() | nil) :: {:ok, module()} | {:error, :not_installed}
