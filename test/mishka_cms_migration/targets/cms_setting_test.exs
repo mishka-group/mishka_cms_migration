@@ -4,7 +4,8 @@
 
 defmodule MishkaCmsMigration.Targets.CmsSettingTest do
   @moduledoc """
-  A WordPress site's name, logo and icon moved into the run's site's settings, against what the
+  A WordPress site's name, tagline, logo and icon (as the favicon and the app icon) moved into the
+  run's site's settings, against what the
   seeded WordPress answered: what a dry run plans, what an import writes and where, that a setting
   the site has its own value for waits for an admin's decision and follows it, that a logo whose
   file was not imported is left out, and what a second run does after an admin changed a setting.
@@ -18,7 +19,7 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
   @connection %{"url" => "http://localhost:8089", "user" => "admin"}
   @admin ["admin:dashboard:migration", "admin:dashboard:runtime:media", "admin:dashboard:setting"]
-  @keys ["site.title", "site.logo", "site.favicon"]
+  @keys ["site.title", "site.tagline", "site.logo", "site.favicon", "site.app_icon"]
 
   setup do
     stub!()
@@ -78,15 +79,16 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
     }
 
   describe "a dry run" do
-    test "plans the site's name, logo and icon, says the CMS has no tagline and writes nothing",
+    test "plans the site's name, tagline, logo and icon as the favicon and the app icon, and writes nothing",
          %{site: site, admin: admin} do
       run = site |> wordpress_run!(admin) |> dry_run!(admin)
 
       assert outcomes(run) == %{
                "title" => {:created, nil},
-               "tagline" => {:skipped, "no_setting"},
+               "tagline" => {:created, nil},
                "logo" => {:created, nil},
-               "icon" => {:created, nil}
+               "icon" => {:created, nil},
+               "app_icon" => {:created, nil}
              }
 
       assert settings(site) == %{}
@@ -94,18 +96,25 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
   end
 
   describe "an import" do
-    test "writes the name, and the logo and icon as their imported files, to the run's site only",
+    test "writes the name and tagline, and the logo and icon as their imported files, the icon as the favicon and the app icon, to the run's site only",
          %{site: site, admin: admin} do
       other = create_site!()
       run = imported!(site, admin)
 
-      assert outcomes(run)["tagline"] == {:skipped, "no_setting"}
+      assert outcomes(run)["tagline"] == {:created, nil}
+      icon = media(site, "site-icon").relative_path
 
       assert settings(site) == %{
                "site.title" => "Mishka Test Blog",
+               "site.tagline" =>
+                 "A WordPress site filled with realistic content for testing the Mishka CMS migration",
                "site.logo" => media(site, "site-logo").relative_path,
-               "site.favicon" => media(site, "site-icon").relative_path
+               "site.favicon" => icon,
+               "site.app_icon" => icon
              }
+
+      assert Settings.get("site.tagline", nil, site.id) ==
+               "A WordPress site filled with realistic content for testing the Mishka CMS migration"
 
       assert settings(other) == %{}
     end
@@ -220,8 +229,10 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
       assert %{
                "title" => {:skipped, "unchanged"},
+               "tagline" => {:skipped, "unchanged"},
                "logo" => {:skipped, "unchanged"},
-               "icon" => {:skipped, "unchanged"}
+               "icon" => {:skipped, "unchanged"},
+               "app_icon" => {:skipped, "unchanged"}
              } = outcomes(run)
     end
 
@@ -257,8 +268,9 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
       assert %{
                "title" => {:created, nil},
                "logo" => {:skipped, "left_out_by_admin"},
-               "icon" => {:skipped, "left_out_by_admin"}
-             } = Map.take(outcomes(run), ["title", "logo", "icon"])
+               "icon" => {:skipped, "left_out_by_admin"},
+               "app_icon" => {:skipped, "left_out_by_admin"}
+             } = Map.take(outcomes(run), ["title", "logo", "icon", "app_icon"])
 
       assert %{left_out: true, plan: :skipped, plan_reason: "left_out_by_admin"} =
                item(site, "icon")
@@ -268,7 +280,7 @@ defmodule MishkaCmsMigration.Targets.CmsSettingTest do
 
       import!(run, admin)
 
-      assert settings(site) == %{"site.title" => "Mishka Test Blog"}
+      assert Map.keys(settings(site)) |> Enum.sort() == ["site.tagline", "site.title"]
     end
 
     test "can be brought back on the Items page, and a later dry run does not leave it out again",

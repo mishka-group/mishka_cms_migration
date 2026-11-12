@@ -358,7 +358,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     [
       name: :site_title,
       type: :toggle,
-      label: dgettext_noop("mishka_gervaz", "Site title")
+      label: dgettext_noop("mishka_gervaz", "Site title and tagline")
     ],
     [
       name: :site_logo,
@@ -368,7 +368,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     [
       name: :site_icon,
       type: :toggle,
-      label: dgettext_noop("mishka_gervaz", "Site icon (favicon)")
+      label: dgettext_noop("mishka_gervaz", "Site icon (favicon and app icon)")
     ]
   ]
   @bring_choices [
@@ -418,7 +418,13 @@ defmodule MishkaCmsMigration.MigrationRun do
     "post" => :bring_posts,
     "menu" => :bring_menus
   }
-  @site_settings %{"title" => :site_title, "logo" => :site_logo, "icon" => :site_icon}
+  @site_settings %{
+    "title" => :site_title,
+    "tagline" => :site_title,
+    "logo" => :site_logo,
+    "icon" => :site_icon,
+    "app_icon" => :site_icon
+  }
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick a site.")
@@ -992,7 +998,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. WordPress breaks comments into pages: on, when Settings, Discussion breaks a post's comments into pages there, each page's address (/comment-page-2/) is sent to its post with a 301; Comments a page is the number WordPress shows a page, 50 unless you changed it. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Blog pages: your site's Blog pages, with any missing ones created where the run serves posts, or the Blog's default /blog pages, which your old addresses reach through 301s. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
+                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. WordPress breaks comments into pages: on, when Settings, Discussion breaks a post's comments into pages there, each page's address (/comment-page-2/) is sent to its post with a 301; Comments a page is the number WordPress shows a page, 50 unless you changed it. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Blog pages: your site's Blog pages, with any missing ones created where the run serves posts, or the Blog's default /blog pages, which your old addresses reach through 301s. Site title and tagline, logo and icon: the WordPress site's own, the icon as both the favicon and the app icon; one switched off is left out, and you can bring it back on the run's Items page."
               )
             end
           end

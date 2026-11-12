@@ -57,7 +57,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   links point at.
   `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
   site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
-  when the site has it. `"stylesheet"` is the Elementor globals `connect/2` read, with no request of
+  when the site has it, the icon twice: once as the favicon and once as the app icon. `"stylesheet"` is the Elementor globals `connect/2` read, with no request of
   its own: when the REST index lists Elementor's `elementor/v1`, `connect/2` asks
   `/elementor/v1/globals` once, and a site that answers none has no row
   (`MishkaCmsMigration.Sources.WordPress.ElementorKit`). `list/3` reads each other kind from its REST route (`/wp/v2/users`,
@@ -174,10 +174,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
       `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
       address, website, user agent and the rest are kept in `extra`.
-    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"` or
-      `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
-      text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
-      `&amp;`), and the media id of the logo and the icon.
+    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"`,
+      `"icon"` or `"app_icon"` (the same site icon, written to a second setting), `title`
+      WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the text of the name
+      and the tagline, its HTML entities decoded (WordPress keeps `&` as `&amp;`), and the media
+      id of the logo and the icon.
     * stylesheet — Elementor's global colours and fonts, one row: its `source_id` is
       `"elementor"`, `title` `"Elementor global colours and fonts"`, and `attrs` the stylesheet of
       theme tokens they become, its `"name"` (`elementor-globals`), `"description"` and `"content"`
@@ -378,7 +379,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {"title", "name", "Site Title"},
     {"tagline", "description", "Tagline"},
     {"logo", "site_logo", "Site Logo"},
-    {"icon", "site_icon", "Site Icon"}
+    {"icon", "site_icon", "Site Icon"},
+    {"app_icon", "site_icon", "Site Icon (app icon)"}
   ]
   @texts ["title", "tagline"]
   @kit "elementor"

@@ -37,7 +37,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
 
   # What an export does not carry ("Where it differs from the REST API" in the source's docs): the
   # site's logo and icon among its settings, and these attrs.
-  @unexported_settings ["logo", "icon"]
+  @unexported_settings ["logo", "icon", "app_icon"]
 
   @not_exported %{
     "user" => ~w(avatar_urls description link nickname roles url),
@@ -598,7 +598,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
   end
 
   describe "a dry run" do
-    test "of the export reports what a dry run over the REST API reports for the same site, but the logo and icon an export does not carry, and the pingback the REST recording left out besides" do
+    test "of the export reports what a dry run over the REST API reports for the same site, but the logo and the icon (favicon and app icon) an export does not carry, and the pingback the REST recording left out besides" do
       stub!()
       site = create_site!()
       admin = migration_admin!(site)
@@ -623,7 +623,7 @@ defmodule MishkaCmsMigration.Sources.WordPressFileTest do
       assert file_counts ==
                rest_counts
                |> Map.update!("comment", &%{&1 | skipped: &1.skipped + pingbacks})
-               |> Map.update!("setting", &%{&1 | created: &1.created - 2})
+               |> Map.update!("setting", &%{&1 | created: &1.created - 3})
 
       assert file_redirects.created + file_redirects.skipped ==
                rest_redirects.created + rest_redirects.skipped + export_only

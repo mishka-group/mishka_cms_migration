@@ -819,7 +819,8 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                  "title" => {"Site Title", %{"value" => index["name"]}},
                  "tagline" => {"Tagline", %{"value" => index["description"]}},
                  "logo" => {"Site Logo", %{"value" => index["site_logo"]}},
-                 "icon" => {"Site Icon", %{"value" => index["site_icon"]}}
+                 "icon" => {"Site Icon", %{"value" => index["site_icon"]}},
+                 "app_icon" => {"Site Icon (app icon)", %{"value" => index["site_icon"]}}
                }
 
       assert requested() == ["/wp-json/", "/wp-json/wp/v2/users/me"]
@@ -829,7 +830,7 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
 
       settings = items!("setting", %{"/wp-json/" => {"application/json", Jason.encode!(bare)}})
 
-      assert Map.keys(settings) |> Enum.sort() == ["icon", "title"]
+      assert Map.keys(settings) |> Enum.sort() == ["app_icon", "icon", "title"]
       assert settings["title"].attrs["value"] == "Tom & Jerry"
     end
 
@@ -1451,9 +1452,9 @@ defmodule MishkaCmsMigration.Sources.WordPressTest do
                }
 
       assert counts(run, "setting") == %{
-               created: 3,
+               created: 5,
                updated: 0,
-               skipped: 1,
+               skipped: 0,
                failed: 0,
                undecided: 0
              }
