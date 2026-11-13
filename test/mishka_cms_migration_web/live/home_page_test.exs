@@ -777,7 +777,9 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
         "options" => %{
           "site_icon" => "false",
           "authors" => "create",
-          "confirm_users" => "false"
+          "confirm_users" => "false",
+          "comment_pages" => "true",
+          "comments_per_page" => "2"
         }
       })
 
@@ -788,6 +790,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
 
       assert review(view) =~ "Authors: Match by email, create the rest."
       assert review(view) =~ "Confirm imported users' email: off."
+      assert review(view) =~ "Comments a page: 2."
       refute review(view) =~ "Pages: Drafts"
       assert review(view) =~ "in English"
     end
