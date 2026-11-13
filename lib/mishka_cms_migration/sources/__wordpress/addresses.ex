@@ -29,7 +29,9 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     * a post — its `link` (`/2026/02/hello/`), the address it had under each earlier slug
       (WordPress's `_wp_old_slug`, as `"old_slugs"`: `/2026/02/hello-world/`), its feed
       (`/2026/02/hello/feed/`), each page after the first its text splits into with
-      `<!--nextpage-->` (`/2026/02/hello/2/`) and, once published, `/?p=<id>`;
+      `<!--nextpage-->` (`/2026/02/hello/2/`), each page of its comments when the run says
+      WordPress breaks them into pages (`/2026/02/hello/comment-page-2/`, see `post/2`) and, once
+      published, `/?p=<id>`;
     * a published page — `/?page_id=<id>` (its own address is kept as the page's path);
     * a category, a tag and an author — its archive's address, the term's or user's `link` or, for
       an export, which carries none, the one its base and slug make (`/category/tutorials/news/`
@@ -41,9 +43,8 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     * the published posts as a whole (`archives/4`) — the site's feeds, date archives, the pages
       of its list and its sitemaps.
 
-  A list's pages are counted at WordPress's default of ten posts a page, and a comment's page
-  (`/comment-page-2/`) and a search (`/search/elixir/`) have none: WordPress pages no comments
-  unless told to, and a search is any words.
+  A list's pages are counted at WordPress's default of ten posts a page, and a search
+  (`/search/elixir/`) has none: a search is any words.
   """
 
   # WordPress's own default of posts a page of a list holds (`posts_per_page`), which neither an
@@ -58,9 +59,14 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
                /wp-sitemap-taxonomies-category-1.xml /wp-sitemap-taxonomies-post_tag-1.xml
                /wp-sitemap-users-1.xml)
 
-  @doc "The addresses of a post row (see the module doc)."
-  @spec post(map()) :: [map()]
-  def post(%{"id" => id} = row) do
+  @doc """
+  The addresses of a post row (see the module doc). With `comments_per_page`, the number of
+  comments a page holds where WordPress breaks them into pages (`comments_per_page/1`), a published
+  post whose `"comments"` counts N approved comments that answer no other has `ceil(N /
+  comments_per_page)` comment pages, `/comment-page-1` first, each pointing at the post.
+  """
+  @spec post(map(), pos_integer() | nil) :: [map()]
+  def post(%{"id" => id} = row, comments_per_page \\ nil) do
     from = own_path(row)
 
     [rule(row, to_string(id), from, nil, "post")] ++
@@ -69,8 +75,27 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
         do: rule(row, "#{id}~#{old_slug}", old, nil, "post")
       ) ++
       queried(row, "#{id}?p", "p=#{id}", "post") ++
-      under(row, to_string(id), from, "post", ["feed" | paged_post(row)], nil)
+      under(
+        row,
+        to_string(id),
+        from,
+        "post",
+        ["feed" | paged_post(row)] ++ comment_pages(row["comments"], comments_per_page),
+        nil
+      )
   end
+
+  @doc """
+  How many comments a page of a post holds, from a run's options
+  (`MishkaCmsMigration.MigrationRun.Options`): its `comments_per_page` when its `comment_pages` is
+  on, else `nil`, no comment pages.
+  """
+  @spec comments_per_page(map() | nil) :: pos_integer() | nil
+  def comments_per_page(%{comment_pages: true, comments_per_page: per_page})
+      when is_integer(per_page) and per_page > 0,
+      do: per_page
+
+  def comments_per_page(_options), do: nil
 
   @doc "The addresses of a page row: `/?page_id=<id>` once it is published."
   @spec page(map()) :: [map()]
@@ -197,6 +222,12 @@ defmodule MishkaCmsMigration.Sources.WordPress.Addresses do
     do: raw |> String.split("<!--nextpage-->") |> length() |> post_pages()
 
   defp paged_post(_row), do: []
+
+  defp comment_pages(count, per_page)
+       when is_integer(count) and count > 0 and is_integer(per_page) and per_page > 0,
+       do: for(page <- 1..div(count + per_page - 1, per_page), do: "comment-page-#{page}")
+
+  defp comment_pages(_count, _per_page), do: []
 
   defp post_pages(1), do: []
   defp post_pages(pages), do: Enum.map(2..pages, &Integer.to_string/1)

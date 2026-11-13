@@ -221,7 +221,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps do
   defp from_words(_params), do: gettext("From: the source you connected.")
 
   # An Advanced choice other than a site setting, said only when it is not its default: a select
-  # by the label of the option chosen, a switch as off.
+  # by the label of the option chosen, a number as itself, a switch as on or off.
   defp choices_words(state, options) do
     default = defaults()
 
@@ -242,6 +242,7 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.ImportSteps do
     end
   end
 
+  defp chosen(%{type: :number}, value), do: to_string(value)
   defp chosen(_switch, false), do: gettext("off")
   defp chosen(_switch, _on), do: gettext("on")
 

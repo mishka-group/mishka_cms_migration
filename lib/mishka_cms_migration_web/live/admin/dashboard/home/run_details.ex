@@ -1087,6 +1087,12 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
         label: gettext("Comments"),
         value: options.comments,
         words: comments(options.comments)
+      },
+      %{
+        key: "comment_pages",
+        label: gettext("Comment pages"),
+        value: options.comment_pages,
+        words: comment_pages(options)
       }
     ]
   end
@@ -1120,6 +1126,11 @@ defmodule MishkaCmsMigrationWeb.Live.Admin.Dashboard.Home.RunDetails do
 
   defp comments(true), do: gettext("Brought in too")
   defp comments(_false), do: gettext("Left behind")
+
+  defp comment_pages(%Options{comment_pages: true, comments_per_page: per_page}),
+    do: gettext("Each sent to its post, %{count} comments a page", count: per_page)
+
+  defp comment_pages(_off), do: gettext("Not redirected")
 
   defp status_icon(:pending), do: "hero-link"
   defp status_icon(status) when status in @running, do: "hero-arrow-path"

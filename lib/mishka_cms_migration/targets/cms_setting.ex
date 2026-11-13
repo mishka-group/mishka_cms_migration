@@ -12,14 +12,15 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
 
   An item is one setting, by its source id:
 
-    * `"title"` — the site's name, its `site.title`;
-    * `"logo"` — its logo, `site.logo`, and `"icon"` — its icon, `site.favicon`: the item's
+    * `"title"` — the site's name, its `site.title`, and `"tagline"` — its tagline,
+      `site.tagline`;
+    * `"logo"` — its logo, `site.logo`, `"icon"` — its icon, `site.favicon`, and `"app_icon"` —
+      the same icon as the app icon, `site.app_icon` (WordPress's site icon is 512 px): the item's
       `"value"` is the source id of a file, and the setting is the Media address of the file the
       same run, or an earlier one, wrote for it (`MishkaCmsMigration.Targets.CmsMedia.addresses/2`).
       An import whose file was not written, such as an SVG, skips it as `"file_missing"`; a dry
       run, which writes no file, does not;
-    * `"tagline"` — the CMS has no setting for a tagline, so it is skipped as `"no_setting"`, in
-      the dry run too, and so is any other.
+    * any other is skipped as `"no_setting"`, in the dry run too.
 
   ## The site's own
 
@@ -48,8 +49,14 @@ defmodule MishkaCmsMigration.Targets.CmsSetting do
   alias MishkaCmsMigration.Target
   alias MishkaCmsMigration.Targets.CmsMedia
 
-  @keys %{"title" => "site.title", "logo" => "site.logo", "icon" => "site.favicon"}
-  @files ["logo", "icon"]
+  @keys %{
+    "title" => "site.title",
+    "tagline" => "site.tagline",
+    "logo" => "site.logo",
+    "icon" => "site.favicon",
+    "app_icon" => "site.app_icon"
+  }
+  @files ["logo", "icon", "app_icon"]
 
   @impl MishkaCmsMigration.Target
   def existing(items, context),

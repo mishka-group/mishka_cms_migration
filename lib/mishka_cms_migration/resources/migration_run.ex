@@ -32,6 +32,12 @@ defmodule MishkaCmsMigration.MigrationRun do
       address the site does not serve at the same path is redirected with a 301
       (`MishkaCmsMigration.Targets.PostRedirect`). `"blog_without_redirects"` serves them at
       `/blog/<slug>` with no redirect.
+    * `:comment_pages` — whether the source breaks a post's comments into pages, each at its own
+      address (WordPress's `/comment-page-2/`); `false` by default. On, each page's address is
+      redirected to its post, `ceil(N / comments_per_page)` pages for a post with N approved
+      comments that answer no other (`MishkaCmsMigration.Sources.WordPress.Addresses`).
+    * `:comments_per_page` — how many of those comments a page holds, `50` by default, WordPress's
+      own; read only with `:comment_pages` on. Neither WordPress's REST API nor its export says.
     * `:posts_page` — where the Blog's list of posts is served: `"source"` (the default) at the
       source's posts page (its `"front_page"` facts, else the page whose address is the posts'),
       `"front"` at `/`, the id of one of the site's pages at that page's address (the page is
@@ -313,6 +319,16 @@ defmodule MishkaCmsMigration.MigrationRun do
       ]
     ],
     [
+      name: :comment_pages,
+      type: :toggle,
+      label: dgettext_noop("mishka_gervaz", "WordPress breaks comments into pages")
+    ],
+    [
+      name: :comments_per_page,
+      type: :number,
+      label: dgettext_noop("mishka_gervaz", "Comments a page")
+    ],
+    [
       name: :posts_page,
       type: :select,
       label: dgettext_noop("mishka_gervaz", "Posts list page"),
@@ -342,7 +358,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     [
       name: :site_title,
       type: :toggle,
-      label: dgettext_noop("mishka_gervaz", "Site title")
+      label: dgettext_noop("mishka_gervaz", "Site title and tagline")
     ],
     [
       name: :site_logo,
@@ -352,7 +368,7 @@ defmodule MishkaCmsMigration.MigrationRun do
     [
       name: :site_icon,
       type: :toggle,
-      label: dgettext_noop("mishka_gervaz", "Site icon (favicon)")
+      label: dgettext_noop("mishka_gervaz", "Site icon (favicon and app icon)")
     ]
   ]
   @bring_choices [
@@ -381,6 +397,8 @@ defmodule MishkaCmsMigration.MigrationRun do
     authors: "user",
     confirm_users: "user",
     post_address: "post_redirect",
+    comment_pages: "post_redirect",
+    comments_per_page: "post_redirect",
     posts_page: "post",
     blog_pages: "post",
     comments: "comment",
@@ -400,7 +418,13 @@ defmodule MishkaCmsMigration.MigrationRun do
     "post" => :bring_posts,
     "menu" => :bring_menus
   }
-  @site_settings %{"title" => :site_title, "logo" => :site_logo, "icon" => :site_icon}
+  @site_settings %{
+    "title" => :site_title,
+    "tagline" => :site_title,
+    "logo" => :site_logo,
+    "icon" => :site_icon,
+    "app_icon" => :site_icon
+  }
   @blog_pages %{"post" => :post, "category" => :category, "tag" => :tag, "user" => :author}
   @counts Enum.map(@outcomes, &{&1, [type: :integer, allow_nil?: false]})
   @pick_site dgettext_noop("errors", "Pick a site.")
@@ -470,6 +494,15 @@ defmodule MishkaCmsMigration.MigrationRun do
         default: false,
         validator: {MishkaCmsMigration.MigrationRun, :switch},
         derives: "validate(boolean)"
+
+      field :comment_pages, :boolean,
+        default: false,
+        validator: {MishkaCmsMigration.MigrationRun, :switch},
+        derives: "validate(boolean)"
+
+      field :comments_per_page, :integer,
+        default: 50,
+        derives: "sanitize(string_integer) validate(integer, min_len=1, max_len=1000)"
 
       for key <- ~w(bring_users bring_terms bring_media bring_pages bring_posts bring_menus
                     site_title site_logo site_icon)a do
@@ -952,6 +985,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             "authors" => "connect",
             "pages" => "draft",
             "post_address" => "keep",
+            "comments_per_page" => 50,
             "posts_page" => "source",
             "blog_pages" => "use"
           }
@@ -964,7 +998,7 @@ defmodule MishkaCmsMigration.MigrationRun do
             description fn ->
               dgettext(
                 "mishka_gervaz",
-                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Blog pages: your site's Blog pages, with any missing ones created where the run serves posts, or the Blog's default /blog pages, which your old addresses reach through 301s. Site title, logo and icon: the WordPress site's own; one switched off is left out, and you can bring it back on the run's Items page."
+                "Authors: each post's author is matched to a user of your site by email; the rest are skipped, or created as new users. Confirm imported users' email: on, a user created this way counts as having confirmed their email; off, you confirm them later from the Users page. No email is sent either way. Pages: drafts you publish yourself, or live at their old addresses. Post addresses: kept as WordPress had them, where the dry run names the structure it found, or moved to /blog/<slug>; every old address the site does not serve as it was is sent on with a 301 redirect. WordPress breaks comments into pages: on, when Settings, Discussion breaks a post's comments into pages there, each page's address (/comment-page-2/) is sent to its post with a 301; Comments a page is the number WordPress shows a page, 50 unless you changed it. Posts list page: where the list of posts is served, WordPress's posts page, the front page, the address of one of your pages (that page is archived), or /blog. Blog pages: your site's Blog pages, with any missing ones created where the run serves posts, or the Blog's default /blog pages, which your old addresses reach through 301s. Site title and tagline, logo and icon: the WordPress site's own, the icon as both the favicon and the app icon; one switched off is left out, and you can bring it back on the run's Items page."
               )
             end
           end

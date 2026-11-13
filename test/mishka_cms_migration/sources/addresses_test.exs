@@ -50,6 +50,40 @@ defmodule MishkaCmsMigration.Sources.AddressesTest do
     assert [%{"from" => nil}] = Addresses.post(draft)
   end
 
+  test "a post's comment pages are its top comments over a page's count, each sent to the post" do
+    post = post(50)
+    path = post["link"] |> URI.parse() |> Map.fetch!(:path) |> String.trim_trailing("/")
+
+    pages = fn comments, per_page ->
+      post
+      |> Map.put("comments", comments)
+      |> Addresses.post(per_page)
+      |> by_id()
+      |> Map.keys()
+      |> Enum.filter(&String.starts_with?(&1, "50/comment-page-"))
+      |> Enum.sort()
+    end
+
+    rows = post |> Map.put("comments", 25) |> Addresses.post(10) |> by_id()
+
+    assert pages.(25, 10) == ~w(50/comment-page-1 50/comment-page-2 50/comment-page-3)
+    assert rows["50/comment-page-3"]["from"] == path <> "/comment-page-3"
+    assert rows["50/comment-page-2"]["to"] == %{"kind" => "post", "id" => "50"}
+
+    assert pages.(30, 10) == ~w(50/comment-page-1 50/comment-page-2 50/comment-page-3)
+    assert pages.(1, 50) == ["50/comment-page-1"]
+    assert pages.(0, 50) == []
+    assert pages.(25, nil) == []
+    assert post |> Map.put("comments", 25) |> Addresses.post() |> by_id() |> map_size() == 3
+
+    draft = Enum.find(recorded("posts"), &(&1["status"] == "draft"))
+    assert [%{"from" => nil}] = draft |> Map.put("comments", 25) |> Addresses.post(10)
+
+    assert Addresses.comments_per_page(%{comment_pages: true, comments_per_page: 20}) == 20
+    assert Addresses.comments_per_page(%{comment_pages: false, comments_per_page: 20}) == nil
+    assert Addresses.comments_per_page(nil) == nil
+  end
+
   test "a term and an author are their archive and their query, and a file its attachment page" do
     category =
       Enum.find(recorded("categories"), &(&1["slug"] == "%d8%a2%d9%85%d9%88%d8%b2%d8%b4"))

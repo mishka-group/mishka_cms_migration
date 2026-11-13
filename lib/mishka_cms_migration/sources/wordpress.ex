@@ -57,7 +57,7 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   links point at.
   `"setting"` is read from the REST index `connect/2` already read, with no request of its own: the
   site's name, tagline (`description`), logo (`site_logo`) and icon (`site_icon`), each one a row
-  when the site has it. `"stylesheet"` is the Elementor globals `connect/2` read, with no request of
+  when the site has it, the icon twice: once as the favicon and once as the app icon. `"stylesheet"` is the Elementor globals `connect/2` read, with no request of
   its own: when the REST index lists Elementor's `elementor/v1`, `connect/2` asks
   `/elementor/v1/globals` once, and a site that answers none has no row
   (`MishkaCmsMigration.Sources.WordPress.ElementorKit`). `list/3` reads each other kind from its REST route (`/wp/v2/users`,
@@ -71,7 +71,10 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   `"post_redirect"` reads the addresses of the posts, the published pages, the categories, the
   tags, the users and the files again, each kind with only the fields an address needs
   (`_fields`), and then every published post's `date` and `link` for the feeds and date archives
-  (`MishkaCmsMigration.Sources.WordPress.Addresses`); its cursor names the kind it is in and that
+  (`MishkaCmsMigration.Sources.WordPress.Addresses`). When the run says WordPress breaks comments
+  into pages (`comment_pages`), each page of posts also asks `/wp/v2/comments` for the approved
+  comments of its published posts that answer no other (`parent=0`, `type=all`), whose count
+  gives each post's comment pages; its cursor names the kind it is in and that
   kind's page. The cursor is the next page number while `X-WP-TotalPages` says there
   is one, and `nil` after the last. `"menu"` is one page: every menu (`/wp/v2/menus`, WordPress
   5.9+) with its items (`/wp/v2/menu-items`) and every block menu (`/wp/v2/navigation`, asked for
@@ -171,10 +174,11 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       trashed comment, which a list never answers, reads as it is), `type` (`"comment"`,
       `"pingback"` or `"trackback"`) and `date_gmt`. A comment has no `modified_at`. Its
       address, website, user agent and the rest are kept in `extra`.
-    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"` or
-      `"icon"`, `title` WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the
-      text of the name and the tagline, its HTML entities decoded (WordPress keeps `&` as
-      `&amp;`), and the media id of the logo and the icon.
+    * setting — one of the site's own: its `source_id` is `"title"`, `"tagline"`, `"logo"`,
+      `"icon"` or `"app_icon"` (the same site icon, written to a second setting), `title`
+      WordPress's name for it (`"Site Title"`, ...), and `attrs`'s `"value"` the text of the name
+      and the tagline, its HTML entities decoded (WordPress keeps `&` as `&amp;`), and the media
+      id of the logo and the icon.
     * stylesheet — Elementor's global colours and fonts, one row: its `source_id` is
       `"elementor"`, `title` `"Elementor global colours and fonts"`, and `attrs` the stylesheet of
       theme tokens they become, its `"name"` (`elementor-globals`), `"description"` and `"content"`
@@ -375,7 +379,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
     {"title", "name", "Site Title"},
     {"tagline", "description", "Tagline"},
     {"logo", "site_logo", "Site Logo"},
-    {"icon", "site_icon", "Site Icon"}
+    {"icon", "site_icon", "Site Icon"},
+    {"app_icon", "site_icon", "Site Icon (app icon)"}
   ]
   @texts ["title", "tagline"]
   @kit "elementor"
@@ -640,11 +645,57 @@ defmodule MishkaCmsMigration.Sources.WordPress do
       |> archives(index["home"], req |> Req.get(url: "/wp/v2/settings") |> front_page(req))
 
   defp address_page(conn, {kind, route}, cursor) do
-    case paged(conn, kind, route, cursor) do
-      {:ok, rows, next} -> {:ok, Enum.flat_map(rows, &addresses(kind, &1)), next}
-      refused -> refused
+    with {:ok, rows, next} <- paged(conn, kind, route, cursor),
+         {:ok, addresses} <- rows_addresses(conn, kind, rows),
+         do: {:ok, addresses, next}
+  end
+
+  # A post's comment pages are counted from its approved comments that answer no other, read for
+  # the page's published posts at once, only when the run says WordPress breaks comments into pages.
+  defp rows_addresses(conn, "post", rows) do
+    per_page = conn |> Map.get(:options) |> Addresses.comments_per_page()
+
+    with {:ok, counts} <- comment_counts(conn, rows, per_page),
+         do:
+           {:ok,
+            Enum.flat_map(
+              rows,
+              &(&1
+                |> Map.put("comments", Map.get(counts, &1["id"], 0))
+                |> Addresses.post(per_page))
+            )}
+  end
+
+  defp rows_addresses(_conn, kind, rows), do: {:ok, Enum.flat_map(rows, &addresses(kind, &1))}
+
+  defp comment_counts(%{req: req}, rows, per_page) when is_integer(per_page) do
+    case for(%{"id" => id, "status" => "publish"} <- rows, do: id) do
+      [] ->
+        {:ok, %{}}
+
+      ids ->
+        with {:ok, comments} <-
+               every(
+                 req,
+                 "/wp/v2/comments",
+                 [
+                   post: Enum.join(ids, ","),
+                   parent: 0,
+                   type: "all",
+                   _fields: "post,parent,status"
+                 ],
+                 1,
+                 []
+               ),
+             do:
+               {:ok,
+                comments
+                |> Enum.filter(&match?(%{"parent" => 0, "status" => "approved"}, &1))
+                |> Enum.frequencies_by(& &1["post"])}
     end
   end
+
+  defp comment_counts(_conn, _rows, _no_pages), do: {:ok, %{}}
 
   defp next_addressed({:ok, rows, nil}, at) when at + 1 < length(@addressed_kinds),
     do: {:ok, rows, {at + 1, nil}}
@@ -653,7 +704,6 @@ defmodule MishkaCmsMigration.Sources.WordPress do
   defp next_addressed({:ok, rows, cursor}, at), do: {:ok, rows, {at, cursor}}
   defp next_addressed(refused, _at), do: refused
 
-  defp addresses("post", row), do: Addresses.post(row)
   defp addresses("page", row), do: Addresses.page(row)
   defp addresses("media", row), do: Addresses.media(row)
   defp addresses(kind, row), do: Addresses.term(row, kind, row["link"])
@@ -723,7 +773,8 @@ defmodule MishkaCmsMigration.Sources.WordPress do
 
   defp addressed_rows(conn, kind, ids, {kind, route}) do
     with {:ok, rows} <- included(conn, kind, route, ids),
-         do: {:ok, Enum.flat_map(rows, &addresses(kind, &1)), nil}
+         {:ok, addresses} <- rows_addresses(conn, kind, rows),
+         do: {:ok, addresses, nil}
   end
 
   defp included(%{req: req} = conn, kind, {route, params}, source_ids) do

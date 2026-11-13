@@ -604,14 +604,15 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
   defp item_rows(type, _status, element, {type, conn}) when type in @entries,
     do: [entry(type, element, conn)]
 
-  defp item_rows("post", _status, element, {"post_redirect", _conn}),
+  defp item_rows("post", _status, element, {"post_redirect", conn}),
     do:
       element
       |> posted(%{})
       |> Map.take(~w(id title status slug link modified_gmt))
       |> Map.put("content", %{"raw" => text(element, "content:encoded") || ""})
       |> Map.put("old_slugs", old_slugs(element))
-      |> Addresses.post()
+      |> Map.put("comments", top_comments(element))
+      |> Addresses.post(conn |> Map.get(:options) |> Addresses.comments_per_page())
 
   defp item_rows("page", _status, element, {"post_redirect", _conn}),
     do: element |> posted(%{}) |> Addresses.page()
@@ -986,6 +987,17 @@ defmodule MishkaCmsMigration.Sources.WordPressFile do
           "_links" => %{"up" => [%{"post_type" => type}]}
         }
   end
+
+  # The approved comments of an item that answer no other, the ones WordPress pages a post's
+  # comments by.
+  defp top_comments(element),
+    do:
+      element
+      |> Export.all("wp:comment")
+      |> Enum.count(
+        &(text(&1, "wp:comment_approved") == "1" and
+            (integer(text(&1, "wp:comment_parent")) || 0) == 0)
+      )
 
   defp comment_type(type) when type in [nil, ""], do: "comment"
   defp comment_type(type), do: type

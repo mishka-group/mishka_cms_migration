@@ -259,7 +259,7 @@ defmodule MishkaCmsMigration.Workers.Helpers.Pipeline do
              actor: context.actor,
              scope: context,
              source: source,
-             conn: conn,
+             conn: Source.with_options(conn, options),
              options: options,
              context: target_context(run, mode, context, options, extra),
              telemetry: telemetry

@@ -143,6 +143,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
                "blog_pages" => "use",
                "confirm_users" => true,
                "comments" => false,
+               "comment_pages" => false,
+               "comments_per_page" => 50,
                "bring_users" => true,
                "bring_terms" => true,
                "bring_media" => true,
@@ -174,6 +176,8 @@ defmodule MishkaCmsMigration.MigrationRunTest do
             {%{pages: "maybe"}, :pages},
             {%{mode: "x"}, :mode},
             {%{comments: "maybe"}, :comments},
+            {%{comments_per_page: "0"}, :comments_per_page},
+            {%{comments_per_page: 1001}, :comments_per_page},
             {%{posts_page: "somewhere"}, :posts_page},
             {%{blog_pages: "somewhere"}, :blog_pages}
           ] do
