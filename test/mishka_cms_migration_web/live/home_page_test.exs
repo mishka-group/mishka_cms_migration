@@ -928,7 +928,10 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     } do
       view = open!(conn, master)
       new_import!(view)
-      view |> element(@search) |> render_focus()
+
+      view
+      |> element(~s|#{@modal} [id^="search-select-"][id$="-site_id"]|)
+      |> render_hook("relation_focus", %{"filter" => "site_id"})
 
       assert sites_listed(view) == ["localhost", "site-a", "site-b"]
 
@@ -987,7 +990,11 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
     } do
       view = open!(conn, master)
       new_import!(view)
-      view |> element(@search) |> render_focus()
+
+      view
+      |> element(~s|#{@modal} [id^="search-select-"][id$="-site_id"]|)
+      |> render_hook("relation_focus", %{"filter" => "site_id"})
+
       searched!(view, "site-b")
 
       view |> element(~s|#{@modal} [role="option"][phx-value-label="site-b"]|) |> render_click()
