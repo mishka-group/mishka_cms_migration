@@ -930,7 +930,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       new_import!(view)
 
       view
-      |> element(~s|#{@modal} [phx-hook=".SearchSelect"][phx-value-filter="site_id"]|)
+      |> element(~s|#{@modal} [id^="search-select-"][id$="-site_id"]|)
       |> render_hook("relation_focus", %{"filter" => "site_id"})
 
       assert sites_listed(view) == ["localhost", "site-a", "site-b"]
@@ -992,7 +992,7 @@ defmodule MishkaCmsMigrationWeb.Live.HomePageTest do
       new_import!(view)
 
       view
-      |> element(~s|#{@modal} [phx-hook=".SearchSelect"][phx-value-filter="site_id"]|)
+      |> element(~s|#{@modal} [id^="search-select-"][id$="-site_id"]|)
       |> render_hook("relation_focus", %{"filter" => "site_id"})
 
       searched!(view, "site-b")
