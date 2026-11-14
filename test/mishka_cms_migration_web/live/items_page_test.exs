@@ -225,12 +225,9 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
     |> List.first()
   end
 
-  @map_field "#migration_item_map_form-form_mapped_id"
-  @decision_field "#migration_item_map_form-form_decision"
-
-  # What Map to… offers, once its search field is focused, by label.
+  # What Map to… offers, once its search field is opened, by label.
   defp map_choices(view) do
-    view |> element(@map_field) |> render_focus()
+    open_select!(view, "mapped_id")
 
     view
     |> parts(~s|#migration-item-map-modal [role="option"]|)
@@ -238,7 +235,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   end
 
   defp save_map!(view, id) do
-    view |> element(@map_field) |> render_focus()
+    open_select!(view, "mapped_id")
 
     view
     |> element(~s|#migration-item-map-modal [role="option"][phx-value-id="#{id}"]|)
@@ -254,9 +251,17 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> parts(~s|#migration-item-map-modal input[type="hidden"][name="decision"]|)
       |> LazyHTML.attribute("value")
 
-  # What Decide… offers, once its field is focused, by label.
+  # gervaz opens a search select through the `SearchSelect` hook on the select's root, which the
+  # browser fires on a click or a Tab into the box.
+  defp open_select!(view, field) do
+    view
+    |> element("#search-select-migration_item_map_form-#{field}")
+    |> render_hook("relation_focus", %{"filter" => field})
+  end
+
+  # What Decide… offers, once its field is opened, by label.
   defp decision_choices(view) do
-    view |> element(@decision_field) |> render_focus()
+    open_select!(view, "decision")
 
     view
     |> parts(~s|#migration-item-map-modal [role="option"]|)
@@ -264,7 +269,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   end
 
   defp decide!(view, choice) do
-    view |> element(@decision_field) |> render_focus()
+    open_select!(view, "decision")
 
     view
     |> element(~s|#migration-item-map-modal [role="option"][phx-value-id="#{choice}"]|)
