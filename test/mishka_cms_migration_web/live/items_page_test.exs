@@ -254,9 +254,9 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
       |> parts(~s|#migration-item-map-modal input[type="hidden"][name="decision"]|)
       |> LazyHTML.attribute("value")
 
-  # What Decide… offers, once its field is focused, by label.
+  # What Decide… offers, once its field is opened, by label.
   defp decision_choices(view) do
-    view |> element(@decision_field) |> render_focus()
+    view |> element(@decision_field) |> render_click()
 
     view
     |> parts(~s|#migration-item-map-modal [role="option"]|)
@@ -264,7 +264,7 @@ defmodule MishkaCmsMigrationWeb.Live.ItemsPageTest do
   end
 
   defp decide!(view, choice) do
-    view |> element(@decision_field) |> render_focus()
+    view |> element(@decision_field) |> render_click()
 
     view
     |> element(~s|#migration-item-map-modal [role="option"][phx-value-id="#{choice}"]|)

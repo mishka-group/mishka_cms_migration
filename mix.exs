@@ -63,7 +63,7 @@ defmodule MishkaCmsMigration.MixProject do
       mishka_dep(:guarded_struct, "~> 0.1.7", override: true),
       {:igniter, "~> 0.8", only: [:dev, :test]},
       mishka_dep(:mishka_cms_core, "~> 0.0.5-alpha.18"),
-      mishka_dep(:mishka_gervaz, "~> 0.0.8"),
+      mishka_dep(:mishka_gervaz, "~> 0.0.10"),
       mishka_dep(:mishka_slug, "~> 0.0.1"),
       # A site may run without the Blog; its categories and tags are imported only where it is.
       mishka_dep(:mishka_blog, "~> 0.0.3-alpha.6", optional: true),
