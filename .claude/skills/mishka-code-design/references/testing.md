@@ -23,6 +23,7 @@ Never use `Process.sleep`, retry or poll loops, "eventually" helpers, or a bigge
 - **A process that sets up in `handle_continue`:** call it once with any sync call. The reply comes after `handle_continue` has run. For example, call the Oban producer before sending it signals.
 - **A process that must be done:** `Process.monitor` with `assert_receive {:DOWN, …}`, or `:sys.get_state/1` as a barrier.
 - **Asynchronous work that announces itself:** wait for the message or telemetry event it sends. If it sends none and a test needs it, add a telemetry event to the library code.
+- **A limit or a delay** (a timeout, a retry wait): never let the test sit through it. Give the code a value of 0 (or the smallest) and assert on the telemetry event that reports the decision, such as the `:wait` it chose or the `:outcome` it ended with. See `references/telemetry.md`.
 - **Jobs:** Oban `testing: :manual`, then `perform_job`, `Oban.drain_queue`, or AshOban's `assert_triggered`.
 - **Plugins:** core's `Test.Installer.await/1` and the repo's `register_plugin!` helpers.
 
