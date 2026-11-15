@@ -41,6 +41,7 @@ Read each repo in this order. If someone has a local checkout of it, usually a s
 - **Client behaviour is `Phoenix.LiveView.JS` first.** Write a JS hook or a `.js` file only when `JS` truly cannot do the job, and say why.
 - **CSS and JS are parsed with real parsers:** `igniter_css` and `igniter_js`, and Tailwind decides which classes exist. Never use regex or a hand-written walker.
 - **guarded_struct lives inside the Ash resource** (`guardedstruct do auto_wire true … end`), with nested data as a `sub_field`. Never put it in a separate module plus a change to build it.
+- **Processes stay off the hot path.** A `GenServer` that every request calls with `handle_call` is a queue: under many users they all wait on it, and two servers that call each other deadlock. Keep reads in the caller (ETS, `:persistent_term`, a module compiled at runtime), send work with `cast`, `Task` or a job, and keep a process for state that truly needs one owner. Follow the anti-pattern guides of Elixir (process, code, design, macro), OTP and Ash. Details: `references/processes.md`.
 - **No backward-compatibility code.** Mishka CMS is at its first release with no outside installs, so design for a fresh install. The mishka.tools site is fixed by hand when needed.
 
 ## Shape of the code
@@ -72,6 +73,8 @@ Tests prove behaviour, not exact output. Each test checks what the code does: a 
   - running Oban jobs inline.
 
   A flaky test gets a deterministic fix, proven with `mix test <file> --repeat-until-failure 300`.
+- **Write the code so a test can see it.** Return what happened, emit a telemetry event at each step worth checking, take the clock or the HTTP plug as an option. A test that can only compare printed output means the code needs a seam.
+- **Watch the time.** Note how long the suite and each file take. A file that takes seconds when its neighbours take milliseconds is a finding: find the sleep, the real network call or the process it waits on.
 - **Test against the real external system.** Mocks replay responses recorded from it.
 - **Run only the tests your change touches while working, then the full gate once:** `mix ci` (or the repo's CI alias) and, for Ash repos, a fresh `MIX_ENV=test mix ash.codegen setup && mix test`.
 
