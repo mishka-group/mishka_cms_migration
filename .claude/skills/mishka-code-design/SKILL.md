@@ -57,6 +57,19 @@ Read each repo in this order. If someone has a local checkout of it, usually a s
   - Elixir naming, and one fixed vocabulary per repo: never two words for one idea.
   - Modules of the same kind share their entry point and argument order. mishka_installer gives every plugin `call/1`; a helper family gets one public `call`.
 - **Pattern matching first:** multi-clause functions, matching in function heads and guards, and `with` for the happy path. Prefer these over `if`, nested `case`, `cond` and `Map.get` chains.
+- **Name the result, then return it:** a pipeline is never written inside a tuple or as a call's argument. Bind it to a name first, then return the tuple:
+
+  ```elixir
+  new_socket =
+    socket
+    |> stream_insert(:customers, removed, at: 0)
+    |> select(removed.id)
+    |> say(:info, "Customer deleted on Stripe.")
+
+  {:noreply, new_socket}
+  ```
+
+  The same goes for `{:ok, ...}`, `{:reply, ...}` and any other wrapper.
 - **Docs, not comments:**
   - Explain in `@moduledoc` and `@doc`, saying what a developer needs to know, never the history of a change. Code comments inside function or action bodies are not the style.
   - Match the repo's existing tone. In mishka_gervaz that means sentence case with no ALL-CAPS lead phrases.
