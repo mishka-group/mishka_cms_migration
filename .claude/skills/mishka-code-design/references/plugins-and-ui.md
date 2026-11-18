@@ -23,11 +23,16 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 - Admin forms and tables are gervaz DSL resources: fields, types, filters, actions and error display. Never hand-write form markup or validation display for the admin.
 - Before writing a helper, check gervaz for a field type or template helper. Example: `MishkaGervaz.Form.Types.Field.Json.parse_params/2` for JSON fields.
 - Errors reach the user through gervaz's error handling (`MishkaGervaz.Errors.translate_error/2`) as short sentences.
+- A `:link` row action is never named `:edit`, `:show`, `:edit_link` or `:show_link`: gervaz builds the address of those itself and crashes on a table state. Name it for what it opens (`:edit_product`) and give `path fn record -> ... end`.
+- Gervaz's own filter bar has no segmented control and no `data-testid`. A page that needs them draws its toolbar and only writes the table's URL parameters (`<prefix>_search`, `<prefix>_filter_<name>`, `<prefix>_template`), then patches; the table reads them back with `UrlSync.decode/3`. Turn the gervaz bar off with `features` that leave out `:filter`.
+- A gervaz action button (Archive, Bring back) carries no test id: a test finds it by `[phx-value-event=<event>]` inside the row.
+- A form window opened or closed from the server goes over the `gervaz:exec-js` bridge (`MyExtensionWeb.Modals`).
 - Comments in gervaz: sentence case, saying what the code does for a caller, with no ALL-CAPS lead phrase and no history.
 
 ## LiveView
 
 - **Behaviour in the markup:** `Phoenix.LiveView.JS` (`show`, `hide`, `toggle`, `add_class`, `remove_class`, `toggle_class`, `set_attribute`, `remove_attribute`, `toggle_attribute`, `focus`, `dispatch`, `push`, `exec`, `transition`), plus bindings like `phx-mounted`, `phx-click-away`, `phx-window-keydown` and `phx-remove`. `to:` takes any CSS selector, `html` and `body` included. Write a hook or JS file only when `JS` can't do it, and say what was missing.
+- **A helper called from a template** (`list_path(@socket, ...)`) gets a socket without assigns there: pass it the values it needs, never read `socket.assigns` inside it.
 - **Security:** authorise in `mount` and in every `handle_event`. Never trust params; check the resource's policy through Ash, as described in LiveView's security model.
 
 ## CSS, JS and HTML

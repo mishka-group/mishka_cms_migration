@@ -36,6 +36,7 @@ Read each repo in this order. If someone has a local checkout of it, usually a s
 ## How Mishka code is built
 
 - **Ash does the work.** Resources, actions, validations, changes, policies, multi-tenancy, identities (including partial ones), code interfaces, calculations, aggregates, notifiers and transactions all go through Ash. Background jobs use AshOban triggers when they cover what is needed. Signals are for one of our resources reacting to another inside a transaction. Hand-written versions of these are a smell. Details: `references/ash.md`.
+- **Extension first, core gets only an event.** An extension does everything it needs inside itself: its storage, links, settings, routes and jobs. When core has no way in at the point the extension needs, add only a mishka_installer event to core at that point, and put the logic in a plugin inside the extension. Core never gets a behaviour, adapter or feature that only one extension uses; only what core itself must do lives in core.
 - **Plugins and events go through mishka_installer.** An extension point is an installer event. A plugin is a `use MishkaInstaller.Event.Hook` module. Who is installed, and in which order, comes from the installer's own registry (`MishkaInstaller.Event.Event.get(:event, …)`), not from a parallel registry. Other extensions extend yours only through these events. Details: `references/plugins-and-ui.md`.
 - **Admin UI is mishka_gervaz.** Forms, tables and error display come from gervaz, never hand-written form markup. Errors an admin can see are short, human sentences rendered through gervaz's error handling. Raw Ash or Postgres dumps go to the log only.
 - **Client behaviour is `Phoenix.LiveView.JS` first.** Write a JS hook or a `.js` file only when `JS` truly cannot do the job, and say why.
@@ -46,6 +47,8 @@ Read each repo in this order. If someone has a local checkout of it, usually a s
 - **Ready for real time.** When something changes that a person or another part may be looking at (a payment's status, a row in an admin table, a job's progress), the change is announced: an Ash notifier or `Ash.Notifier.PubSub` on the resource, a `Phoenix.PubSub` broadcast, or a mishka_installer event, with the topic named after the tenant and the record. A LiveView then updates without a reload, and a test can wait on the same message. Design this in from the start, not after.
 - **Processes stay off the hot path.** A `GenServer` that every request calls with `handle_call` is a queue: under many users they all wait on it, and two servers that call each other deadlock. Keep reads in the caller (ETS, `:persistent_term`, a module compiled at runtime), send work with `cast`, `Task` or a job, and keep a process for state that truly needs one owner. Follow the anti-pattern guides of Elixir (process, code, design, macro), OTP and Ash. Details: `references/processes.md`.
 - **No backward-compatibility code.** Mishka CMS is at its first release with no outside installs, so design for a fresh install. The mishka.tools site is fixed by hand when needed.
+
+- **Write the code so a test can see it.** Return what happened, emit a telemetry event at each step worth checking, take the clock or the HTTP plug as an option. A test that can only compare printed output means the code needs a seam.
 
 ## Shape of the code
 
@@ -89,7 +92,6 @@ Tests prove behaviour, not exact output. Each test checks what the code does: a 
   - running Oban jobs inline.
 
   A flaky test gets a deterministic fix, proven with `mix test <file> --repeat-until-failure 300`.
-- **Write the code so a test can see it.** Return what happened, emit a telemetry event at each step worth checking, take the clock or the HTTP plug as an option. A test that can only compare printed output means the code needs a seam.
 - **Watch the time.** Note how long the suite and each file take. A file that takes seconds when its neighbours take milliseconds is a finding: find the sleep, the real network call or the process it waits on.
 - **Test against the real external system.** Mocks replay responses recorded from it.
 - **Run only the tests your change touches while working, then the full gate once:** `mix ci` (or the repo's CI alias) and, for Ash repos, a fresh `MIX_ENV=test mix ash.codegen setup && mix test`.

@@ -48,3 +48,22 @@ When a task is done, a separate check tests it twice over:
 - **as an end user:** in the admin UI through the browser, where there is UI.
 
 Only then report it as ready.
+
+## Waiting for a page that loads in the background
+
+- A page that reads with `assign_async/4` and draws a gervaz component inside the result starts the component's own read only after the page's read has been drawn: wait twice (`render_async/2`, then `render_async/2`), never with a sleep.
+- A table reloaded by a message the page sends itself (`send_update/2`) starts its read after that message: call `render/1` first (the page answers it after the message), then `render_async/2`.
+- Prove a wait is not a race with `mix test --repeat-until-failure 40 <file>`.
+
+## A payment stage is done when the real sandbox says so
+
+A mock answers what its authors fixed: stripe-mock never returns a payment that was paid, refunded or pending, and it knows nothing of the account's own defaults (a sandbox that sells as merchant of record, which refused every checkout until products carried a tax category, a thing no mock test showed). Run the stage's truth test against the real sandbox once before calling it done, with the key only in the environment of the test command, and make it clean up what it made at the provider. The fast suite stubs only what the mock cannot answer, by path, from the SDK's own objects (`Support.StripeMock.stub!/1`).
+
+## Proving a race
+
+The sandbox gives every test one shared connection, so requests in a test take turns and a read-then-write bug passes. A rule that must hold under concurrency (a download count at its limit, a claim that only one caller wins) is proved in its own module that switches the repo to real connections (`Sandbox.mode(Repo, :auto)`), writes committed rows and deletes the site, which takes its rows with it, when it ends; it starts many `Task.async_stream` callers at the rule and asserts the exact number that got through. Break the rule once (leave the limit out of the update) and see the test fail, so it is known to catch something.
+
+## Email in tests
+
+The accounts a test makes get the core's confirmation email, so `assert_email_sent/0` finds the wrong one: keep the receipts apart (`Support.Store.sent_emails/0`, `flush_mail!/0`; mail runs inline in tests, so a drain waits for nothing). The function given to `assert_email_sent/1` must end in a truthy value: a `refute` ends in `nil`.
+

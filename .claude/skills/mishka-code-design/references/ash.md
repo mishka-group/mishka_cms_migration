@@ -73,6 +73,38 @@ Save progress through an Ash action. The resource's `pub_sub` notifier broadcast
 
 Turn Ash errors into short, human messages, `field: message`, through `MishkaGervaz.Errors.translate_error/2`. Store only that message on a record a user will see, and keep the full error in the log.
 
+## mishka_pay kinds (`MishkaPay.Ash.Resource`)
+
+- A kind is for a row the provider knows: it needs `provider` and `provider_id`. A store's own row that starts as a draft (a catalog product) stays a plain resource, and the provider object (a price) points at it.
+- A kind keeps the provider's ids as strings under plain names (`product_id` on a price, `coupon_id` on a promotion code, `customer_id` on a payment). The store's own link uses `store_<name>_id` (`belongs_to ... source_attribute :store_product_id`), never the kind's name, or the sync breaks.
+
+- Every attribute of a kind is not writable (only the provider's sync forces them), so an action of the store that writes some takes them as arguments, and a change forces them in (`MyExtension.Resources.Changes.WriteArguments`).
+
+- A row the store writes itself for a kind (not a provider sync) carries its `tenant` (`WriteArguments` option `tenant_into: :tenant`): the kind's later actions (`:archive`, `:refund`, `:resync`) read the provider with the keys of the site that row names, and a row without it fails with "no keys for tenant nil".
+- A kind's own `:add` makes a provider object and a new row. To tie a row the store already has to the provider's object (a price made on a product page), call the SDK (`MishkaPay.create_price/1`) and give the same row the provider's ids with an update action of the store, so the row keeps its id and its place.
+
+## Counters, limits and claims
+
+A limit or a count (downloads against a limit, "only the first caller delivers") is one atomic update: `Ash.bulk_update(query, :action, input, strategy: :atomic, return_records?: true)` over a query whose filter holds the whole rule, and an action with `atomic_update(:count, expr(count + 1))`. The database serializes two updates of one row and the second re-reads it, so nothing sits between a read and a write. Count the records the update returned; none means the rule refused, and a read afterwards says why.
+
+`Ash.transact/3` wraps what its function returns once more (`{:ok, {:ok, x}}`) and turns an `{:error, reason}` into an Ash error. To return the reasons of a refusal, return them as plain values from the function (`{:refused, :limit}`) and unwrap them after.
+
+## Tenants and links
+
+- **`site_id` comes from the tenant and is never input.** Make the `site_id` attribute private (`attribute_public? false` on the `site` belongs_to) and put the multitenancy block and that relationship in the one fragment macro every resource uses (`MyExtension.Resources.Policies`). Ash then writes `site_id` from `tenant:` on create. A public `site_id` is accepted by `create: :*` and fails a tenant create with "attribute site_id is required".
+- **A foreign key does not prove the same tenant.** A create that takes the id of another row (`product_id`, `store_product_id`) checks it with a validation that reads the target inside the call's tenant (`MyExtension.Resources.Validations.SameSite`), so another site's row is "not found".
+- **`Ash.exists?/2` raises on a forbidden read.** In a validation or a check use `Ash.exists/2`, which returns `{:error, error}` to hand back.
+
+## State machines (AshStateMachine)
+
+- Every transition needs an action of that name, or AshStateMachine refuses it: write the transition actions (`:publish`, `:archive`, `:approve`) with the machine.
+- The primary create and update list their accepted fields and leave the state out, so a state only moves through its transitions.
+- A row whose state comes from a provider (a payment, a subscription) has no state machine: events arrive out of order, and the provider's word is written as it is.
+
+## Oban in an extension
+
+The host starts Oban (`AshOban.config/2` over its `:ash_domains`), and core's test boot does it in tests. An extension only names its queues in config and never starts Oban itself.
+
 ## Anti-patterns to avoid
 
 - Writing through `Repo` around an Ash action.
