@@ -67,3 +67,6 @@ The sandbox gives every test one shared connection, so requests in a test take t
 
 The accounts a test makes get the core's confirmation email, so `assert_email_sent/0` finds the wrong one: keep the receipts apart (`Support.Store.sent_emails/0`, `flush_mail!/0`; mail runs inline in tests, so a drain waits for nothing). The function given to `assert_email_sent/1` must end in a truthy value: a `refute` ends in `nil`.
 
+## Browser runs sign in once
+
+A browser run signs in once per role and saves the browser's storage state (Playwright `storageState`), and every later page and run reuses it. Posting the sign-in form again and again trips the CMS sign-in limiter, and each locked try resets the lock, so the run stalls for hours. If the limiter is hit on a test copy, restart that copy's server (the limiter lives in memory) instead of waiting.
