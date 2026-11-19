@@ -23,7 +23,7 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 - Admin forms and tables are gervaz DSL resources: fields, types, filters, actions and error display. Never hand-write form markup or validation display for the admin.
 - Before writing a helper, check gervaz for a field type or template helper. Example: `MishkaGervaz.Form.Types.Field.Json.parse_params/2` for JSON fields.
 - Errors reach the user through gervaz's error handling (`MishkaGervaz.Errors.translate_error/2`) as short sentences.
-- A `:link` row action is never named `:edit`, `:show`, `:edit_link` or `:show_link`: gervaz builds the address of those itself and crashes on a table state. Name it for what it opens (`:edit_product`) and give `path fn record -> ... end`.
+- A `:link` row action always gets a `path` function. Without one, a link named `:edit` or `:show` makes gervaz build the address itself, and that crashes on the table state (mishka_gervaz#43); with a `path` any name works.
 - Gervaz's own filter bar has no segmented control and no `data-testid`. A page that needs them draws its toolbar and only writes the table's URL parameters (`<prefix>_search`, `<prefix>_filter_<name>`, `<prefix>_template`), then patches; the table reads them back with `UrlSync.decode/3`. Turn the gervaz bar off with `features` that leave out `:filter`.
 - A gervaz action button (Archive, Bring back) carries no test id: a test finds it by `[phx-value-event=<event>]` inside the row.
 - A form window opened or closed from the server goes over the `gervaz:exec-js` bridge (`MyExtensionWeb.Modals`).
