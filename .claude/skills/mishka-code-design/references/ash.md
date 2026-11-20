@@ -112,3 +112,11 @@ The host starts Oban (`AshOban.config/2` over its `:ash_domains`), and core's te
 - Read-then-write without a transaction or an identity.
 - Re-implementing what an Ash type, change, validation or extension already provides.
 - Uniqueness or state checks in code that the database could enforce.
+
+## Database rules in the resource
+
+- **Every foreign key leads an index.** AshPostgres prefixes a multi-tenant `custom_indexes` entry with `site_id`, which a foreign key check (`WHERE order_id = $1`) cannot use: write the key's own index with `all_tenants?: true` (partial `where: "fk IS NOT NULL"` for a nullable key). Without it each deleted parent reads the whole child table.
+- **A rule a row must hold is a `check_constraint`** with a plain `message:`; Ash returns it on the attribute. Seed data in tests must hold it too.
+- **An append-only table is a trigger in `custom_statements`** that raises `check_violation` with `CONSTRAINT = '<name>'`, and a `check_constraint :attr, "<name>", message: "..."` with no `check:` maps it to a plain sentence. Let a foreign key's own cascade through (`pg_trigger_depth() > 1`), and give a legitimate path (an erasure) a transaction-local flag (`set_config('<app>.<flag>', 'on', true)`), compared with `IS DISTINCT FROM 'on'` so an unset flag refuses.
+- **PaperTrail on a hard-deleted resource:** `create_version_on_destroy? false` (the version's key to the deleted row fails), `sensitive_attributes :ignore`, and `store_action_inputs? false` when an action takes a `:term` argument. An atomic update writes a version each time it runs.
+- **A bypass of a buyer's own rows** is added to every query of the resource, admins' too: give it a condition that only the buyer meets, or a site's counts cannot come from an index.
