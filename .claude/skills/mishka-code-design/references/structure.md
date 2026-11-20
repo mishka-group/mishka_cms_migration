@@ -49,6 +49,8 @@ mix.exs                       # mishka_dep/2 helper: sibling checkout or Hex
 
 The CMS finds the routes by name: the host config lists the web namespace (`config :mishka_cms_core, extensions: [MishkaCmsCoreWeb, AppWeb]`) and the core mounts `AppWeb.Routes`. A new extension adds both on day one, with empty route lists until its pages exist.
 
+**Visitor and buyer pages are CMS pages, not routes.** An extension ships what a visitor or buyer sees (storefront, library, account, thanks pages) as UI kit components in `priv/cms_ui_kits/<extension>.json`, and its installer creates CMS pages that use them, as mishka_blog and mishka_document do, so every site can change the address, layout and words. `routes(:public)` holds only actions that cannot be a page (a form POST, a session PUT); machine endpoints (downloads, exports, webhooks, an API) go in `routes(:api)`. Their URL prefix is an install-time option, because the routes are compiled into the host's router.
+
 `mix.exs` takes Mishka siblings through `mishka_dep/2`. It uses the `../<name>` checkout when that is a git checkout, and Hex otherwise, so local work and CI each get the right one. A library that is being fixed alongside (for example guarded_struct) goes through the same helper.
 
 ## The engine (mishka_cms_core)
