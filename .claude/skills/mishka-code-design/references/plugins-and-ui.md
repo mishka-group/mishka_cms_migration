@@ -45,3 +45,5 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 
 - Headless components carry no Tailwind classes; styling lives only in the styled components.
 - After changing component templates, regenerate the CMS bundles with the repo's export task. Don't edit `priv/cms_ui_kits/*.json` by hand.
+
+- **A public kit block draws its first answer in the first HTTP render** (the storefront's card, grid, pricing table and coupon banner, as Blog's blocks do): its first read runs inline, on the dead render and again on the connected mount, so a search engine and a link preview get the title, text and price and the page shows no skeleton after connect. Only a later change of what is asked reads in a task, with the drawn content kept until the answer replaces it. A block of one buyer or member (download box, members only, library) reads in the background behind a skeleton, so the dead render never holds what only they may see.
