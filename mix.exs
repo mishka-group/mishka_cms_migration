@@ -59,7 +59,7 @@ defmodule MishkaCmsMigration.MixProject do
       {:oban, "~> 2.24"},
       {:ash_oban, "~> 0.10.3"},
       {:req, "~> 0.7"},
-      mishka_dep(:mishka_installer, "~> 0.1.16"),
+      mishka_dep(:mishka_installer, "~> 0.1.17"),
       mishka_dep(:guarded_struct, "~> 0.1.10", override: true),
       {:igniter, "~> 0.8", only: [:dev, :test]},
       mishka_dep(:mishka_cms_core, "~> 0.0.5"),
