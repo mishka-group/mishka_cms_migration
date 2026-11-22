@@ -5,6 +5,7 @@
 - The WordPress tagline is imported into the site's `site.tagline`, and the site icon fills `site.app_icon` as well as `site.favicon` ([mishka_cms_core#115](https://github.com/mishka-group/mishka_cms_core/issues/115))
 
 - Needs mishka_cms_core 0.0.5-alpha.13 (a page's event, info and state handlers keep their code signature with `CODE_SIGNING_KEY` set), mishka_gervaz 0.0.8 and guarded_struct 0.1.7. Every dependency is at its latest release, including ash 3.37.4 and spark 2.7.10
+- Dependencies updated to hammer 7.6.0, postgrex 0.23.0 and, for development, ex_doc 0.40.5. assent 0.4.0 and color 1.0.0 stay behind: ash_authentication requires `~> 0.3.2` and image requires `~> 0.13`
 
 # Changelog for MishkaCmsMigration 0.0.3
 
