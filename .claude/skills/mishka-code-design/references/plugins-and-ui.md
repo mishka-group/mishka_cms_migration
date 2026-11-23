@@ -23,11 +23,17 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 - Admin forms and tables are gervaz DSL resources: fields, types, filters, actions and error display. Never hand-write form markup or validation display for the admin.
 - Before writing a helper, check gervaz for a field type or template helper. Example: `MishkaGervaz.Form.Types.Field.Json.parse_params/2` for JSON fields.
 - Errors reach the user through gervaz's error handling (`MishkaGervaz.Errors.translate_error/2`) as short sentences.
+- A `:link` row action always gets a `path` function. Without one, a link named `:edit` or `:show` makes gervaz build the address itself, and that crashes on the table state (mishka_gervaz#43); with a `path` any name works.
+- Gervaz's own filter bar has no segmented control and no `data-testid`. A page that needs them draws its toolbar and only writes the table's URL parameters (`<prefix>_search`, `<prefix>_filter_<name>`, `<prefix>_template`), then patches; the table reads them back with `UrlSync.decode/3`. Turn the gervaz bar off with `features` that leave out `:filter`.
+- A gervaz action button (Archive, Bring back) carries no test id: a test finds it by `[phx-value-event=<event>]` inside the row.
+- A form window opened or closed from the server goes over the `gervaz:exec-js` bridge (`MyExtensionWeb.Modals`).
 - Comments in gervaz: sentence case, saying what the code does for a caller, with no ALL-CAPS lead phrase and no history.
+- A failure an admin can see (a job, an event, a delivery) gets Skip and Bring back the CMS's one way, `MishkaCmsCore.Skip`: the fields `skipped_at`, `skipped_by_id`, `skip_reason`, a `:skipped` state, the `:skip`/`:bring_back` actions with `MishkaCmsCore.Skip.Changes.Skip`/`BringBack` (they cancel the row's AshOban jobs and call `Skip.changed/1`, which cleans the item's notifications, recounts the sidebar and the bell and fires `failure:skip:changed`), the reason asked in `MishkaCmsCoreWeb.Live.Admin.Components.SkipQuestion`, an Undo toast, a grey Skipped pill beside the red Failed one and a Skipped filter. A count of open problems counts the failed state only, so a skipped row drops out with no other change; an extension's own menu numbers follow with a plugin on `failure:skip:changed` (for example its own `Plugins.SkipChanged`).
 
 ## LiveView
 
 - **Behaviour in the markup:** `Phoenix.LiveView.JS` (`show`, `hide`, `toggle`, `add_class`, `remove_class`, `toggle_class`, `set_attribute`, `remove_attribute`, `toggle_attribute`, `focus`, `dispatch`, `push`, `exec`, `transition`), plus bindings like `phx-mounted`, `phx-click-away`, `phx-window-keydown` and `phx-remove`. `to:` takes any CSS selector, `html` and `body` included. Write a hook or JS file only when `JS` can't do it, and say what was missing.
+- **A helper called from a template** (`list_path(@socket, ...)`) gets a socket without assigns there: pass it the values it needs, never read `socket.assigns` inside it.
 - **Security:** authorise in `mount` and in every `handle_event`. Never trust params; check the resource's policy through Ash, as described in LiveView's security model.
 
 ## CSS, JS and HTML
@@ -40,3 +46,5 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 
 - Headless components carry no Tailwind classes; styling lives only in the styled components.
 - After changing component templates, regenerate the CMS bundles with the repo's export task. Don't edit `priv/cms_ui_kits/*.json` by hand.
+
+- **A public kit block draws its first answer in the first HTTP render** (the storefront's card, grid, pricing table and coupon banner, as Blog's blocks do): its first read runs inline, on the dead render and again on the connected mount, so a search engine and a link preview get the title, text and price and the page shows no skeleton after connect. Only a later change of what is asked reads in a task, with the drawn content kept until the answer replaces it. A block of one buyer or member (download box, members only, library) reads in the background behind a skeleton, so the dead render never holds what only they may see.
