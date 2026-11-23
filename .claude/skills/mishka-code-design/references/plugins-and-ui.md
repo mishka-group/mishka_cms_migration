@@ -28,6 +28,7 @@ Repo: [mishka_gervaz](https://github.com/mishka-group/mishka_gervaz), or a local
 - A gervaz action button (Archive, Bring back) carries no test id: a test finds it by `[phx-value-event=<event>]` inside the row.
 - A form window opened or closed from the server goes over the `gervaz:exec-js` bridge (`MyExtensionWeb.Modals`).
 - Comments in gervaz: sentence case, saying what the code does for a caller, with no ALL-CAPS lead phrase and no history.
+- A failure an admin can see (a job, an event, a delivery) gets Skip and Bring back the CMS's one way, `MishkaCmsCore.Skip`: the fields `skipped_at`, `skipped_by_id`, `skip_reason`, a `:skipped` state, the `:skip`/`:bring_back` actions with `MishkaCmsCore.Skip.Changes.Skip`/`BringBack` (they cancel the row's AshOban jobs and call `Skip.changed/1`, which cleans the item's notifications, recounts the sidebar and the bell and fires `failure:skip:changed`), the reason asked in `MishkaCmsCoreWeb.Live.Admin.Components.SkipQuestion`, an Undo toast, a grey Skipped pill beside the red Failed one and a Skipped filter. A count of open problems counts the failed state only, so a skipped row drops out with no other change; an extension's own menu numbers follow with a plugin on `failure:skip:changed` (for example its own `Plugins.SkipChanged`).
 
 ## LiveView
 
