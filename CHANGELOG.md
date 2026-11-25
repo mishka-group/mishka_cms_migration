@@ -1,3 +1,8 @@
+# Changelog for MishkaCmsMigration 0.0.5
+
+- Needs mishka_cms_core 0.0.7, mishka_gervaz 0.0.13, mishka_installer 0.1.18 (an extension archive is checked before it is unpacked) and, when it imports posts, mishka_blog 0.0.4
+- Every dependency is at its latest release, including ash 3.38.1, ash_authentication 5.0.0-rc.18, ash_authentication_phoenix 3.0.0-rc.12, igniter 0.8.6, lazy_html 0.1.16 and localize 1.10.0, and `sweet_xml` leaves the lock because nothing pulls it in any more. assent 0.3.2 and bcrypt_elixir 3.3.2 stay behind because ash_authentication requires them
+
 # Changelog for MishkaCmsMigration 0.0.4
 
 ### Features:
